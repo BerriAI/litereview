@@ -38,7 +38,7 @@ This confirms the tested PR can install dependencies, build, run, access the int
 
 ## Automated checks
 
-- 25 tests cover signature/authentication checks, access policy, duplicate webhook deliveries, independent group expansion, immutable configuration, credential redaction, job-token expiry and budgets, MCP access enforcement, archive traversal, screenshot access, cleanup, rejected commands, and result formatting.
+- 26 tests cover signature/authentication checks, access policy, duplicate webhook deliveries, independent group expansion, immutable configuration, credential redaction, job-token expiry and budgets, MCP access enforcement, archive traversal, screenshot access, cleanup, rejected commands, result formatting, and browser-bound GitHub App registration callbacks.
 - Direct OpenAI and Anthropic adapters are tested against local protocol fixtures. These tests verify image payloads and tool result translation without real direct-provider credentials.
 - CI passed against SQLite and Postgres, built the React/TypeScript UI, and built the production Docker image. The final commit is checked by the same workflow.
 - Live Playwright UI checks create and edit agents, reuse an agent in two groups, set instance counts, attach skills, and select computer use. Desktop and 768/390/320 px widths were inspected; no JavaScript errors or page-level horizontal overflow remained.
@@ -54,6 +54,18 @@ After the overhaul, the production frontend build and all 25 backend tests passe
 
 The production GitHub App registration/installation and GitHub OAuth sign-in require the deployment's own App credentials. Live GitHub testing used a temporary repository webhook and an explicitly development-only GitHub token. The guided App setup and App permissions are implemented, but no production GitHub App has been registered in BerriAI by this work. A private App for BerriAI repositories must be owned by BerriAI; an organization owner may need to create/install it.
 
-The application has not been deployed to Render. The checked-in Blueprint and Docker image are the deployment path. Modal and the real gateway were exercised from a temporary HTTPS development endpoint. The temporary repository webhook and test-only MCP/error/clean-review configurations were removed after validation. Temporary servers were stopped; run history and screenshots remain in the local database. Persistent settings belong in the Render deployment.
+The application is deployed to Render at [litereview.onrender.com](https://litereview.onrender.com), backed by private Postgres. The original temporary repository webhook and test-only MCP/error/clean-review configurations were removed after development validation. Those review histories and screenshots remain in the local database; they were not copied into production.
+
+## Render deployment verification
+
+On 28 September 2026, the Docker service deployed in the Litellm Render workspace, Oregon, with one Starter instance and a separate PostgreSQL 16 database. External database access has an empty IP allowlist. `PUBLIC_URL` resolves to Render's HTTPS address; automatic deployments wait for CI to pass. Production credentials were configured privately, including the user's replacement gateway key.
+
+- Public `/health` returned 200 and queried Postgres. Administrator sign-in succeeded through both the API and the live browser UI, using secure HttpOnly session cookies.
+- Configuration, runs, screenshots, and sandbox bootstrap endpoints rejected unauthenticated requests with 401. Cross-origin mutations returned 403. An unsigned webhook returned 401.
+- The hosted gateway connection discovered 1,230 model IDs. A temporary agent tested Claude Haiku 4.5 image input and tool calling through the deployed API successfully, then was removed. No sample agents or review history were imported into the production database.
+- A fresh sandbox using the credentials configured on Render (`sb-H1NhNrxsGXcvUPZLp4tfyJ`) reached the live health endpoint, confirmed the API still required authentication, and received HTTP 200 from GitHub, PyPI, and npm. Its browser loaded the deployed sign-in page and returned a PNG; its desktop tool returned a full-screen PNG. The sandbox was terminated after verification. This was a deterministic connectivity/tool check, not a production webhook-triggered review.
+- The live signed-in interface was visually inspected and remains light. The model connection's key is not returned by the resource API.
+- Real App registration exposed a rejected `redirect_url` containing a query string. Commit `aa22910` moved `state` to GitHub's registration URL, bound the callback to an expiring browser cookie, and cleared the cookie after conversion. All 26 tests, Postgres integration checks, frontend build, and Docker build passed CI; Render deployed that fix. GitHub then accepted the manifest.
+- GitHub explicitly reported: “You don't have permission to create apps for BerriAI.” No personal App was created as a fallback. **Production PR triggers and GitHub OAuth sign-in are not enabled or verified yet.** A BerriAI organization owner must complete App registration/installation; see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 No direct OpenAI or Anthropic account credentials were provided, so live direct-provider account verification remains outside this run. Gateway calls and protocol-level adapter tests passed.
