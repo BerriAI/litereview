@@ -433,7 +433,7 @@ async def manifest(request: Request):
         "name": body.get("name") or "LiteReview-" + secrets.token_hex(3),
         "url": base,
         "hook_attributes": {"url": base + "/api/webhook/github", "active": True},
-        "redirect_url": base + "/api/github/manifest/callback?" + urlencode({"state": state}),
+        "redirect_url": base + "/api/github/manifest/callback",
         "callback_urls": [base + "/api/auth/github/callback"],
         "setup_url": base + "/connections",
         "public": False,
@@ -456,12 +456,19 @@ async def manifest(request: Request):
         url = f"https://github.com/organizations/{owner}/settings/apps/new"
     elif owner_type != "personal":
         raise HTTPException(400, "Choose a personal account or organization.")
-    return {"url": url, "manifest": json.dumps(manifest)}
+    response = JSONResponse(
+        {"url": url + "?" + urlencode({"state": state}), "manifest": json.dumps(manifest)}
+    )
+    response.set_cookie("lr_manifest", state, httponly=True, secure=True, samesite="lax", max_age=900)
+    return response
 
 
 @app.get("/api/github/manifest/callback", dependencies=[Depends(require_admin)])
-async def manifest_callback(code: str, state: str):
-    if unsign(state, 900).get("purpose") != "manifest":
+async def manifest_callback(request: Request, code: str, state: str):
+    if (
+        not secrets.compare_digest(state, request.cookies.get("lr_manifest", ""))
+        or unsign(state, 900).get("purpose") != "manifest"
+    ):
         raise HTTPException(403)
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
@@ -484,7 +491,9 @@ async def manifest_callback(code: str, state: str):
         row.secret = encrypt(json.dumps(conf))
         db.add(row)
         db.commit()
-    return RedirectResponse(data["html_url"] + "/installations/new")
+    response = RedirectResponse(data["html_url"] + "/installations/new")
+    response.delete_cookie("lr_manifest")
+    return response
 
 
 @app.post("/api/github/config", dependencies=[Depends(require_admin)])

@@ -6,6 +6,7 @@ import tarfile
 import time
 import zipfile
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
@@ -403,8 +404,12 @@ def test_private_app_manifest_targets_repository_owner(owner, monkeypatch):
     response = owner.post("/api/github/manifest", json={"owner_type": "organization", "owner": "BerriAI"})
     assert response.status_code == 200
     data = response.json()
-    assert data["url"] == "https://github.com/organizations/BerriAI/settings/apps/new"
+    target = urlparse(data["url"])
+    assert target.scheme == "https" and target.netloc == "github.com"
+    assert target.path == "/organizations/BerriAI/settings/apps/new"
+    assert parse_qs(target.query)["state"] == [response.cookies["lr_manifest"]]
     manifest = json.loads(data["manifest"])
+    assert manifest["redirect_url"] == "https://review.example/api/github/manifest/callback"
     assert manifest["public"] is False
     assert manifest["default_permissions"]["contents"] == "read"
     assert manifest["default_permissions"]["issues"] == "write"
@@ -415,6 +420,41 @@ def test_private_app_manifest_targets_repository_owner(owner, monkeypatch):
         ).status_code
         == 400
     )
+
+
+def test_manifest_callback_requires_same_browser_and_clears_state(owner, monkeypatch):
+    from app.settings import settings
+
+    monkeypatch.setattr(settings(), "public_url", "https://review.example")
+    owner.base_url = "https://testserver"
+    response = owner.post("/api/github/manifest", json={"owner_type": "personal"})
+    state = parse_qs(urlparse(response.json()["url"]).query)["state"][0]
+    exchange = AsyncMock(
+        return_value=httpx.Response(
+            201,
+            json={
+                "id": 123,
+                "pem": "private-key",
+                "webhook_secret": "webhook-secret",
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+                "html_url": "https://github.com/apps/test-litereview",
+            },
+        )
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "post", exchange)
+    owner.cookies.delete("lr_manifest")
+    params = {"code": "temporary-code", "state": state}
+    assert owner.get("/api/github/manifest/callback", params=params).status_code == 403
+    exchange.assert_not_awaited()
+    owner.cookies.set("lr_manifest", state, domain="testserver.local", path="/")
+    response = owner.get("/api/github/manifest/callback", params=params, follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://github.com/apps/test-litereview/installations/new"
+    assert "lr_manifest" not in owner.cookies
+    assert github.config()["app_id"] == "123"
+    assert owner.get("/api/github/manifest/callback", params=params).status_code == 403
+    exchange.assert_awaited_once()
 
 
 def test_render_url_is_detected(monkeypatch):
