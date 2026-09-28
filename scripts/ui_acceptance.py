@@ -102,7 +102,12 @@ async def main():
         await page.set_viewport_size({"width": 1440, "height": 1000})
         await page.get_by_role("button", name="PR agents", exact=True).click()
         await page.emulate_media(color_scheme="dark")
-        await page.screenshot(path=".test-artifacts/dark.png")
+        assert await page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "light"
+        assert (
+            await page.evaluate("getComputedStyle(document.documentElement).backgroundColor")
+            == "rgb(255, 255, 255)"
+        )
+        await page.screenshot(path=".test-artifacts/system-dark-light-ui.png")
         await page.emulate_media(color_scheme="light")
         # Inspect every data surface and editor without launching models or jobs.
         for title, action in [("Skills", "Create skill"), ("Connections", "Add repository")]:

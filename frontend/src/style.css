@@ -1325,37 +1325,6 @@ summary:hover {
     transform: rotate(360deg);
   }
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --bg: #100e28;
-    --subtle: #15132e;
-    --inset: #201e39;
-    --ink: #eeeef4;
-    --muted: #a09db1;
-    --line: #2a2741;
-    --border: #474358;
-    --accent: #b8a8ff;
-    --tint: #27213f;
-    --green: #7ee2a8;
-    --amber: #edc07b;
-    --red: #eda3a8;
-    --good-bg: #182a24;
-    --good-line: #2a463a;
-    --warn-bg: #30271e;
-    --warn-line: #514027;
-    --bad-bg: #30202e;
-    --bad-line: #51343e;
-  }
-  .primary {
-    background: #5b3fd1;
-    border-color: #5b3fd1;
-    color: #fff;
-  }
-  .provider-mark {
-    filter: invert(1);
-  }
-}
 @media (min-width: 1500px) {
   .page {
     padding-top: 44px;

@@ -18,7 +18,7 @@ The train, favicon, and OpenAI/Anthropic/GitHub SVGs in `frontend/public/brand/`
 - Agents, groups, skills, and repository environments have full-page editors. Their labeled sections share one content grid and a persistent save bar. Native dialogs provide focus containment, Escape behavior, and focus restoration.
 - Group editing shows the saved agent identity, instance count, repository/caller access, and the resulting GitHub command.
 - Review results show attribution, findings, evidence, links to the reviewed source, and screenshots. Model-call counts and sandbox identifiers live in expandable execution details.
-- Mobile navigation opens a drawer, supports Escape, and makes the underlying page inert. Tables scroll within their own region; editors use a single column. Dark appearance follows the system preference.
+- Mobile navigation opens a drawer, supports Escape, and makes the underlying page inert. Tables scroll within their own region; editors use a single column. The interface is light-only, regardless of the system appearance setting. Do not add dark mode without an explicit request.
 
 Use flat surfaces, hairline separators, restrained 400/500 type weights, and violet for primary actions and selections. Status colors convey outcomes. Avoid decorative metrics, gradients, icon tiles, and badges around every label. Use actual API data and retain the distinction between no findings and an incomplete review.
 
