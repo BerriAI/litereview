@@ -44,6 +44,12 @@ This confirms the tested PR can install dependencies, build, run, access the int
 - Live Playwright UI checks create and edit agents, reuse an agent in two groups, set instance counts, attach skills, and select computer use. Desktop, dark appearance, and 768/390/320 px widths were inspected; no JavaScript errors or page-level horizontal overflow remained.
 - A separate Modal smoke test verifies browser clicking, desktop keyboard input, and actual screenshot payloads.
 
+## UI overhaul
+
+The UI was rebuilt using the linked internal brand skill and the LiteLLM dashboard, Learn, and ROI Calculator references; see [UI.md](UI.md) for the sources and component rules. This includes the official train/provider assets, navigation and tables, capability filters, full-page resource editors, group membership links and command preview, and review evidence/source links.
+
+After the overhaul, the production frontend build and all 25 backend tests passed. The expanded live browser test passed agent creation/editing/reuse, persisted group instance counts, skills and computer-use selection, capability filtering, every resource editor, mobile navigation with keyboard focus and Escape, run attribution/results, and 768/390/320-pixel page widths without document overflow. Desktop pages, full-page editors, mobile navigation/forms, and dark appearance were also captured and visually inspected. No page JavaScript errors were observed. These UI checks did not call models, launch Modal jobs, or change the production integration setup.
+
 ## External setup that remains
 
 The production GitHub App registration/installation and GitHub OAuth sign-in require the deployment's own App credentials. Live GitHub testing used a temporary repository webhook and an explicitly development-only GitHub token. The guided App setup and App permissions are implemented, but no production GitHub App has been registered in BerriAI by this work. A private App for BerriAI repositories must be owned by BerriAI; an organization owner may need to create/install it.

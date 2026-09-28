@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useId } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Bot,
@@ -17,15 +17,28 @@ import {
   Globe,
   Monitor,
   Search,
-  Github,
   Loader2,
   Copy,
   Upload,
   CircleHelp,
+  Menu,
+  FileCode2,
+  ArrowLeft,
+  LockKeyhole,
 } from "lucide-react";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "./style.css";
+import {
+  Brand,
+  ProviderMark,
+  Field,
+  Badge,
+  Toggle,
+  Modal,
+  FormSection,
+  Capabilities,
+} from "./ui";
 
 type Row = { id: string; name: string; [key: string]: any };
 type Kind = "agents" | "groups" | "connections" | "skills" | "repos";
@@ -82,93 +95,6 @@ const send = (method: string, body?: unknown) => ({
   method,
   ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
 });
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  const id = useId();
-  return (
-    <div className="field">
-      <label htmlFor={id}>{label}</label>
-      {React.Children.map(children, (child) =>
-        React.isValidElement(child) &&
-        ["input", "textarea", "select"].includes(String(child.type))
-          ? React.cloneElement(child as React.ReactElement<any>, {
-              id,
-              "aria-describedby": hint ? id + "-hint" : undefined,
-            })
-          : child,
-      )}
-      {hint && <small id={id + "-hint"}>{hint}</small>}
-    </div>
-  );
-}
-function Badge({
-  children,
-  tone = "",
-}: {
-  children: React.ReactNode;
-  tone?: string;
-}) {
-  return <span className={"badge " + tone}>{children}</span>;
-}
-function Toggle({
-  checked,
-  onChange,
-  children,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="check">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      {children}
-    </label>
-  );
-}
-function Modal({
-  title,
-  close,
-  children,
-}: {
-  title: string;
-  close: () => void;
-  children: React.ReactNode;
-}) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    ref.current?.showModal();
-  }, []);
-  return (
-    <dialog
-      ref={ref}
-      onCancel={(e) => {
-        e.preventDefault();
-        close();
-      }}
-      aria-labelledby="dialog-title"
-    >
-      <div className="dialog-head">
-        <h2 id="dialog-title">{title}</h2>
-        <button className="icon" aria-label="Close editor" onClick={close}>
-          <X size={20} />
-        </button>
-      </div>
-      {children}
-    </dialog>
-  );
-}
 function App() {
   const [session, setSession] = useState<any>(undefined);
   const [store, setStore] = useState<Store>(empty);
@@ -177,6 +103,8 @@ function App() {
   const [notice, setNotice] = useState("");
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState("github");
+  const [agentFilter, setAgentFilter] = useState("all");
+  const [mobileNav, setMobileNav] = useState(false);
   const [setup, setSetup] = useState<any>({});
   const [runs, setRuns] = useState<Row[]>([]);
   const [run, setRun] = useState<any>(null);
@@ -199,14 +127,36 @@ function App() {
   const navigate = (next: string) => {
     history.pushState({}, "", next);
     setPath(next);
+    setMobileNav(false);
+    setEditor(null);
+    setRun(null);
     setQuery("");
     setError("");
+    setNotice("");
   };
   useEffect(() => {
     const fn = () => setPath(location.pathname);
     addEventListener("popstate", fn);
     return () => removeEventListener("popstate", fn);
   }, []);
+  useEffect(() => {
+    if (!mobileNav) return;
+    const trigger = document.activeElement as HTMLElement | null;
+    document.querySelector<HTMLButtonElement>(".mobile-close")?.focus();
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNav(false);
+    };
+    const resize = () => {
+      if (innerWidth >= 768) setMobileNav(false);
+    };
+    addEventListener("keydown", dismiss);
+    addEventListener("resize", resize);
+    return () => {
+      removeEventListener("keydown", dismiss);
+      removeEventListener("resize", resize);
+      trigger?.focus();
+    };
+  }, [mobileNav]);
   useEffect(() => {
     api("/session")
       .then(setSession)
@@ -262,6 +212,7 @@ function App() {
     }
   };
   const edit = (kind: Kind, item?: Row) => {
+    setNotice("");
     const defaults: Record<Kind, any> = {
       agents: {
         name: "",
@@ -377,12 +328,13 @@ function App() {
   if (!session.user)
     return (
       <div className="login">
+        <div className="login-brand">
+          <Brand />
+        </div>
         <div className="login-card">
-          <div className="brand">
-            <span className="mark">L</span> LiteReview
-          </div>
-          <h1>Your PR review workspace</h1>
-          <p>Sign in to configure your agents and see their reviews.</p>
+          <span className="eyebrow">PR REVIEW WORKSPACE</span>
+          <h1>Sign in to LiteReview</h1>
+          <p>Configure your reviewers. Run them from GitHub.</p>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -415,11 +367,14 @@ function App() {
           </form>
           {session.github_login && (
             <a className="button full" href="/api/auth/github">
-              <Github size={16} />
+              <ProviderMark type="github" />
               Sign in with GitHub
             </a>
           )}
-          <small>Private workspace · Review only</small>
+          <small className="login-note">
+            <LockKeyhole size={13} /> Access is restricted to workspace
+            administrators.
+          </small>
         </div>
       </div>
     );
@@ -433,11 +388,32 @@ function App() {
               tab === "mcp" ? c.type === "mcp" : c.type !== "mcp",
             )
         : store[active as Kind];
-  const filtered = rows.filter((r) =>
-    String(r.name || `${r.repo} ${r.pr}`)
-      .toLowerCase()
-      .includes(query.toLowerCase()),
-  );
+  const filtered = rows.filter((row) => {
+    const searchable = [row.name, row.model, row.description, row.repo, row.pr]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return (
+      searchable.includes(query.toLowerCase()) &&
+      (active !== "agents" ||
+        agentFilter === "all" ||
+        (agentFilter === "code"
+          ? !row.capabilities.length
+          : row.capabilities.includes(agentFilter)))
+    );
+  });
+  const createLabel =
+    active === "agents"
+      ? "Create agent"
+      : active === "groups"
+        ? "Create group"
+        : active === "skills"
+          ? "Create skill"
+          : tab === "github"
+            ? "Add repository"
+            : "Add connection";
+  const PageIcon = icons[active];
+  const isRunDetail = active === "runs" && Boolean(path.split("/")[2]);
   const newKind: Kind =
     active === "connections"
       ? tab === "github"
@@ -446,30 +422,65 @@ function App() {
       : (active as Kind);
   return (
     <div className="app">
-      <aside>
-        <button className="brand" onClick={() => navigate("/")}>
-          <span className="mark">L</span>LiteReview
-        </button>
-        <div className="workspace-label">WORKSPACE</div>
-        <nav>
-          {Object.entries(titles).map(([key, title]) => {
-            const Icon = icons[key as keyof typeof icons];
-            return (
-              <button
-                key={key}
-                aria-label={title}
-                className={active === key ? "selected" : ""}
-                onClick={() => navigate("/" + key)}
-              >
-                <Icon size={18} />
-                {title}
-                {key === "agents" && store.agents.length > 0 && (
-                  <span>{store.agents.length}</span>
-                )}
-              </button>
-            );
-          })}
+      <aside className={mobileNav ? "sidebar open" : "sidebar"}>
+        <div className="sidebar-brand">
+          <button
+            className="brand"
+            aria-label="LiteReview home"
+            onClick={() => navigate("/")}
+          >
+            <Brand />
+          </button>
+          <button
+            className="icon mobile-close"
+            aria-label="Close navigation"
+            onClick={() => setMobileNav(false)}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <nav aria-label="Main navigation">
+          {[
+            ["Review", ["agents", "groups", "runs"]],
+            ["Workspace", ["connections", "skills"]],
+          ].map(([label, keys]) => (
+            <div className="nav-group" key={label as string}>
+              <div className="workspace-label">{label as string}</div>
+              {(keys as string[]).map((key) => {
+                const Icon = icons[key as keyof typeof icons];
+                return (
+                  <button
+                    key={key}
+                    aria-label={titles[key as keyof typeof titles]}
+                    aria-current={active === key ? "page" : undefined}
+                    className={active === key ? "selected" : ""}
+                    onClick={() => navigate("/" + key)}
+                  >
+                    <Icon size={17} />
+                    <span className="nav-label">
+                      {titles[key as keyof typeof titles]}
+                    </span>
+                    {key === "agents" && store.agents.length > 0 && (
+                      <span className="nav-count">{store.agents.length}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
+        <div className="sidebar-help">
+          <a
+            href="https://github.com/BerriAI/litereview#readme"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <BookOpen size={15} /> Documentation <ArrowUpRight size={13} />
+          </a>
+          <span>
+            <LockKeyhole size={13} /> Private workspace
+          </span>
+        </div>
         <div className="sidebar-bottom">
           <span className="avatar">
             {session.user.login.slice(0, 1).toUpperCase()}
@@ -480,7 +491,7 @@ function App() {
                 ? "Workspace owner"
                 : session.user.login}
             </strong>
-            <small>Private workspace</small>
+            <small>Administrator</small>
           </div>
           <button
             className="icon"
@@ -497,30 +508,42 @@ function App() {
           </button>
         </div>
       </aside>
-      <main>
+      {mobileNav && (
+        <button
+          className="nav-scrim"
+          aria-hidden="true"
+          tabIndex={-1}
+          onClick={() => setMobileNav(false)}
+        />
+      )}
+      <main id="main-content" inert={mobileNav}>
         <div className="topbar">
-          Workspace <ChevronRight size={14} />
+          <button
+            className="icon mobile-menu"
+            aria-label="Open navigation"
+            aria-expanded={mobileNav}
+            onClick={() => setMobileNav(true)}
+          >
+            <Menu size={18} />
+          </button>
+          <span className="topbar-product">LiteReview</span>
+          <ChevronRight size={13} />
           <span>{titles[active]}</span>
-          <Badge>v0.1</Badge>
+          <span className="topbar-mode">PR review workspace</span>
         </div>
         <div className="page">
-          <header>
+          <header className="page-heading">
             <div>
-              <h1>{titles[active]}</h1>
+              <div className="title-line">
+                <PageIcon size={22} />
+                <h1>{isRunDetail ? "Review results" : titles[active]}</h1>
+              </div>
               <p>{descriptions[active]}</p>
             </div>
             {active !== "runs" && (
               <button className="primary" onClick={() => edit(newKind)}>
                 <Plus size={16} />
-                {active === "agents"
-                  ? "Create agent"
-                  : active === "groups"
-                    ? "Create group"
-                    : active === "skills"
-                      ? "Create skill"
-                      : tab === "github"
-                        ? "Add repository"
-                        : "Add connection"}
+                {createLabel}
               </button>
             )}
           </header>
@@ -552,6 +575,7 @@ function App() {
                 ].map(([k, t]) => (
                   <button
                     key={k}
+                    aria-pressed={tab === k}
                     className={tab === k ? "active" : ""}
                     onClick={() => {
                       setTab(k);
@@ -565,7 +589,7 @@ function App() {
               {tab === "github" && (
                 <div className="setup-panel">
                   <div className="setup-title">
-                    <Github size={22} />
+                    <ProviderMark type="github" />
                     <div>
                       <h3>
                         {setup.github
@@ -636,7 +660,7 @@ function App() {
           {active === "runs" && path.split("/")[2] ? (
             <>
               <button className="back" onClick={() => navigate("/runs")}>
-                ← All runs
+                <ArrowLeft size={14} /> All runs
               </button>
               {run ? (
                 <div className="run-detail">
@@ -661,11 +685,41 @@ function App() {
                     </Badge>
                     <code>{run.head.slice(0, 12)}</code>
                   </div>
+                  <dl className="run-summary">
+                    <div>
+                      <dt>Reviewers</dt>
+                      <dd>
+                        {run.jobs.length}
+                        <span>
+                          {" "}
+                          independent{" "}
+                          {run.jobs.length === 1 ? "agent" : "agents"}
+                        </span>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Findings</dt>
+                      <dd>
+                        {run.jobs.reduce(
+                          (n: number, job: any) =>
+                            n + (job.result.findings?.length || 0),
+                          0,
+                        )}
+                        <span> reported</span>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Triggered by</dt>
+                      <dd className="summary-caller">{run.actor}</dd>
+                    </div>
+                  </dl>
                   {run.error && <div className="error">{run.error}</div>}
-                  {run.jobs.map((job: any) => (
+                  {run.jobs.map((job: any, index: number) => (
                     <article className="job" key={job.id}>
                       <div className="job-title">
-                        <Bot size={19} />
+                        <span className="job-number">
+                          {String(index + 1).padStart(2, "0")}
+                        </span>
                         <h3>{job.config.name}</h3>
                         <span>
                           {job.config.group} · Instance {job.config.instance}
@@ -688,12 +742,7 @@ function App() {
                         </Badge>
                       </div>
                       <p className="meta">
-                        {job.config.model} · {job.model_calls} model calls{" "}
-                        {job.sandbox_id && (
-                          <>
-                            · Sandbox <code>{job.sandbox_id}</code>
-                          </>
-                        )}
+                        <code>{job.config.model}</code>
                       </p>
                       {job.result.summary && <p>{job.result.summary}</p>}
                       {job.status === "completed" &&
@@ -725,11 +774,29 @@ function App() {
                             {f.title}
                           </h4>
                           <p>{f.explanation}</p>
+                          {f.evidence?.length > 0 && (
+                            <ul className="finding-evidence">
+                              {f.evidence.map(
+                                (evidence: string, idx: number) => (
+                                  <li key={idx}>{evidence}</li>
+                                ),
+                              )}
+                            </ul>
+                          )}
                           {f.file && (
-                            <code>
-                              {f.file}
-                              {f.line ? ":" + f.line : ""}
-                            </code>
+                            <a
+                              className="source-link"
+                              href={`https://github.com/${run.repo}/blob/${run.head}/${f.file.split("/").map(encodeURIComponent).join("/")}${f.line ? "#L" + f.line : ""}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <FileCode2 size={13} />
+                              <code>
+                                {f.file}
+                                {f.line ? ":" + f.line : ""}
+                              </code>
+                              <ArrowUpRight size={12} />
+                            </a>
                           )}
                         </div>
                       ))}
@@ -756,7 +823,17 @@ function App() {
                         </details>
                       )}
                       <details>
-                        <summary>Activity · {job.logs.length} events</summary>
+                        <summary>
+                          Activity & execution · {job.logs.length} events
+                        </summary>
+                        <div className="execution-meta">
+                          <span>{job.model_calls} model calls</span>
+                          {job.sandbox_id && (
+                            <span>
+                              Sandbox <code>{job.sandbox_id}</code>
+                            </span>
+                          )}
+                        </div>
                         <div className="logs">
                           {job.logs.map((l: any, i: number) => (
                             <div key={i}>
@@ -780,6 +857,28 @@ function App() {
             </>
           ) : (
             <>
+              {active === "agents" && (
+                <div className="tabs agent-tabs" aria-label="Filter agents">
+                  {[
+                    ["all", "All agents"],
+                    ["code", "Code only"],
+                    ["browser", "Browser"],
+                    ["computer", "Computer use"],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      aria-pressed={agentFilter === value}
+                      className={agentFilter === value ? "active" : ""}
+                      onClick={() => setAgentFilter(value)}
+                    >
+                      {label}
+                      {value === "all" && (
+                        <span className="tab-count">{store.agents.length}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="table-toolbar">
                 <div className="search">
                   <Search size={16} />
@@ -798,8 +897,18 @@ function App() {
                     onChange={(e) => setQuery(e.target.value)}
                   />
                 </div>
-                <span>
-                  {rows.length} {rows.length === 1 ? "item" : "items"}
+                <span className="result-count">
+                  {filtered.length}
+                  {filtered.length !== rows.length
+                    ? ` of ${rows.length}`
+                    : ""}{" "}
+                  {active === "connections"
+                    ? tab === "github"
+                      ? "repositories"
+                      : "connections"
+                    : active === "runs"
+                      ? "runs"
+                      : active}
                 </span>
               </div>
               {filtered.length === 0 ? (
@@ -810,7 +919,19 @@ function App() {
                   <h3>
                     {query
                       ? "No matches"
-                      : `No ${active === "connections" ? (tab === "github" ? "repositories connected" : "connections yet") : titles[active].toLowerCase() + " yet"}`}
+                      : active === "agents" && agentFilter !== "all"
+                        ? "No agents with this capability"
+                        : active === "agents"
+                          ? "Create your first PR agent"
+                          : active === "groups"
+                            ? "Build a review group"
+                            : active === "skills"
+                              ? "Add your review playbook"
+                              : active === "runs"
+                                ? "Your reviews will appear here"
+                                : tab === "github"
+                                  ? "Connect a repository"
+                                  : "Add your first connection"}
                   </h3>
                   <p>
                     {query
@@ -833,7 +954,7 @@ function App() {
                     >
                       {active === "agents" && !modelConnections.length
                         ? "Connect a model"
-                        : "Get started"}
+                        : createLabel}
                       <ChevronRight size={15} />
                     </button>
                   )}
@@ -873,13 +994,15 @@ function App() {
                                   ? "Started"
                                   : "Connection"}
                         </th>
-                        <th>
-                          {active === "agents"
-                            ? "Groups"
-                            : active === "groups"
-                              ? "GitHub command"
-                              : ""}
-                        </th>
+                        {(active === "agents" || active === "groups") && (
+                          <th>
+                            {active === "agents"
+                              ? "Groups"
+                              : active === "groups"
+                                ? "GitHub command"
+                                : ""}
+                          </th>
+                        )}
                         <th>
                           <span className="sr-only">Actions</span>
                         </th>
@@ -905,7 +1028,7 @@ function App() {
                               {active === "groups" || active === "skills"
                                 ? row.description
                                 : active === "agents"
-                                  ? `${row.skill_ids.length} skills · ${row.mcps.length} MCP connections`
+                                  ? `${row.skill_ids.length} ${row.skill_ids.length === 1 ? "skill" : "skills"} · ${row.mcps.length} MCP ${row.mcps.length === 1 ? "connection" : "connections"}`
                                   : active === "runs"
                                     ? row.head.slice(0, 12)
                                     : ""}
@@ -913,9 +1036,28 @@ function App() {
                           </td>
                           <td>
                             {active === "agents" ? (
-                              <code>{row.model}</code>
+                              <div className="model-cell">
+                                <code>{row.model}</code>
+                                <small>
+                                  {store.connections.find(
+                                    (c) => c.id === row.connection_id,
+                                  )?.name || "Connection unavailable"}
+                                </small>
+                              </div>
                             ) : active === "groups" ? (
-                              `${row.members.reduce((a: number, m: any) => a + m.count, 0)} instances · ${row.members.length} agents`
+                              <span>
+                                {row.members.reduce(
+                                  (a: number, m: any) => a + m.count,
+                                  0,
+                                )}{" "}
+                                instances
+                                <small>
+                                  {row.members.length} reusable{" "}
+                                  {row.members.length === 1
+                                    ? "agent"
+                                    : "agents"}
+                                </small>
+                              </span>
                             ) : active === "skills" ? (
                               `${store.agents.filter((a) => a.skill_ids.includes(row.id)).length} agents`
                             ) : active === "runs" ? (
@@ -937,21 +1079,26 @@ function App() {
                                 "Repository only"
                               )
                             ) : (
-                              <Badge>{row.type}</Badge>
+                              <span className="connection-type">
+                                <ProviderMark type={row.type} />
+                                {{
+                                  gateway: "Gateway",
+                                  openai: "OpenAI",
+                                  anthropic: "Anthropic",
+                                  mcp: "MCP",
+                                }[row.type as string] || row.type}
+                              </span>
                             )}
                           </td>
                           <td>
                             {active === "agents" ? (
-                              <div className="badges">
-                                <Badge>Repository</Badge>
-                                {row.capabilities.map((c: string) => (
-                                  <Badge key={c}>
-                                    {c === "computer" ? "Computer use" : c}
-                                  </Badge>
+                              <Capabilities values={row.capabilities} />
+                            ) : active === "groups" ? (
+                              <div className="repo-list">
+                                {row.repos.map((repo: string) => (
+                                  <span key={repo}>{repo}</span>
                                 ))}
                               </div>
-                            ) : active === "groups" ? (
-                              row.repos.join(", ")
                             ) : active === "skills" ? (
                               `${Object.keys(row.files || {}).length} files`
                             ) : active === "runs" ? (
@@ -964,35 +1111,45 @@ function App() {
                               </span>
                             )}
                           </td>
-                          <td>
-                            {active === "agents" ? (
-                              store.groups
-                                .filter((g) =>
-                                  g.members.some(
-                                    (m: any) => m.agent_id === row.id,
-                                  ),
-                                )
-                                .map((g) => <Badge key={g.id}>{g.name}</Badge>)
-                            ) : active === "groups" ? (
-                              <button
-                                className="copy"
-                                title="Copy GitHub command"
-                                onClick={() => {
-                                  navigator.clipboard
-                                    .writeText("@litereview " + row.name)
-                                    .then(() => setNotice("Command copied."))
-                                    .catch(() =>
-                                      setError(
-                                        "Could not access the clipboard. Copy the command text.",
-                                      ),
-                                    );
-                                }}
-                              >
-                                <code>@litereview {row.name}</code>
-                                <Copy size={13} />
-                              </button>
-                            ) : null}
-                          </td>
+                          {(active === "agents" || active === "groups") && (
+                            <td>
+                              {active === "agents" ? (
+                                store.groups
+                                  .filter((g) =>
+                                    g.members.some(
+                                      (m: any) => m.agent_id === row.id,
+                                    ),
+                                  )
+                                  .map((g) => (
+                                    <button
+                                      className="inline-link group-link"
+                                      key={g.id}
+                                      onClick={() => edit("groups", g)}
+                                    >
+                                      {g.name}
+                                    </button>
+                                  ))
+                              ) : active === "groups" ? (
+                                <button
+                                  className="copy"
+                                  title="Copy GitHub command"
+                                  onClick={() => {
+                                    navigator.clipboard
+                                      .writeText("@litereview " + row.name)
+                                      .then(() => setNotice("Command copied."))
+                                      .catch(() =>
+                                        setError(
+                                          "Could not access the clipboard. Copy the command text.",
+                                        ),
+                                      );
+                                  }}
+                                >
+                                  <code>@litereview {row.name}</code>
+                                  <Copy size={13} />
+                                </button>
+                              ) : null}
+                            </td>
+                          )}
                           <td className="row-actions">
                             {active === "connections" && tab !== "github" && (
                               <button
@@ -1004,6 +1161,7 @@ function App() {
                             )}
                             {active === "agents" && (
                               <button
+                                className="quiet-action"
                                 disabled={busy}
                                 onClick={() =>
                                   mutate(async () => {
@@ -1047,7 +1205,7 @@ function App() {
               )}
               {active === "groups" && store.groups.length > 0 && (
                 <div className="info">
-                  <Github size={16} />
+                  <ProviderMark type="github" />
                   <span>
                     Call several groups together:{" "}
                     <code>
@@ -1067,6 +1225,19 @@ function App() {
       </main>
       {editor && (
         <Modal
+          page={["agents", "groups", "skills", "repos"].includes(editor.kind)}
+          description={
+            {
+              agents:
+                "Set the model, review instructions, and tools for this reusable agent.",
+              groups:
+                "Choose agents, set instance counts, and control access from GitHub.",
+              skills: "Write instructions once and attach them to any agent.",
+              repos: "Configure the environment used to run this repository.",
+              connections:
+                "Make a provider or tool server available to your agents.",
+            }[editor.kind]
+          }
           title={
             (editor.id ? "Edit " : "Create ") +
             {
@@ -1079,58 +1250,84 @@ function App() {
           }
           close={() => !busy && setEditor(null)}
         >
-          <form onSubmit={save}>
-            <div className="dialog-body">
-              {editor.kind === "repos" ? (
-                <Field
-                  label="Repository"
-                  hint="Select a repository from the GitHub App installation, or enter owner/repo."
-                >
-                  <input
-                    list="repo-list"
-                    value={editor.data.name}
-                    onChange={(e) => {
-                      update("name", e.target.value);
-                      const match = availableRepos.find(
-                        (r) => r.name === e.target.value,
-                      );
-                      if (match)
-                        update("installation_id", match.installation_id);
-                    }}
-                    placeholder="BerriAI/my-repo"
-                    required
-                  />
-                  <datalist id="repo-list">
-                    {availableRepos.map((r) => (
-                      <option key={r.name} value={r.name} />
-                    ))}
-                  </datalist>
-                </Field>
-              ) : (
-                <Field
-                  label={editor.kind === "groups" ? "Command name" : "Name"}
-                  hint={
-                    editor.kind === "groups"
-                      ? "Used in GitHub comments: @litereview " +
-                        (editor.data.name || "group-name")
-                      : undefined
-                  }
-                >
-                  <input
-                    value={editor.data.name}
-                    onChange={(e) => update("name", e.target.value)}
-                    required
-                    maxLength={editor.kind === "groups" ? 40 : 100}
-                    placeholder={
-                      editor.kind === "agents"
-                        ? "Frontend reviewer"
-                        : editor.kind === "groups"
-                          ? "frontend"
-                          : ""
+          <form onSubmit={save} className="resource-editor-form">
+            <div className={"dialog-body resource-form " + editor.kind}>
+              <FormSection
+                title={
+                  editor.kind === "groups"
+                    ? "Group details"
+                    : editor.kind === "repos"
+                      ? "Repository"
+                      : "Details"
+                }
+                description={
+                  editor.kind === "groups"
+                    ? "The command name is how you call this group in a PR."
+                    : editor.kind === "agents"
+                      ? "Give this reviewer a name that describes its job."
+                      : "Identify this resource in your workspace."
+                }
+              >
+                {editor.kind === "repos" ? (
+                  <Field
+                    label="Repository"
+                    hint="Select a repository from the GitHub App installation, or enter owner/repo."
+                  >
+                    <input
+                      list="repo-list"
+                      value={editor.data.name}
+                      onChange={(e) => {
+                        update("name", e.target.value);
+                        const match = availableRepos.find(
+                          (r) => r.name === e.target.value,
+                        );
+                        if (match)
+                          update("installation_id", match.installation_id);
+                      }}
+                      placeholder="BerriAI/my-repo"
+                      required
+                    />
+                    <datalist id="repo-list">
+                      {availableRepos.map((r) => (
+                        <option key={r.name} value={r.name} />
+                      ))}
+                    </datalist>
+                  </Field>
+                ) : (
+                  <Field
+                    label={editor.kind === "groups" ? "Command name" : "Name"}
+                    hint={
+                      editor.kind === "groups"
+                        ? "Used in GitHub comments: @litereview " +
+                          (editor.data.name || "group-name")
+                        : undefined
                     }
-                  />
-                </Field>
-              )}
+                  >
+                    <input
+                      value={editor.data.name}
+                      onChange={(e) => update("name", e.target.value)}
+                      required
+                      maxLength={editor.kind === "groups" ? 40 : 100}
+                      placeholder={
+                        editor.kind === "agents"
+                          ? "Frontend reviewer"
+                          : editor.kind === "groups"
+                            ? "frontend"
+                            : ""
+                      }
+                    />
+                  </Field>
+                )}
+                {editor.kind === "groups" && (
+                  <Field label="Description">
+                    <input
+                      value={editor.data.description}
+                      onChange={(e) => update("description", e.target.value)}
+                      placeholder="What does this group review?"
+                    />
+                  </Field>
+                )}
+              </FormSection>
               {editor.kind === "agents" && (
                 <>
                   {editor.id &&
@@ -1150,68 +1347,90 @@ function App() {
                         .
                       </div>
                     )}
-                  <div className="form-grid">
-                    <Field label="Model connection">
-                      <select
-                        value={editor.data.connection_id}
-                        onChange={(e) =>
-                          update("connection_id", e.target.value)
-                        }
-                        required
-                      >
-                        <option value="">Choose connection</option>
-                        {modelConnections.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field
-                      label="Model"
-                      hint="Enter a model ID or load available models."
-                    >
-                      <input
-                        list="model-list"
-                        value={editor.data.model}
-                        onChange={(e) => update("model", e.target.value)}
-                        required
-                        placeholder="Model ID"
-                      />
-                      <datalist id="model-list">
-                        {(models[editor.data.connection_id] || []).map((m) => (
-                          <option key={m} value={m} />
-                        ))}
-                      </datalist>
-                    </Field>
-                  </div>
-                  <button
-                    type="button"
-                    className="text-button"
-                    disabled={busy || !editor.data.connection_id}
-                    onClick={() => {
-                      const c = store.connections.find(
-                        (c) => c.id === editor.data.connection_id,
-                      );
-                      if (c) testConnection(c);
-                    }}
+                  <FormSection
+                    title="Model"
+                    description="Choose a connection and the model this agent uses for every review."
                   >
-                    Load available models
-                  </button>
-                  <Field label="Review instructions">
-                    <textarea
-                      rows={5}
-                      value={editor.data.instructions}
-                      onChange={(e) => update("instructions", e.target.value)}
-                      required
-                    />
-                  </Field>
-                  <fieldset>
-                    <legend>Capabilities</legend>
-                    <p>
-                      Every agent gets its own Modal sandbox. Repository reading
-                      and search are always included.
-                    </p>
+                    <div className="form-grid">
+                      <Field label="Model connection">
+                        <select
+                          value={editor.data.connection_id}
+                          onChange={(e) =>
+                            update("connection_id", e.target.value)
+                          }
+                          required
+                        >
+                          <option value="">Choose connection</option>
+                          {modelConnections.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field
+                        label="Model"
+                        hint="Enter a model ID or load available models."
+                      >
+                        <input
+                          list="model-list"
+                          value={editor.data.model}
+                          onChange={(e) => update("model", e.target.value)}
+                          required
+                          placeholder="Model ID"
+                        />
+                        <datalist id="model-list">
+                          {(models[editor.data.connection_id] || []).map(
+                            (m) => (
+                              <option key={m} value={m} />
+                            ),
+                          )}
+                        </datalist>
+                      </Field>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={busy || !editor.data.connection_id}
+                      onClick={() => {
+                        const c = store.connections.find(
+                          (c) => c.id === editor.data.connection_id,
+                        );
+                        if (c) testConnection(c);
+                      }}
+                    >
+                      Load available models
+                    </button>
+                  </FormSection>
+                  <FormSection
+                    title="Review instructions"
+                    description="Define what to look for and the evidence you expect in a finding."
+                  >
+                    <Field label="Review instructions">
+                      <textarea
+                        rows={5}
+                        value={editor.data.instructions}
+                        onChange={(e) => update("instructions", e.target.value)}
+                        required
+                      />
+                    </Field>
+                  </FormSection>
+                  <FormSection
+                    title="Tools & environment"
+                    description="Each instance runs in its own Modal sandbox. Enable the tools this reviewer needs."
+                  >
+                    <div className="included-capability">
+                      <FileCode2 size={18} />
+                      <span>
+                        <strong>Repository access</strong>
+                        <small>
+                          Read files, search code, and inspect the PR diff.
+                        </small>
+                      </span>
+                      <span className="included-label">
+                        <Check size={13} /> Always included
+                      </span>
+                    </div>
                     <div className="capabilities">
                       {[
                         [
@@ -1255,9 +1474,11 @@ function App() {
                                 )
                               }
                             />
-                            <I size={20} />
-                            <strong>{label as string}</strong>
-                            <small>{desc as string}</small>
+                            <I size={18} />
+                            <span className="capability-description">
+                              <strong>{label as string}</strong>
+                              <small>{desc as string}</small>
+                            </span>
                           </label>
                         );
                       })}
@@ -1266,9 +1487,11 @@ function App() {
                       Browser and computer use require a model that supports
                       images and tools. Screenshots are sent to the model.
                     </small>
-                  </fieldset>
-                  <fieldset>
-                    <legend>Skills</legend>
+                  </FormSection>
+                  <FormSection
+                    title="Skills"
+                    description="Attach reusable instructions and supporting files. The same skill can guide multiple agents."
+                  >
                     {!store.skills.length ? (
                       <p>Create reusable instructions on the Skills page.</p>
                     ) : (
@@ -1285,9 +1508,11 @@ function App() {
                         </Toggle>
                       ))
                     )}
-                  </fieldset>
-                  <fieldset>
-                    <legend>MCP tools</legend>
+                  </FormSection>
+                  <FormSection
+                    title="MCP tools"
+                    description="Select tools from your shared connections. Only selected tools are available to this agent."
+                  >
                     {!mcpConnections.length ? (
                       <p>
                         Add and test an MCP server under Connections to select
@@ -1342,29 +1567,30 @@ function App() {
                         </div>
                       ))
                     )}
-                  </fieldset>
+                  </FormSection>
                 </>
               )}
               {editor.kind === "groups" && (
                 <>
-                  <Field label="Description">
-                    <input
-                      value={editor.data.description}
-                      onChange={(e) => update("description", e.target.value)}
-                    />
-                  </Field>
-                  <fieldset>
-                    <legend>Agents in this group</legend>
-                    <p>
-                      Reuse existing agents. Each instance runs independently.
-                    </p>
+                  <FormSection
+                    title="Agents in this group"
+                    description="Add existing PR agents and choose how many instances of each to run in parallel."
+                  >
                     {editor.data.members.map((m: any, i: number) => (
                       <div className="member" key={m.agent_id}>
                         <Bot size={18} />
-                        <strong>
-                          {store.agents.find((a) => a.id === m.agent_id)
-                            ?.name || "Missing agent"}
-                        </strong>
+                        <div className="member-identity">
+                          <strong>
+                            {store.agents.find((a) => a.id === m.agent_id)
+                              ?.name || "Missing agent"}
+                          </strong>
+                          <small>
+                            {
+                              store.agents.find((a) => a.id === m.agent_id)
+                                ?.model
+                            }
+                          </small>
+                        </div>
                         <label>
                           Instances
                           <input
@@ -1431,9 +1657,12 @@ function App() {
                         Create your first PR agent before creating a group.
                       </small>
                     )}
-                  </fieldset>
-                  <fieldset>
-                    <legend>Allowed repositories</legend>
+                  </FormSection>
+                  <FormSection
+                    title="Repository access"
+                    description="This group can only be called from these repositories."
+                  >
+                    <h4 className="field-label">Allowed repositories</h4>
                     {store.repos.map((r) => (
                       <Toggle
                         key={r.id}
@@ -1446,39 +1675,49 @@ function App() {
                     {!store.repos.length && (
                       <p>Add repositories under Connections → GitHub.</p>
                     )}
-                  </fieldset>
-                  <Field label="Who can call this group?">
-                    <select
-                      value={editor.data.caller_policy}
-                      onChange={(e) => update("caller_policy", e.target.value)}
-                    >
-                      <option value="collaborators">
-                        Repository collaborators with write access
-                      </option>
-                      <option value="allowlist">Specific GitHub users</option>
-                    </select>
-                  </Field>
-                  {editor.data.caller_policy === "allowlist" && (
-                    <Field
-                      label="Allowed GitHub usernames"
-                      hint="Comma-separated. Users must also have access to the repository."
-                    >
-                      <input
-                        value={editor.data.callers.join(", ")}
+                  </FormSection>
+                  <FormSection
+                    title="Caller access"
+                    description="Control who can start these reviews from a GitHub comment."
+                  >
+                    <Field label="Who can call this group?">
+                      <select
+                        value={editor.data.caller_policy}
                         onChange={(e) =>
-                          update(
-                            "callers",
-                            e.target.value.split(",").map((v) => v.trim()),
-                          )
+                          update("caller_policy", e.target.value)
                         }
-                        required
-                      />
+                      >
+                        <option value="collaborators">
+                          Repository collaborators with write access
+                        </option>
+                        <option value="allowlist">Specific GitHub users</option>
+                      </select>
                     </Field>
-                  )}
+                    {editor.data.caller_policy === "allowlist" && (
+                      <Field
+                        label="Allowed GitHub usernames"
+                        hint="Comma-separated. Users must also have access to the repository."
+                      >
+                        <input
+                          value={editor.data.callers.join(", ")}
+                          onChange={(e) =>
+                            update(
+                              "callers",
+                              e.target.value.split(",").map((v) => v.trim()),
+                            )
+                          }
+                          required
+                        />
+                      </Field>
+                    )}
+                  </FormSection>
                 </>
               )}
               {editor.kind === "connections" && (
-                <>
+                <FormSection
+                  title="Connection"
+                  description="Credentials are stored securely and shared only through the review service."
+                >
                   <Field label="Connection type">
                     <select
                       value={editor.data.type}
@@ -1533,10 +1772,13 @@ function App() {
                     Save the connection, then use Test to discover{" "}
                     {editor.data.type === "mcp" ? "tools" : "models"}.
                   </div>
-                </>
+                </FormSection>
               )}
               {editor.kind === "skills" && (
-                <>
+                <FormSection
+                  title="Skill contents"
+                  description="Write in Markdown or upload a skill folder containing SKILL.md and supporting files."
+                >
                   <Field label="Description">
                     <input
                       value={editor.data.description}
@@ -1592,10 +1834,13 @@ function App() {
                       ))}
                     </div>
                   )}
-                </>
+                </FormSection>
               )}
               {editor.kind === "repos" && (
-                <>
+                <FormSection
+                  title="Review environment"
+                  description="Prepare and launch the app inside each sandbox for terminal, browser, or computer reviews."
+                >
                   <Field
                     label="Installation ID"
                     hint="Filled automatically when you select a discovered repository."
@@ -1672,7 +1917,13 @@ function App() {
                       }}
                     />
                   </Field>
-                </>
+                </FormSection>
+              )}
+              {notice && (
+                <div className="notice" role="status">
+                  <Check size={15} />
+                  {notice}
+                </div>
               )}
               {formError && (
                 <div role="alert" className="error">
@@ -1681,6 +1932,22 @@ function App() {
               )}
             </div>
             <footer>
+              <div className="editor-footer-note">
+                {editor.kind === "groups" ? (
+                  <>
+                    <code>@litereview {editor.data.name || "group-name"}</code>
+                    <small>
+                      {editor.data.members.reduce(
+                        (count: number, member: any) => count + member.count,
+                        0,
+                      )}{" "}
+                      instances · independent sandboxes
+                    </small>
+                  </>
+                ) : (
+                  <span>Changes apply to future reviews.</span>
+                )}
+              </div>
               <button
                 type="button"
                 disabled={busy}
