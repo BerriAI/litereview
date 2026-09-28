@@ -23,6 +23,19 @@ The mixed-model run also exposed a review-quality difference: Haiku returned no 
 
 The PR originally contained two intentional defects at `914a25c0af107b86a555edaa51e5f83800752e08`. Its head was subsequently restored to correct behavior with a comment-only change for the clean-result test. Old review comments retain their original commit references.
 
+## Full application and internet check
+
+A fresh real Modal sandbox also built and ran LiteReview itself from PR #1 at `00fb8ded67b6f8fc57f16e1f92187b3f943d9e0e`. This check uses the production sandbox image, archive extractor, and tool implementation; it drives the tools deterministically, then sends the resulting desktop screenshot to the real gateway model. The autonomous agent/webhook path was tested separately above.
+
+- All 37 extracted source files matched SHA-256 hashes of the private GitHub archive fetched on the host. GitHub credentials stayed outside the sandbox.
+- Outbound HTTPS inside the sandbox returned HTTP 200 from GitHub's API, npm, PyPI, and example.com. Chromium separately loaded the public Python documentation and returned a screenshot.
+- The configured setup command installed Python dependencies with `uv sync --frozen --no-dev`, installed Node dependencies with `npm ci --prefix frontend`, and built the frontend. The configured start command launched the FastAPI server. Setup plus readiness completed in 21.1 seconds in this run; that is an observation, not a startup guarantee.
+- Browser tools signed into the disposable app, opened the agent editor, and navigated to agent groups. Desktop keyboard tools navigated back to the app and returned a full 1280×900 screenshot. No page JavaScript errors were observed.
+- Claude Haiku 4.5 through the real gateway correctly transcribed “LiteReview”, “PR agents”, and “Create agent” from the desktop screenshot. The disposable app used test-only local credentials, with dispatch disabled.
+- The sandbox was terminated after the check. The repeatable command is `uv run python -m scripts.modal_app_smoke --repo BerriAI/litereview --pr 1`; it executes the selected PR and consumes Modal/model credits. JSON evidence and PNGs are saved locally in ignored `.test-artifacts/app-smoke-*` files.
+
+This confirms the tested PR can install dependencies, build, run, access the internet, and be inspected visually. It is not a guarantee that arbitrary repositories boot without configuration. Setup/start commands, service dependencies, private registry access, and test accounts remain repository-specific. The current checkout is a source archive: no `.git` history, submodule/LFS materialization, or symlink preservation.
+
 ## Automated checks
 
 - 25 tests cover signature/authentication checks, access policy, duplicate webhook deliveries, independent group expansion, immutable configuration, credential redaction, job-token expiry and budgets, MCP access enforcement, archive traversal, screenshot access, cleanup, rejected commands, and result formatting.
