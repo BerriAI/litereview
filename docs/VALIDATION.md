@@ -14,10 +14,12 @@ Validated on 28 September 2026 using the private repository, a real LiteLLM gate
 | Clean result | [No findings](https://github.com/BerriAI/litereview/pull/1#issuecomment-5880008939) on a comment-only change, with an empty limitations list |
 | Failure result | [Expected invalid-model failure](https://github.com/BerriAI/litereview/pull/1#issuecomment-5879912474), explicitly incomplete rather than no findings |
 | Invalid command | [Review not started](https://github.com/BerriAI/litereview/pull/1#issuecomment-5880009727); no agent jobs created |
-| Multiple model types | Real gateway requests used Claude Haiku 4.5 and GPT-4o mini; the latter completed the clean review |
+| Multiple model types | [A mixed-model run](https://github.com/BerriAI/litereview/pull/1#issuecomment-5880148618) ran Claude Haiku 4.5 and GPT-4o mini concurrently in separate sandboxes; GPT-4o mini also completed the earlier clean review |
 | Sandbox cleanup | All eight sandboxes from the initial seven-agent + desktop runs exited with code 0; a separate real 10-second hard-timeout test raised the expected Modal timeout, and cleanup/status handling is also covered by tests |
 
 The visual fixture draws its button text on canvas. The browser's accessibility tree still contains the button name when its text becomes invisible; the screenshots establish the rendered defect. Browser and desktop evidence showed the confirmation state after interacting.
+
+The mixed-model run also exposed a review-quality difference: Haiku returned no findings on the comment-only change, while GPT-4o mini reported a non-actionable comment-clarity nit. V1 intentionally publishes independent agent outputs; it has no judge/filter that guarantees finding quality. This is useful evidence when choosing models and instructions, rather than a claim that every finding is correct.
 
 The PR originally contained two intentional defects at `914a25c0af107b86a555edaa51e5f83800752e08`. Its head was subsequently restored to correct behavior with a comment-only change for the clean-result test. Old review comments retain their original commit references.
 
@@ -33,6 +35,6 @@ The PR originally contained two intentional defects at `914a25c0af107b86a555edaa
 
 The production GitHub App registration/installation and GitHub OAuth sign-in require the deployment's own App credentials. Live GitHub testing used a temporary repository webhook and an explicitly development-only GitHub token. The guided App setup and App permissions are implemented, but no production GitHub App has been registered in BerriAI by this work. A private App for BerriAI repositories must be owned by BerriAI; an organization owner may need to create/install it.
 
-The application has not been deployed to Render. The checked-in Blueprint and Docker image are the deployment path. Modal and the real gateway were exercised from a temporary HTTPS development endpoint. Temporary test webhook/servers should be removed after validation; persistent settings belong in the Render deployment.
+The application has not been deployed to Render. The checked-in Blueprint and Docker image are the deployment path. Modal and the real gateway were exercised from a temporary HTTPS development endpoint. The temporary repository webhook and test-only MCP/error/clean-review configurations were removed after validation. Temporary servers were stopped; run history and screenshots remain in the local database. Persistent settings belong in the Render deployment.
 
 No direct OpenAI or Anthropic account credentials were provided, so live direct-provider account verification remains outside this run. Gateway calls and protocol-level adapter tests passed.
