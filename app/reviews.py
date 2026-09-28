@@ -45,13 +45,42 @@ def expand(groups, resources):
                 if len(definitions) != len(selected):
                     raise HTTPException(409, "An MCP tool changed; test the connection and update the agent.")
                 data["mcp_definitions"].append(
-                    {"id": resource.id, "name": resource.data["name"], "tools": definitions}
+                    {
+                        "id": resource.id,
+                        "name": resource.data["name"],
+                        "type": "mcp",
+                        "base_url": resource.data["base_url"],
+                        "tools": definitions,
+                    }
                 )
             for instance in range(1, member["count"] + 1):
                 jobs.append({**data, "agent_id": agent.id, "group": group["name"], "instance": instance})
     if len(jobs) > 30:
         raise HTTPException(400, "A review can launch at most 30 agent instances.")
     return jobs
+
+
+def reject_command(delivery, repo, pr, actor, installation, reason):
+    run = Run(
+        id=uid(),
+        delivery=delivery,
+        repo=repo,
+        pr=pr,
+        actor=actor,
+        installation=installation,
+        head="",
+        base="",
+        status="rejected",
+        snapshot={"rejection": reason},
+    )
+    with Session() as db:
+        db.add(run)
+        try:
+            db.commit()
+            return run.id
+        except IntegrityError:
+            db.rollback()
+            return db.scalar(select(Run).where(Run.delivery == delivery)).id
 
 
 async def accept(payload, delivery):
@@ -90,13 +119,24 @@ async def accept(payload, delivery):
             allowed = allowed and perm in ("write", "maintain", "admin")
         if not allowed:
             # Generic rejection avoids exposing group membership to unauthorized readers.
-            raise HTTPException(403, "This review command is unavailable for this repository or caller.")
+            return reject_command(
+                delivery,
+                repo,
+                pr,
+                actor,
+                installation,
+                "This review command is unavailable for this repository or caller. Check the group names and access settings in LiteReview.",
+            )
         selected.append(group)
     pr_info = (await github.repo_request(repo, installation, "GET", f"pulls/{pr}")).json()
     if pr_info["state"] != "open":
-        raise HTTPException(400, "LiteReview only reviews open pull requests.")
+        return reject_command(
+            delivery, repo, pr, actor, installation, "LiteReview only reviews open pull requests."
+        )
     if pr_info.get("changed_files", 0) > 300:
-        raise HTTPException(400, "This PR exceeds the v1 limit of 300 changed files.")
+        return reject_command(
+            delivery, repo, pr, actor, installation, "This PR exceeds the v1 limit of 300 changed files."
+        )
     head, base = pr_info["head"]["sha"], pr_info["base"]["sha"]
     diff = (
         await github.repo_request(
@@ -108,7 +148,9 @@ async def accept(payload, delivery):
         )
     ).text
     if len(diff) > 2_000_000:
-        raise HTTPException(400, "The PR diff exceeds the v1 limit of 2 MB.")
+        return reject_command(
+            delivery, repo, pr, actor, installation, "The PR diff exceeds the v1 limit of 2 MB."
+        )
     repository = {k: v for k, v in repos[0].data.items() if k != "test_secrets"}
     repository["id"] = repos[0].id
     run = Run(
@@ -147,6 +189,8 @@ def md(value):
 
 
 def render_comment(run, jobs, newer=False):
+    if run.status == "rejected":
+        return f"<!-- litereview:{run.id} -->\n### LiteReview · Review not started\n\n{md(run.snapshot['rejection'])}"
     done = all(j.status in TERMINAL for j in jobs)
     title = "Review complete" if done else "Review in progress"
     if done and any(j.status != "completed" or j.result.get("limitations") for j in jobs):
@@ -160,6 +204,7 @@ def render_comment(run, jobs, newer=False):
     if newer:
         lines += ["**Newer commits exist. These results apply to the commit above.**", ""]
     for job in jobs:
+        section_start = len(lines)
         c = job.config
         lines += [f"### {md(c['group'])} / {md(c['name'])} · {c['instance']}", ""]
         if job.status not in TERMINAL:
@@ -187,6 +232,15 @@ def render_comment(run, jobs, newer=False):
         for limit in result.get("limitations", []):
             lines += [f"- Limitation: {md(limit)}"]
         lines += [""]
+        section = "\n".join(lines[section_start:])
+        budget = max(1200, 50000 // max(1, len(jobs)))
+        if len(section) > budget:
+            lines[section_start:] = [
+                section[:budget],
+                "",
+                "Additional details are available in the full run below.",
+                "",
+            ]
     lines += [f"[View run and screenshots]({settings().public_url}/runs/{run.id})"]
     return "\n".join(lines)[:60000]
 
@@ -199,7 +253,7 @@ async def publish(run_id):
         if run.published == 2 or (run.published == 1 and not done):
             return
     newer = False
-    if done:
+    if done and run.status != "rejected":
         info = (await github.repo_request(run.repo, run.installation, "GET", f"pulls/{run.pr}")).json()
         newer = info["head"]["sha"] != run.head
     body = render_comment(run, jobs, newer)
@@ -241,11 +295,15 @@ async def publish(run_id):
         saved.comment_id = run.comment_id
         saved.published = 2 if done else 1
         saved.status = (
-            "completed"
-            if done and all(j.status == "completed" and not j.result.get("limitations") for j in jobs)
-            else "incomplete"
-            if done
-            else "running"
+            "rejected"
+            if run.status == "rejected"
+            else (
+                "completed"
+                if done and all(j.status == "completed" and not j.result.get("limitations") for j in jobs)
+                else "incomplete"
+                if done
+                else "running"
+            )
         )
         saved.error = ""
         db.commit()

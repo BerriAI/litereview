@@ -11,11 +11,11 @@ Every instance runs in a separate Modal sandbox. Results appear in one GitHub co
 ## Deploy to Render
 
 1. Create a **Blueprint** in Render from this repository. `render.yaml` provisions one Docker web service and Postgres. If Render cannot see the BerriAI repo, an organization owner may need to approve Render’s GitHub access.
-2. Set `PUBLIC_URL` to the service’s HTTPS URL (for example `https://litereview.onrender.com`), your GitHub username in `ADMIN_USERS`, and `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`. Render generates `SECRET_KEY` and `ADMIN_TOKEN`; keep these stable across deploys.
+2. Set your GitHub username in `ADMIN_USERS`, and `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`. The app automatically uses Render’s assigned HTTPS URL; set `PUBLIC_URL` explicitly if using a custom domain. Render generates `SECRET_KEY` and `ADMIN_TOKEN`; keep these stable across deploys.
 3. Open the app and sign in using `ADMIN_TOKEN` from Render’s environment settings.
-4. Under **Connections → GitHub**, choose **Create GitHub App**. GitHub registers a private App under your account, returns its credentials to LiteReview, and opens installation. Install it on the repositories you want to review. BerriAI may require an organization owner to approve this installation. You can instead use an existing App or environment variables; see below.
+4. Under **Connections → GitHub**, choose **Create GitHub App**. Choose the account or organization that owns the target repositories. GitHub registers a private App there, returns its credentials to LiteReview, and opens installation. A private App can only be installed on its owning account. For BerriAI repositories, an organization owner may need to create/install the App; they can also create it manually and provide the App credentials. You can instead use an existing App or environment variables; see below.
 5. Refresh repositories and add your selected repositories. For browser/desktop reviews, configure the setup command, start command, and local readiness URL.
-6. Under **Connections → Models**, add your gateway or a direct OpenAI/Anthropic key. Gateway base URLs normally end in `/v1`. Test the connection to discover models. No LiteLLM Gateway is required.
+6. Under **Connections → Models**, add your gateway or a direct OpenAI/Anthropic key. Gateway base URLs normally end in `/v1`. Test the connection to discover models. No LiteLLM Gateway is required. For an environment-only first setup, optionally provide `GATEWAY_URL` and `GATEWAY_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) before the first start. These seed an encrypted connection; manage subsequent model connection changes in the UI.
 7. Create a PR agent, select a model, and test its capabilities. Create an agent group with repository and caller access. Comment `@litereview your-group` on an open PR.
 
 Modal images and sandboxes are created on demand using your credentials. The first review builds the image and can take several minutes; subsequent reviews reuse it. No separate Modal app deployment, workflow service, Redis, or storage bucket is required.
@@ -80,4 +80,4 @@ For a small v1, screenshots are private, bounded Postgres artifacts rather than 
 
 GitHub retries are deduplicated by delivery ID. Pending jobs survive API restarts; completed jobs are never rerun automatically. Sandboxes have hard timeouts and are terminated on normal completion. A lost worker callback becomes an incomplete result. Publication retries update the original marked comment. Results always name the reviewed SHA; later pushes are called out.
 
-This v1 posts summary comments, not resolvable inline review threads. It has no automatic fixes, push triggers, fusion/judge agent, persistent chat, local stdio MCP servers, or plugin marketplace. See [SPEC.md](SPEC.md) for the product decisions.
+This v1 posts summary comments, not resolvable inline review threads. It has no automatic fixes, push triggers, fusion/judge agent, persistent chat, local stdio MCP servers, or plugin marketplace. See [SPEC.md](SPEC.md) for the product decisions and [docs/VALIDATION.md](docs/VALIDATION.md) for actual test evidence and external setup boundaries.

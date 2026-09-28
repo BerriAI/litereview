@@ -1,5 +1,7 @@
+import os
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,7 +11,11 @@ class Settings(BaseSettings):
     secret_key: str = ""
     admin_token: str = ""
     admin_users: str = ""
-    public_url: str = "http://localhost:8000"
+    public_url: str = ""
+    gateway_url: str = ""
+    gateway_api_key: str = ""
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
     github_app_id: str = ""
     github_private_key: str = ""
     github_webhook_secret: str = ""
@@ -23,6 +29,13 @@ class Settings(BaseSettings):
     job_timeout: int = 600
     max_rounds: int = 60
     dispatcher_enabled: bool = True
+
+    @model_validator(mode="after")
+    def resolve_public_url(self):
+        self.public_url = (
+            self.public_url or os.environ.get("RENDER_EXTERNAL_URL") or "http://localhost:8000"
+        ).rstrip("/")
+        return self
 
     @property
     def admins(self):

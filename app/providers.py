@@ -23,6 +23,11 @@ def connection(resource_id):
         return {**r.data, "api_key": decrypt(r.secret)}
 
 
+def snapshot_connection(snapshot):
+    # Metadata is immutable; only the credential reference is resolved at call time.
+    return {**snapshot, "api_key": connection(snapshot["id"])["api_key"]}
+
+
 async def complete(conn, model, messages, tools):
     provider = conn["type"]
     prefix = "anthropic" if provider == "anthropic" else "openai"

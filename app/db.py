@@ -2,7 +2,7 @@ import time
 import uuid
 from pathlib import Path
 
-from sqlalchemy import JSON, Float, Integer, LargeBinary, String, Text, create_engine
+from sqlalchemy import JSON, BigInteger, Float, Integer, LargeBinary, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from .settings import settings
@@ -34,10 +34,10 @@ class Run(Base):
     actor: Mapped[str] = mapped_column(String(100))
     head: Mapped[str] = mapped_column(String(40))
     base: Mapped[str] = mapped_column(String(40))
-    installation: Mapped[int] = mapped_column(Integer, default=0)
+    installation: Mapped[int] = mapped_column(BigInteger, default=0)
     status: Mapped[str] = mapped_column(String(30), default="queued")
     snapshot: Mapped[dict] = mapped_column(JSON)
-    comment_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    comment_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     published: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[float] = mapped_column(Float, default=time.time)

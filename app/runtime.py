@@ -67,7 +67,7 @@ async def launch(job_id, token):
             job = db.get(Job, job_id)
             cfg = job.config
         await providers.probe(
-            providers.connection(cfg["connection_id"]),
+            providers.snapshot_connection(cfg["connection"]),
             cfg["model"],
             bool({"browser", "computer"} & set(cfg["capabilities"])),
         )

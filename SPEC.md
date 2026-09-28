@@ -1,6 +1,6 @@
 # LiteReview v1
 
-Status: proposed implementation spec · 28 September 2026
+Status: implemented v1 · 28 September 2026. See README.md for deployment and docs/VALIDATION.md for tested behavior and remaining external setup.
 
 ## 1. What we are building
 
@@ -114,18 +114,18 @@ The home page is **PR agents**. Selecting an agent opens its editor. Selecting a
 
 Creation and editing must save real configuration, show validation errors, and support cancellation. Empty states lead directly to the next useful action. GitHub remains the place where users trigger reviews.
 
-Initial setup is one workspace per deployment. Administrators sign in with GitHub and manage that workspace. Use a deployment-configured administrator allowlist; no invitations, SSO, billing, or organization-management UI in v1.
+Initial setup is one workspace per deployment. Administrators sign in with GitHub and manage that workspace. A deployment owner access key supports initial setup and recovery; GitHub sign-in uses a deployment-configured administrator allowlist; no invitations, SSO, billing, or organization-management UI in v1.
 
 ## 7. Repository and caller setup
 
-Use a GitHub App installed on selected repositories, with repository contents read, metadata read, and pull requests write permissions. Subscribe to issue-comment events. The API uses installation credentials for PR inspection and comment publishing; workers receive repository data without those credentials. Verify the exact comment and collaborator-access endpoints against these permissions during the first integration step.
+Use a GitHub App installed on selected repositories, with repository contents read, metadata read, pull requests write, and issues write permissions. A private GitHub App must be owned by the account or organization where it is installed; organization-owner involvement may be required for setup. Subscribe to issue-comment events. The API uses installation credentials for PR inspection and comment publishing; workers receive repository data without those credentials. Verify the exact comment and collaborator-access endpoints against these permissions during the first integration step.
 
 A group has an allowed repository list and one caller policy:
 
 - Repository collaborators with write, maintain, or admin permission; or
 - An explicit GitHub username allowlist, with repository access verified.
 
-Check installation, repository, and actor permissions on every trigger. Run pages and artifacts require GitHub sign-in and access to the corresponding repository. No team synchronization in v1.
+Check installation, repository, and actor permissions on every trigger. Run pages and artifacts require workspace administrator sign-in. Workspace administrators can see all connected repositories; the administrator allowlist must match that access. No team synchronization in v1.
 
 Under Connections → GitHub, each repository can optionally configure setup commands, an app start command, readiness URL, and references to test-only secrets. These are administrator-controlled settings, not executable instructions taken automatically from a PR. They support test, browser, and desktop reviews. A missing environment requirement produces an incomplete review, not a fabricated result.
 
@@ -136,10 +136,10 @@ Use a small standalone implementation:
 - **Web:** React, TypeScript, Vite, and the shared LiteLLM UI patterns.
 - **API:** Python/FastAPI serving the built web app and handling configuration, GitHub events, and results.
 - **Database:** Postgres for configuration, runs, jobs, and artifact metadata.
-- **Execution:** one Modal coordinator and one configurable review runner used by every agent sandbox.
-- **Artifacts:** one private Modal Volume, partitioned by run/job, for screenshots and bounded logs. Serve artifacts through authenticated app routes.
+- **Execution:** one durable API dispatcher backed by Postgres, and one configurable review runner used by every Modal sandbox.
+- **Artifacts:** bounded private Postgres records for screenshots and logs, served through authenticated app routes. This avoids a separate storage service in v1.
 
-Package the web/API as one application deployment. Provide Docker Compose for the application and Postgres during setup, plus a Modal app deployment command and GitHub App setup instructions. No Redis, Celery, workflow engine, or managed-agent platform is required.
+Package the web/API as one application deployment. Provide Docker Compose for the application and Postgres during setup, plus guided GitHub App setup. Modal images and the named Modal app are created on demand; there is no separate runtime deployment command. No Redis, Celery, workflow engine, or managed-agent platform is required.
 
 The [agent control plane](https://github.com/LiteLLM-Labs/litellm-agent-control-plane) is a reference for agent editing, skill attachments, MCP settings, and credentials. Selectively reuse useful components or patterns. Do not make its runtime/session platform a required service.
 
@@ -147,7 +147,7 @@ The [agent control plane](https://github.com/LiteLLM-Labs/litellm-agent-control-
 
 1. Validate the GitHub webhook signature; deduplicate delivery; parse the command and check access.
 2. Resolve the PR’s current base/head SHAs and snapshot selected group memberships, agents, models, capabilities, and skills. Create the run and jobs in Postgres.
-3. Post the running comment and dispatch the Modal coordinator. A stored pending run must be recoverable if dispatch is interrupted.
+3. Post the running comment and dispatch from the durable job queue. A stored pending run must be recoverable if dispatch is interrupted.
 4. For every job, create a fresh sandbox, stage the repository and diff, mount attached skills, and initialize enabled tools. Run configured setup only when the job needs the runnable application environment.
 5. Run the agent loop: request a model response, execute permitted tool calls, return tool results, and continue until it returns a structured review or reaches its limits.
 6. Persist results and artifacts. Terminate the sandbox in cleanup, with a hard sandbox timeout as a backstop.
@@ -157,7 +157,7 @@ Jobs run concurrently subject to Modal capacity and a deployment concurrency lim
 
 Keep long-lived model and remote MCP credentials in the API service. Workers receive expiring, job-scoped access to small internal model/MCP relay endpoints, restricted to their configured model/tools and active-run limits. These are internal application endpoints, not a separately deployed gateway. Do not leave GitHub credentials in the staged checkout or worker environment.
 
-Start with deployment-level limits: 10 minutes per job and 60 model/tool rounds, with bounded tool output and artifact sizes. A cap produces an incomplete result. Keep these out of the initial agent editor.
+Start with deployment-level limits: 10 minutes per job and 60 model/tool rounds, with bounded tool output and artifact sizes. A cap produces an incomplete result. Keep these out of the initial agent editor. Screenshot storage is capped at 20 PNGs of up to 2 MB per job.
 
 ## 9. Results and basic failure behavior
 

@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    ports: ['8000:8000']
+    ports: ["8000:8000"]
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://litereview:local-dev-only@db:5432/litereview
@@ -14,9 +14,9 @@ services:
       POSTGRES_DB: litereview
       POSTGRES_USER: litereview
       POSTGRES_PASSWORD: local-dev-only
-    volumes: ['database:/var/lib/postgresql/data']
+    volumes: ["database:/var/lib/postgresql/data"]
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U litereview']
+      test: ["CMD-SHELL", "pg_isready -U litereview"]
       interval: 3s
       timeout: 3s
       retries: 20

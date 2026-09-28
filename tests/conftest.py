@@ -1,13 +1,18 @@
 import os
 import tempfile
 
-os.environ["DATABASE_URL"] = "sqlite:///" + tempfile.mktemp(suffix=".db")
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL") or "sqlite:///" + tempfile.mktemp(
+    suffix=".db"
+)
 os.environ["SECRET_KEY"] = "test-secret-key-" * 4
 os.environ["ADMIN_TOKEN"] = "test-owner-token-" * 3
 os.environ["PUBLIC_URL"] = "http://testserver"
 os.environ["DISPATCHER_ENABLED"] = "false"
 os.environ["GITHUB_WEBHOOK_SECRET"] = "test-webhook-secret"
 os.environ["GITHUB_TOKEN"] = ""
+os.environ["GATEWAY_API_KEY"] = ""
+os.environ["OPENAI_API_KEY"] = ""
+os.environ["ANTHROPIC_API_KEY"] = ""
 
 import pytest
 from fastapi.testclient import TestClient

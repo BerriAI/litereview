@@ -28,6 +28,30 @@ async def lifespan(app):
             "Set SECRET_KEY (32+ characters) and ADMIN_TOKEN (20+ characters). See .env.example."
         )
     init_db()
+    # Optional first-deploy model bootstrap; subsequent edits belong to the UI.
+    with Session() as db:
+        s = settings()
+        for kind, key, url in [
+            ("gateway", s.gateway_api_key, s.gateway_url),
+            ("openai", s.openai_api_key, ""),
+            ("anthropic", s.anthropic_api_key, ""),
+        ]:
+            rid = "initial-" + kind
+            if key and (kind != "gateway" or url) and not db.get(Resource, rid):
+                db.add(
+                    Resource(
+                        id=rid,
+                        kind="connections",
+                        data={
+                            "name": "Default " + kind,
+                            "type": kind,
+                            "base_url": url.rstrip("/"),
+                            "tools": [],
+                        },
+                        secret=encrypt(key),
+                    )
+                )
+        db.commit()
     task = asyncio.create_task(reviews.dispatcher()) if settings().dispatcher_enabled else None
     yield
     if task:
@@ -87,6 +111,7 @@ async def login(request: Request):
     body = await request.json()
     if not secrets.compare_digest(str(body.get("token", "")), settings().admin_token):
         raise HTTPException(401, "The workspace access key is incorrect.")
+    login_attempts.pop(host, None)
     response = JSONResponse({"ok": True})
     response.set_cookie(
         "lr_session",
@@ -420,7 +445,18 @@ async def manifest(request: Request):
         },
         "default_events": ["issue_comment"],
     }
-    return {"url": "https://github.com/settings/apps/new", "manifest": json.dumps(manifest)}
+    owner_type = body.get("owner_type", "personal")
+    url = "https://github.com/settings/apps/new"
+    if owner_type == "organization":
+        import re
+
+        owner = str(body.get("owner", ""))
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", owner):
+            raise HTTPException(400, "Enter the GitHub organization name.")
+        url = f"https://github.com/organizations/{owner}/settings/apps/new"
+    elif owner_type != "personal":
+        raise HTTPException(400, "Choose a personal account or organization.")
+    return {"url": url, "manifest": json.dumps(manifest)}
 
 
 @app.get("/api/github/manifest/callback", dependencies=[Depends(require_admin)])
@@ -610,7 +646,7 @@ async def model_relay(job_id: str, request: Request):
     if len(body.get("messages", [])) > 400:
         raise HTTPException(400, "Conversation limit reached.")
     return await providers.complete(
-        providers.connection(job.config["connection_id"]),
+        providers.snapshot_connection(job.config["connection"]),
         job.config["model"],
         body["messages"],
         body.get("tools", []),
@@ -625,7 +661,7 @@ async def mcp_relay(job_id: str, request: Request):
     if not allowed or body.get("name") not in {t["name"] for t in allowed["tools"]}:
         raise HTTPException(403, "This MCP tool is not enabled for this agent.")
     return await providers.mcp_call(
-        providers.connection(allowed["id"]), body["name"], body.get("arguments", {})
+        providers.snapshot_connection(allowed), body["name"], body.get("arguments", {})
     )
 
 

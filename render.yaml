@@ -18,8 +18,6 @@ services:
         generateValue: true
       - key: ADMIN_USERS
         sync: false
-      - key: PUBLIC_URL
-        sync: false
       - key: MODAL_TOKEN_ID
         sync: false
       - key: MODAL_TOKEN_SECRET
@@ -27,11 +25,11 @@ services:
       - key: MODAL_APP_NAME
         value: litereview
       - key: CONCURRENCY
-        value: '8'
+        value: "8"
       - key: JOB_TIMEOUT
-        value: '600'
+        value: "600"
       - key: MAX_ROUNDS
-        value: '60'
+        value: "60"
 databases:
   - name: litereview-db
     plan: basic-256mb

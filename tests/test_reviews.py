@@ -11,7 +11,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from app import github, reviews
+from app import github, providers, reviews
 from app.db import Job, Resource, Run, Session
 from app.security import digest
 from runner.agent import extract_archive
@@ -166,9 +166,9 @@ def test_unauthorized_webhooks_and_callers(owner, monkeypatch):
     setup(owner)
     assert owner.post("/api/webhook/github", json=payload()).status_code == 401
     mock_github(monkeypatch, "read")
-    assert webhook(owner, payload()).status_code == 403
+    assert webhook(owner, payload()).status_code == 200
     mock_github(monkeypatch)
-    assert webhook(owner, payload(body="@litereview general unknown")).status_code == 403
+    assert webhook(owner, payload(body="@litereview general unknown"), "delivery-2").status_code == 200
     assert webhook(owner, {**payload(), "action": "edited"}).json()["ignored"]
     assert webhook(owner, {**payload(), "issue": {"number": 1}}).json()["ignored"]
     with Session() as db:
@@ -272,9 +272,10 @@ def test_duplicate_comment_publication_recovers_existing_comment(owner, monkeypa
         calls.append(method)
         if method == "GET":
             return httpx.Response(
-                200, json=[{"id": 123, "body": f"<!-- litereview:{run_id} -->", "user": {"type": "Bot"}}]
+                200,
+                json=[{"id": 5879827650, "body": f"<!-- litereview:{run_id} -->", "user": {"type": "Bot"}}],
             )
-        return httpx.Response(200, json={"id": 123})
+        return httpx.Response(200, json={"id": 5879827650})
 
     monkeypatch.setattr(github, "repo_request", request)
     import asyncio
@@ -282,3 +283,177 @@ def test_duplicate_comment_publication_recovers_existing_comment(owner, monkeypa
     asyncio.run(reviews.publish(run_id))
     assert "POST" not in calls
     assert calls == ["GET", "PATCH"]
+
+
+def test_model_connection_snapshot_is_immutable(owner, monkeypatch):
+    conn, _, _, _, _ = setup(owner)
+    mock_github(monkeypatch)
+    webhook(owner, payload())
+    with Session() as db:
+        job = db.scalar(select(Job))
+        job.status = "running"
+        job.started_at = time.time()
+        job.token_hash = digest("snapshot-token")
+        job_id = job.id
+        db.commit()
+    assert (
+        owner.put(
+            "/api/resources/connections/" + conn["id"],
+            json={**conn, "type": "openai", "base_url": "https://changed.example/v1"},
+        ).status_code
+        == 200
+    )
+    complete = AsyncMock(return_value={"role": "assistant", "content": "ok"})
+    monkeypatch.setattr(providers, "complete", complete)
+    result = owner.post(
+        "/api/internal/jobs/" + job_id + "/model",
+        headers={"Authorization": "Bearer snapshot-token"},
+        json={"messages": [{"role": "user", "content": "review"}], "tools": []},
+    )
+    assert result.status_code == 200
+    used = complete.call_args.args[0]
+    assert used["type"] == "gateway"
+    assert used["base_url"] == "https://gateway.example/v1"
+    assert used["api_key"] == "not-a-real-key"
+
+
+def test_job_model_budget_and_screenshot_auth(owner, monkeypatch):
+    setup(owner)
+    mock_github(monkeypatch)
+    run_id = webhook(owner, payload()).json()["run_id"]
+    with Session() as db:
+        job = db.scalar(select(Job))
+        job.status = "running"
+        job.started_at = time.time()
+        job.model_calls = 60
+        job.token_hash = digest("limited-token")
+        job_id = job.id
+        db.commit()
+    headers = {"Authorization": "Bearer limited-token"}
+    assert owner.post("/api/internal/jobs/" + job_id + "/model", headers=headers, json={}).status_code == 429
+    assert (
+        owner.post(
+            "/api/internal/jobs/" + job_id + "/artifact", headers=headers, json={"data": "not-valid-base64"}
+        ).status_code
+        == 400
+    )
+    owner.post("/api/logout")
+    assert owner.get("/api/runs/" + run_id).status_code == 401
+    assert owner.get("/api/artifacts/anything").status_code == 401
+
+
+def test_expired_job_cannot_use_relay(owner, monkeypatch):
+    setup(owner)
+    mock_github(monkeypatch)
+    webhook(owner, payload())
+    with Session() as db:
+        job = db.scalar(select(Job))
+        job.status = "running"
+        job.started_at = time.time() - 1000
+        job.token_hash = digest("expired-token")
+        job_id = job.id
+        db.commit()
+    assert (
+        owner.get(
+            "/api/internal/jobs/" + job_id + "/bootstrap", headers={"Authorization": "Bearer expired-token"}
+        ).status_code
+        == 401
+    )
+
+
+def test_rejected_command_is_visible_without_starting_agents(owner, monkeypatch):
+    setup(owner)
+    mock_github(monkeypatch)
+    result = webhook(owner, payload(body="@litereview unknown"))
+    assert result.status_code == 200
+    with Session() as db:
+        run = db.get(Run, result.json()["run_id"])
+        assert run.status == "rejected"
+        assert not db.scalars(select(Job)).all()
+        text = reviews.render_comment(run, [])
+        assert "Review not started" in text
+        assert "unavailable" in text
+
+
+def test_large_reviews_keep_every_agent_section():
+    run = Run(id="large", repo="owner/repo", head="a" * 40, pr=1)
+    jobs = []
+    for i in range(30):
+        jobs.append(
+            Job(
+                config={"name": f"Agent {i}", "group": "general", "instance": i + 1},
+                status="completed",
+                result={
+                    "summary": "s" * 5000,
+                    "findings": [{"title": "t" * 200, "severity": "high", "explanation": "e" * 5000}] * 30,
+                    "limitations": [],
+                },
+            )
+        )
+    text = reviews.render_comment(run, jobs)
+    assert len(text) < 60000
+    for i in range(30):
+        assert f"### general / Agent {i} ·" in text
+
+
+def test_private_app_manifest_targets_repository_owner(owner, monkeypatch):
+    from app.settings import settings
+
+    monkeypatch.setattr(settings(), "public_url", "https://review.example")
+    response = owner.post("/api/github/manifest", json={"owner_type": "organization", "owner": "BerriAI"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["url"] == "https://github.com/organizations/BerriAI/settings/apps/new"
+    manifest = json.loads(data["manifest"])
+    assert manifest["public"] is False
+    assert manifest["default_permissions"]["contents"] == "read"
+    assert manifest["default_permissions"]["issues"] == "write"
+    assert manifest["hook_attributes"]["url"] == "https://review.example/api/webhook/github"
+    assert (
+        owner.post(
+            "/api/github/manifest", json={"owner_type": "organization", "owner": "../invalid"}
+        ).status_code
+        == 400
+    )
+
+
+def test_render_url_is_detected(monkeypatch):
+    from app.settings import Settings
+
+    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://litereview.onrender.com")
+    assert Settings(public_url="", _env_file=None).public_url == "https://litereview.onrender.com"
+
+
+async def test_finished_sandbox_is_always_cleaned_up(owner, monkeypatch):
+    from types import SimpleNamespace
+
+    from app import runtime
+    from app.settings import settings
+
+    setup(owner)
+    mock_github(monkeypatch)
+    webhook(owner, payload())
+    with Session() as db:
+        job = db.scalar(select(Job))
+        job.status = "starting"
+        job.started_at = time.time()
+        job_id = job.id
+        db.commit()
+
+    async def worker_finishes():
+        with Session() as db:
+            job = db.get(Job, job_id)
+            job.status = "completed"
+            job.result = {"summary": "Completed", "findings": [], "limitations": []}
+            db.commit()
+
+    sandbox = SimpleNamespace(object_id="sb-test", wait=SimpleNamespace(aio=worker_finishes))
+    monkeypatch.setattr(settings(), "public_url", "https://review.example")
+    monkeypatch.setattr(providers, "probe", AsyncMock(return_value={"ok": True}))
+    monkeypatch.setattr(runtime, "create_sandbox", lambda *_: sandbox)
+    terminate = AsyncMock()
+    monkeypatch.setattr(runtime, "terminate", terminate)
+    await runtime.launch(job_id, "test-token")
+    terminate.assert_awaited_once_with("sb-test")
+    with Session() as db:
+        assert db.get(Job, job_id).status == "completed"
