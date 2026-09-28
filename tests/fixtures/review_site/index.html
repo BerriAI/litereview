@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LiteReview acceptance fixture · Checkout</title>
+<style>
+body { margin: 0; background: #f6f7fb; color: #272b37; font: 16px system-ui; }
+main { max-width: 640px; margin: 70px auto; padding: 36px; border: 1px solid #dddfe8; background: white; border-radius: 12px; }
+h1 { margin: 0 0 12px; } p { color: #687081; } canvas { width: 560px; max-width: 100%; height: 180px; cursor: pointer; }
+</style>
+<main><h1>Review test store</h1><p>One notebook · $24.00 · Free shipping</p><canvas id="checkout" width="560" height="180" role="button" aria-label="Complete purchase" tabindex="0"></canvas><p id="status" aria-live="polite">Ready to place your order.</p></main>
+<script>
+const canvas = document.getElementById('checkout');
+const ctx = canvas.getContext('2d');
+ctx.fillStyle = '#5B3FD1';
+ctx.fillRect(0, 25, 560, 70);
+ctx.fillStyle = '#FFFFFF';
+ctx.font = '600 22px system-ui';
+ctx.fillText('Complete purchase · $24.00', 95, 69);
+canvas.addEventListener('click', () => { document.getElementById('status').textContent = 'Order confirmed. Thank you!'; });
+canvas.addEventListener('keydown', (e) => { if (e.key === 'Enter') canvas.click(); });
+</script>
+</html>

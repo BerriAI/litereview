@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: litereview
+    runtime: docker
+    plan: starter
+    region: oregon
+    numInstances: 1
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: litereview-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: ADMIN_USERS
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: MODAL_TOKEN_ID
+        sync: false
+      - key: MODAL_TOKEN_SECRET
+        sync: false
+      - key: MODAL_APP_NAME
+        value: litereview
+      - key: CONCURRENCY
+        value: '8'
+      - key: JOB_TIMEOUT
+        value: '600'
+      - key: MAX_ROUNDS
+        value: '60'
+databases:
+  - name: litereview-db
+    plan: basic-256mb
+    region: oregon
+    databaseName: litereview
+    user: litereview
+    ipAllowList: []
