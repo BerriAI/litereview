@@ -93,6 +93,19 @@ async def launch(job_id, token):
                     "limitations": ["Check PUBLIC_URL connectivity and the Modal sandbox logs."],
                 }
                 db.commit()
+    except modal.exception.SandboxTimeoutError:
+        with Session() as db:
+            job = db.get(Job, job_id)
+            if job and job.status not in ("completed", "failed", "timed_out"):
+                job.status = "timed_out"
+                job.finished_at = time.time()
+                job.result = {
+                    "status": "timed_out",
+                    "summary": "The sandbox reached its execution time limit.",
+                    "findings": [],
+                    "limitations": ["Execution time limit reached."],
+                }
+                db.commit()
     except Exception as exc:
         from fastapi import HTTPException
 

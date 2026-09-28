@@ -15,7 +15,7 @@ Validated on 28 September 2026 using the private repository, a real LiteLLM gate
 | Failure result | [Expected invalid-model failure](https://github.com/BerriAI/litereview/pull/1#issuecomment-5879912474), explicitly incomplete rather than no findings |
 | Invalid command | [Review not started](https://github.com/BerriAI/litereview/pull/1#issuecomment-5880009727); no agent jobs created |
 | Multiple model types | Real gateway requests used Claude Haiku 4.5 and GPT-4o mini; the latter completed the clean review |
-| Sandbox cleanup | All eight sandboxes from the initial seven-agent + desktop runs exited with code 0; cleanup logic is also covered by a test |
+| Sandbox cleanup | All eight sandboxes from the initial seven-agent + desktop runs exited with code 0; a separate real 10-second hard-timeout test raised the expected Modal timeout, and cleanup/status handling is also covered by tests |
 
 The visual fixture draws its button text on canvas. The browser's accessibility tree still contains the button name when its text becomes invisible; the screenshots establish the rendered defect. Browser and desktop evidence showed the confirmation state after interacting.
 
@@ -23,9 +23,9 @@ The PR originally contained two intentional defects at `914a25c0af107b86a555edaa
 
 ## Automated checks
 
-- 24 tests cover signature/authentication checks, access policy, duplicate webhook deliveries, independent group expansion, immutable configuration, credential redaction, job-token expiry and budgets, MCP access enforcement, archive traversal, screenshot access, cleanup, rejected commands, and result formatting.
+- 25 tests cover signature/authentication checks, access policy, duplicate webhook deliveries, independent group expansion, immutable configuration, credential redaction, job-token expiry and budgets, MCP access enforcement, archive traversal, screenshot access, cleanup, rejected commands, and result formatting.
 - Direct OpenAI and Anthropic adapters are tested against local protocol fixtures. These tests verify image payloads and tool result translation without real direct-provider credentials.
-- The CI workflow runs the suite against SQLite and Postgres, builds the React/TypeScript UI, and builds the production Docker image.
+- CI passed against SQLite and Postgres, built the React/TypeScript UI, and built the production Docker image. The final commit is checked by the same workflow.
 - Live Playwright UI checks create and edit agents, reuse an agent in two groups, set instance counts, attach skills, and select computer use. Desktop, dark appearance, and 768/390/320 px widths were inspected; no JavaScript errors or page-level horizontal overflow remained.
 - A separate Modal smoke test verifies browser clicking, desktop keyboard input, and actual screenshot payloads.
 

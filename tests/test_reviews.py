@@ -457,3 +457,37 @@ async def test_finished_sandbox_is_always_cleaned_up(owner, monkeypatch):
     terminate.assert_awaited_once_with("sb-test")
     with Session() as db:
         assert db.get(Job, job_id).status == "completed"
+
+
+async def test_modal_hard_timeout_is_incomplete_not_start_failure(owner, monkeypatch):
+    from types import SimpleNamespace
+
+    import modal
+
+    from app import runtime
+    from app.settings import settings
+
+    setup(owner)
+    mock_github(monkeypatch)
+    webhook(owner, payload())
+    with Session() as db:
+        job = db.scalar(select(Job))
+        job.status = "starting"
+        job.started_at = time.time()
+        job_id = job.id
+        db.commit()
+    sandbox = SimpleNamespace(
+        object_id="sb-timeout",
+        wait=SimpleNamespace(aio=AsyncMock(side_effect=modal.exception.SandboxTimeoutError())),
+    )
+    monkeypatch.setattr(settings(), "public_url", "https://review.example")
+    monkeypatch.setattr(providers, "probe", AsyncMock(return_value={"ok": True}))
+    monkeypatch.setattr(runtime, "create_sandbox", lambda *_: sandbox)
+    terminate = AsyncMock()
+    monkeypatch.setattr(runtime, "terminate", terminate)
+    await runtime.launch(job_id, "test-token")
+    terminate.assert_awaited_once_with("sb-timeout")
+    with Session() as db:
+        result = db.get(Job, job_id)
+        assert result.status == "timed_out"
+        assert result.result["limitations"] == ["Execution time limit reached."]

@@ -370,7 +370,7 @@ async def upload_skill(file: UploadFile = File(...)):
             "instructions": instructions,
             "files": {p: base64.b64encode(v).decode() for p, v in normalized.items()},
         }
-    except (zipfile.BadZipFile, UnicodeError, ValueError):
+    except (zipfile.BadZipFile, UnicodeError, ValueError, RuntimeError):
         raise HTTPException(400, "Upload a valid ZIP with a UTF-8 SKILL.md.") from None
 
 
