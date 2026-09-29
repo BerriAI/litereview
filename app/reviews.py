@@ -7,6 +7,8 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
+from runner.catalog import HARNESS_VERSIONS
+
 from . import github
 from .access import permits
 from .db import Job, Resource, Run, Session, uid
@@ -31,6 +33,8 @@ def expand(groups, resources):
             if not agent or agent.kind != "agents":
                 raise HTTPException(409, "A group references a missing agent.")
             data = agent.data.copy()
+            data.setdefault("harness", "builtin")
+            data["harness_version"] = HARNESS_VERSIONS[data["harness"]]
             conn = resources.get(data["connection_id"])
             if not conn or conn.kind != "connections" or conn.data["type"] == "mcp":
                 raise HTTPException(409, "An agent needs a model connection.")
@@ -269,6 +273,17 @@ async def publish(run_id):
         jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
         done = all(j.status in TERMINAL for j in jobs)
         if run.published == 2 or (run.published == 1 and not done):
+            return
+        if run.snapshot.get("harness_check"):
+            run.status = (
+                "completed"
+                if done and all(j.status == "completed" and not j.result.get("limitations") for j in jobs)
+                else "incomplete"
+                if done
+                else "running"
+            )
+            run.published = 2 if done else 1
+            db.commit()
             return
     newer = False
     if done and run.status != "rejected":

@@ -40,10 +40,27 @@ export function Documentation() {
             <li>
               <h3>Create a PR agent</h3>
               <p>
-                In <a href="/agents">PR agents</a>, choose a model, describe
-                what it should check, and enable the tools it needs. Attach
-                skills or MCP tools if useful. Use Test model to check tool and
-                image support.
+                In <a href="/agents">PR agents</a>, choose a harness and model,
+                describe what it should check, and enable the tools it needs.
+                Attach skills or MCP tools if useful. Test agent runs a small
+                private check of that harness, model, and selected capabilities
+                in Modal. It uses model and Modal credits without touching a
+                GitHub repo.
+              </p>
+            </li>
+            <li>
+              <h3>Choose how the agent runs</h3>
+              <p>
+                Built-in, Pi, OpenCode V1, OpenCode V2, Codex, Claude Code, and
+                Deep Agents are separate harness choices. Each sandbox starts
+                only the selected harness. Tools, skills, and MCP selections
+                belong to the agent and work through that harness.
+              </p>
+              <p>
+                Codex requires a Responses-compatible endpoint; Claude Code
+                requires a Messages-compatible endpoint. Your gateway can
+                translate these formats for compatible models. Browser and
+                computer use need a model that understands images.
               </p>
             </li>
             <li>

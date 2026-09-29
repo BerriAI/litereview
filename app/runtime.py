@@ -1,23 +1,40 @@
 import asyncio
+import threading
 import time
+from functools import lru_cache
 from pathlib import Path
 
 import modal
+
+from runner.catalog import HARNESS_VERSIONS, NPM_PACKAGES, validate_connection
 
 from . import providers
 from .db import Job, Session
 from .settings import settings
 
 
-def sandbox_image():
-    return (
+def sandbox_image(harness="builtin"):
+    if harness not in HARNESS_VERSIONS:
+        raise ValueError("Unknown harness.")
+    image = (
         modal.Image.from_registry("node:22-bookworm-slim", add_python="3.12")
         .apt_install("git", "ripgrep", "curl", "xvfb", "openbox", "scrot", "xdotool", "xauth")
         .pip_install(
             "uv==0.10.9", "httpx==0.28.1", "playwright==1.63.0", "pyautogui==0.9.54", "pillow>=11,<13"
         )
         .run_commands("playwright install --with-deps chromium")
-        .add_local_dir(str(Path(__file__).resolve().parent.parent / "runner"), "/opt/litereview/runner")
+    )
+    if harness != "builtin":
+        image = image.pip_install("mcp>=1.26,<2", "uvicorn==0.34.3", "starlette>=0.49,<1")
+    if harness in NPM_PACKAGES:
+        package = NPM_PACKAGES[harness] + "@" + HARNESS_VERSIONS[harness]
+        image = image.run_commands(f"npm install --prefix /opt/litereview/harness --omit=dev {package}")
+    elif harness == "deepagents":
+        image = image.pip_install(
+            "deepagents==0.7.19", "langchain-openai==1.6.6", "langchain-anthropic>=1,<2"
+        )
+    return image.add_local_dir(
+        str(Path(__file__).resolve().parent.parent / "runner"), "/opt/litereview/runner"
     )
 
 
@@ -28,16 +45,26 @@ def client():
     return modal.Client.from_credentials(s.modal_token_id, s.modal_token_secret)
 
 
-def create_sandbox(job_id, token):
+_app_lock = threading.Lock()
+
+
+@lru_cache(maxsize=1)
+def _app(name, token_id, token_secret):
+    c = modal.Client.from_credentials(token_id, token_secret)
+    return modal.App.lookup(name, create_if_missing=True, client=c)
+
+
+def create_sandbox(job_id, token, harness="builtin"):
     s = settings()
     c = client()
-    app = modal.App.lookup(s.modal_app_name, create_if_missing=True, client=c)
+    with _app_lock:
+        app = _app(s.modal_app_name, s.modal_token_id, s.modal_token_secret)
     return modal.Sandbox.create(
         "python",
         "-m",
         "runner.agent",
         app=app,
-        image=sandbox_image(),
+        image=sandbox_image(harness),
         client=c,
         name="lr-" + job_id,
         timeout=s.job_timeout + 60,
@@ -66,16 +93,23 @@ async def launch(job_id, token):
         with Session() as db:
             job = db.get(Job, job_id)
             cfg = job.config
-        await providers.probe(
-            providers.snapshot_connection(cfg["connection"]),
-            cfg["model"],
-            bool({"browser", "computer"} & set(cfg["capabilities"])),
-        )
+        harness = cfg.get("harness", "builtin")
+        if cfg.get("harness_version", HARNESS_VERSIONS[harness]) != HARNESS_VERSIONS[harness]:
+            raise RuntimeError(
+                "The harness version changed after this review was queued. Start a new review."
+            )
+        validate_connection(harness, cfg["connection"]["type"])
+        if harness == "builtin":
+            await providers.probe(
+                providers.snapshot_connection(cfg["connection"]),
+                cfg["model"],
+                bool({"browser", "computer"} & set(cfg["capabilities"])),
+            )
         if not settings().public_url.startswith("https://"):
             raise RuntimeError(
                 "Modal requires a publicly reachable HTTPS PUBLIC_URL. Deploy to Render or use a development tunnel."
             )
-        sandbox = await asyncio.to_thread(create_sandbox, job_id, token)
+        sandbox = await asyncio.to_thread(create_sandbox, job_id, token, harness)
         with Session() as db:
             job = db.get(Job, job_id)
             job.sandbox_id = sandbox.object_id

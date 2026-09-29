@@ -1739,25 +1739,21 @@ summary:hover {
   position: relative;
   min-width: 0;
 }
-.picker-trigger {
+.picker-control {
+  position: relative;
+}
+.picker-control .picker-trigger {
   width: 100%;
-  justify-content: space-between;
-  text-align: left;
-  padding: 10px 12px;
-  min-height: 40px;
-  font-weight: 400;
-}
-.picker-trigger > span {
-  overflow: hidden;
+  padding-right: 36px;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.picker-trigger > svg {
-  flex-shrink: 0;
+.picker-control > svg {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--muted);
-}
-.picker-placeholder {
-  color: var(--muted);
+  pointer-events: none;
 }
 .picker-popover {
   position: absolute;
@@ -1771,25 +1767,6 @@ summary:hover {
   background: var(--bg);
   box-shadow: var(--lift);
   overflow: hidden;
-}
-.picker-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-}
-.picker-search input {
-  border: 0;
-  box-shadow: none;
-  outline: none;
-  padding: 7px 0;
-  min-width: 0;
-  border-radius: 0;
-}
-.picker-search:focus-within {
-  box-shadow: inset 0 -2px var(--border);
 }
 .picker-options {
   max-height: 240px;

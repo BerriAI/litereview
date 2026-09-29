@@ -84,3 +84,25 @@ Separate private snapshots of `BerriAI/litellm-roi-calculator` and `pallets/flas
 - Invalid completion payloads now produce a recoverable 422 response; the agent can correct its response instead of receiving an opaque server error. Supporting skill files have explicit paths. Browser tool guidance matches the accessibility tree and ambiguous selectors no longer silently choose the first element.
 
 Private evidence, model tool-call audits, screenshots, source SHAs, and run IDs remain under the ignored local `.test-artifacts/private-validation-20260928/` directory. Automated validation now includes 31 tests, plus a successful frontend build. Direct-provider adapters are covered by protocol fixtures; live calls in this test used the supplied gateway credentials.
+
+## Selectable harness validation
+
+Validated privately on 28 September 2026 in a separate database and Modal app. These checks did not create public resources, post GitHub comments, or change production settings.
+
+| Harness | Pinned runtime | Code only + sample skill | Terminal, internet, browser, desktop, shared MCP | Defect with file/line |
+| --- | --- | --- | --- | --- |
+| Built-in | 1 | Passed | Passed | Passed |
+| Pi | 0.87.1 (`@earendil-works/pi-coding-agent`) | Passed | Passed | Passed |
+| OpenCode V1 | 1.18.33 (`opencode-ai`) | Passed | Passed | Passed |
+| OpenCode V2 | 2.0.18 (`@opencode/cli`) | Passed | Passed | Passed |
+| Codex | 0.158.0 (`@openai/codex`) | Passed | Passed | Passed |
+| Claude Code | Agent SDK 0.3.284 | Passed | Passed | Passed |
+| Deep Agents | 0.7.19 | Passed | Passed | Passed |
+
+Each harness ran its real SDK/CLI in its own Modal sandbox. The full check executed a Python assertion, fetched example.com over HTTPS (200), operated a running sample app using browser tools, then used desktop mouse/keyboard actions. Saved screenshots show the red swatch and `Saved: desktop-ok`; browser actions separately produced `Saved: browser-ok`. Each returned the random word from an attached skill file and its harness-specific proof from the same authenticated remote MCP connection. All completed with empty findings and limitations on the correct fixture. A separate arithmetic regression produced one finding at `maths.py:2` from every harness.
+
+Live image inventories confirmed that only the selected harness package was installed in each sandbox. Native model-request tool lists confirmed code-only runs had no terminal, native editing, or delegation tools. Unit tests also cover image selection, protocol headers, credential separation, model/call restrictions, screenshot content blocks, capability gating, cancellation, and checks never publishing to GitHub. The browser UI passed harness/model searching, persisted selection, a real Test agent run, and stopping a running test. Search now happens directly in the selected field; filtering, arrow/Enter selection, Escape preserving the old value, and custom model IDs were checked in the browser. The local suite passed 66 tests and the frontend production build.
+
+Initial code-only checks used GPT-4.1 (GPT-5.4 for Codex) and Claude Sonnet 4.6 through the supplied gateway. During the full matrix the OpenAI provider returned 429 with no credits remaining. The accepted full and defect matrices used Claude Sonnet 4.6: Chat Completions for Built-in/Pi/OpenCode/Deep Agents, Messages for Claude Code, and the gateway's Responses translation for Codex. Interrupted and quota-failed attempts are retained as failed evidence, not counted as passes. Pi, both OpenCode versions, and Deep Agents also passed the full matrix using the Anthropic Messages adapter against the gateway; that additional check caught and fixed Pi adding `/v1` twice. No live direct-provider account credentials were available; direct account authentication remains untested, while endpoint/header behavior is covered with protocol fixtures.
+
+Evidence is retained privately in the ignored `.test-artifacts/harness-validation/` directory: accepted run IDs, statuses, tool audits, package inventories, MCP audit, and screenshots. These are bounded capability and review-contract checks, not a guarantee for every model, MCP server, or repository. The existing GitHub/App integration checks above cover the shared source-download/publication path; this harness matrix used disposable source fixtures.

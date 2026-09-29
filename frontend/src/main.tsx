@@ -126,9 +126,13 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
   const [models, setModels] = useState<Record<string, string[]>>({});
+  const [harnesses, setHarnesses] = useState<
+    { id: string; name: string; version: string }[]
+  >([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelError, setModelError] = useState("");
   const [testingModel, setTestingModel] = useState(false);
+  const [checkRunId, setCheckRunId] = useState<string | null>(null);
   const [modelCheck, setModelCheck] = useState<{
     error: boolean;
     text: string;
@@ -143,6 +147,12 @@ function App() {
   const active = section in titles ? section : "agents";
   const modelConnection =
     editor?.kind === "agents" ? editor.data.connection_id : "";
+  useEffect(() => {
+    if (session?.user)
+      api("/harnesses")
+        .then(setHarnesses)
+        .catch(() => {});
+  }, [session?.user]);
   useEffect(() => {
     setModelError("");
     setLoadingModels(false);
@@ -174,6 +184,7 @@ function App() {
     setModelCheck(null);
   }, [
     editor?.data.model,
+    editor?.data.harness,
     modelConnection,
     JSON.stringify(editor?.data.capabilities),
   ]);
@@ -276,6 +287,7 @@ function App() {
       },
       agents: {
         name: "",
+        harness: "builtin",
         instructions:
           "Review this PR for actionable defects. Explain a concrete failure scenario and cite the affected code. Report no findings when appropriate.",
         connection_id:
@@ -1146,6 +1158,10 @@ function App() {
                               <div className="model-cell">
                                 <code>{row.model}</code>
                                 <small>
+                                  {harnesses.find(
+                                    (h) => h.id === (row.harness || "builtin"),
+                                  )?.name || "Built-in"}{" "}
+                                  ·{" "}
                                   {store.connections.find(
                                     (c) => c.id === row.connection_id,
                                   )?.name || "Connection unavailable"}
@@ -1484,12 +1500,31 @@ function App() {
                       </div>
                     )}
                   <FormSection
-                    title="Model"
-                    description="Choose a connection and the model this agent uses for every review."
+                    title="Harness & model"
+                    description="Each review starts only this harness in its own Modal sandbox."
                   >
+                    <SearchPicker
+                      label="Harness"
+                      disabled={testingModel}
+                      value={editor.data.harness || "builtin"}
+                      options={harnesses.map((h) => ({
+                        value: h.id,
+                        label: h.name,
+                      }))}
+                      onChange={(value) => update("harness", value)}
+                    />
+                    {(editor.data.harness === "codex" ||
+                      editor.data.harness === "claude-code") && (
+                      <small>
+                        {editor.data.harness === "codex"
+                          ? "Requires a Responses-compatible connection. A gateway can route it to Claude or other models."
+                          : "Requires a Messages-compatible connection, through Anthropic or your gateway."}
+                      </small>
+                    )}
                     <div className="form-grid">
                       <SearchPicker
                         label="Model connection"
+                        disabled={testingModel}
                         value={editor.data.connection_id}
                         options={modelConnections.map((connection) => ({
                           value: connection.id,
@@ -1512,6 +1547,7 @@ function App() {
                       <SearchPicker
                         key={editor.data.connection_id}
                         label="Model"
+                        disabled={testingModel}
                         value={editor.data.model}
                         options={(models[editor.data.connection_id] || []).map(
                           (model) => ({ value: model, label: model }),
@@ -1554,37 +1590,103 @@ function App() {
                           setBusy(true);
                           setModelCheck(null);
                           try {
-                            await api(
-                              "/agents/test",
+                            const check = await api(
+                              "/agents/check",
                               send("POST", {
+                                harness: editor.data.harness || "builtin",
                                 connection_id: editor.data.connection_id,
                                 model: editor.data.model,
                                 capabilities: editor.data.capabilities,
                               }),
                             );
+                            setCheckRunId(check.id);
                             setModelCheck({
                               error: false,
-                              text: editor.data.capabilities.some(
-                                (capability: string) =>
-                                  ["browser", "computer"].includes(capability),
-                              )
-                                ? "Tool and image checks passed."
-                                : "Tool check passed.",
+                              text: "Starting a private test sandbox. The first run may take a few minutes.",
                             });
+                            const deadline = Date.now() + 45 * 60 * 1000;
+                            let complete = false;
+                            while (Date.now() < deadline) {
+                              await new Promise((resolve) =>
+                                setTimeout(resolve, 3000),
+                              );
+                              const result = await api(
+                                "/agents/check/" + check.id,
+                              );
+                              if (
+                                ["completed", "failed", "timed_out"].includes(
+                                  result.status,
+                                )
+                              ) {
+                                complete = true;
+                                if (
+                                  result.status !== "completed" ||
+                                  result.result.limitations?.length
+                                )
+                                  throw new Error(
+                                    result.result.limitations?.join(" ") ||
+                                      result.result.summary ||
+                                      "Agent check did not complete.",
+                                  );
+                                setModelCheck({
+                                  error: false,
+                                  text: "Harness, model, and selected capabilities passed the test.",
+                                });
+                                break;
+                              }
+                              setModelCheck({
+                                error: false,
+                                text:
+                                  result.logs?.at(-1)?.message ||
+                                  "Starting test sandbox…",
+                              });
+                            }
+                            if (!complete)
+                              throw new Error(
+                                "The test is still running. Check Modal for its status.",
+                              );
                           } catch (error) {
                             setModelCheck({
                               error: true,
                               text: (error as Error).message,
                             });
                           } finally {
+                            setCheckRunId(null);
                             setTestingModel(false);
                             setBusy(false);
                           }
                         }}
                       >
-                        {testingModel ? "Testing…" : "Test model"}
+                        {testingModel ? "Testing…" : "Test agent"}
                       </button>
+                      {testingModel && checkRunId && (
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={async () => {
+                            try {
+                              await api(
+                                "/agents/check/" + checkRunId + "/cancel",
+                                send("POST"),
+                              );
+                            } catch (error) {
+                              setModelCheck({
+                                error: true,
+                                text: (error as Error).message,
+                              });
+                            }
+                          }}
+                        >
+                          Stop test
+                        </button>
+                      )}
                     </div>
+                    <small>
+                      Checks this harness, model, and enabled tools on a sample
+                      project. Uses Modal and model credits. Your review
+                      instructions, attached skills, and MCP tools are not run
+                      in this check.
+                    </small>
                     {modelCheck && (
                       <p
                         className={modelCheck.error ? "error" : "notice"}
@@ -1658,6 +1760,7 @@ function App() {
                             <input
                               type="checkbox"
                               checked={editor.data.capabilities.includes(key)}
+                              disabled={testingModel}
                               onChange={(e) =>
                                 toggleArray(
                                   "capabilities",
