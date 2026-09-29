@@ -152,6 +152,11 @@ async def run(relay, data):
                 )[:70000],
             },
         ]
+        if cfg.get("harness", "builtin") != "builtin":
+            from .harness import run_external
+
+            await run_external(tools, relay, data, system, messages[-1]["content"])
+            return
         if "computer" in cfg["capabilities"]:
             shot = await tools.screen()
             messages.append(
@@ -236,6 +241,8 @@ async def main():
         async with asyncio.timeout(data["timeout"]):
             await run(relay, data)
     except Exception as exc:
+        while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+            exc = exc.exceptions[0]
         status = "timed_out" if isinstance(exc, TimeoutError) else "failed"
         # Do not print headers, credentials, or provider request bodies.
         message = "Execution time limit reached." if status == "timed_out" else str(exc)[:2000]

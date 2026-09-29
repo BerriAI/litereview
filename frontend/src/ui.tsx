@@ -9,7 +9,6 @@ import {
   Plug,
   Network,
   ChevronDown,
-  Search,
   Check,
 } from "lucide-react";
 
@@ -69,6 +68,7 @@ export function SearchPicker({
   onChange,
   allowCustom = false,
   loading = false,
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -76,9 +76,9 @@ export function SearchPicker({
   onChange: (value: string) => void;
   allowCustom?: boolean;
   loading?: boolean;
+  disabled?: boolean;
 }) {
   const id = useId();
-  const trigger = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -94,9 +94,6 @@ export function SearchPicker({
   const index = Math.min(active, Math.max(0, choices.length - 1));
   const selected = options.find((option) => option.value === value);
   useEffect(() => {
-    if (open) search.current?.focus();
-  }, [open]);
-  useEffect(() => {
     if (open)
       document
         .getElementById(`${id}-option-${index}`)
@@ -105,7 +102,7 @@ export function SearchPicker({
   const choose = (next: string) => {
     onChange(next);
     setOpen(false);
-    trigger.current?.focus();
+    search.current?.focus();
   };
   return (
     <div
@@ -115,86 +112,90 @@ export function SearchPicker({
       }}
     >
       <label htmlFor={id}>{label}</label>
-      <button
-        type="button"
-        id={id}
-        ref={trigger}
-        className="picker-trigger"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? id + "-options" : undefined}
-        onClick={() => {
-          setQuery("");
-          setActive(0);
-          setOpen(!open);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
+      <div className="picker-control">
+        <input
+          id={id}
+          ref={search}
+          className="picker-trigger"
+          disabled={disabled}
+          role="combobox"
+          aria-expanded={open}
+          aria-autocomplete="list"
+          aria-controls={open ? id + "-options" : undefined}
+          aria-activedescendant={
+            open && choices.length ? `${id}-option-${index}` : undefined
+          }
+          value={open ? query : selected?.label || value}
+          placeholder={
+            open
+              ? allowCustom
+                ? "Search models or enter an ID…"
+                : `Search ${label.toLowerCase()}…`
+              : `Choose ${label.toLowerCase()}`
+          }
+          autoComplete="off"
+          spellCheck={false}
+          onFocus={() => {
             setQuery("");
+            setActive(
+              Math.max(
+                0,
+                options.findIndex((option) => option.value === value),
+              ),
+            );
+            setOpen(true);
+          }}
+          onClick={() => {
+            if (!open) {
+              setQuery("");
+              setActive(
+                Math.max(
+                  0,
+                  options.findIndex((option) => option.value === value),
+                ),
+              );
+              setOpen(true);
+            }
+          }}
+          onChange={(event) => {
+            setQuery(event.target.value);
             setActive(0);
             setOpen(true);
-          }
-        }}
-      >
-        <span className={value ? "" : "picker-placeholder"}>
-          {selected?.label || value || `Choose ${label.toLowerCase()}`}
-        </span>
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && open) {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(false);
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              if (open && choices[index]) choose(choices[index].value);
+              else {
+                setQuery("");
+                setOpen(true);
+              }
+            } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              if (!open) {
+                setQuery("");
+                setOpen(true);
+              } else
+                setActive(
+                  Math.max(
+                    0,
+                    Math.min(
+                      choices.length - 1,
+                      index + (event.key === "ArrowDown" ? 1 : -1),
+                    ),
+                  ),
+                );
+            }
+          }}
+        />
         <ChevronDown size={15} aria-hidden="true" />
-      </button>
+      </div>
       {open && (
         <div className="picker-popover">
-          <div className="picker-search">
-            <Search size={15} aria-hidden="true" />
-            <input
-              ref={search}
-              role="combobox"
-              aria-label={`Search ${label.toLowerCase()}`}
-              aria-expanded="true"
-              aria-autocomplete="list"
-              aria-controls={id + "-options"}
-              aria-activedescendant={
-                choices.length ? `${id}-option-${index}` : undefined
-              }
-              value={query}
-              placeholder={
-                allowCustom
-                  ? "Search models or enter an ID…"
-                  : `Search ${label.toLowerCase()}…`
-              }
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setActive(0);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setOpen(false);
-                  trigger.current?.focus();
-                } else if (event.key === "Enter") {
-                  event.preventDefault();
-                  if (choices[index]) choose(choices[index].value);
-                } else if (
-                  event.key === "ArrowDown" ||
-                  event.key === "ArrowUp"
-                ) {
-                  event.preventDefault();
-                  setActive(
-                    Math.max(
-                      0,
-                      Math.min(
-                        choices.length - 1,
-                        index + (event.key === "ArrowDown" ? 1 : -1),
-                      ),
-                    ),
-                  );
-                }
-              }}
-            />
-          </div>
           <div
             id={id + "-options"}
             role="listbox"

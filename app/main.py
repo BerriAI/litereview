@@ -16,6 +16,8 @@ from pydantic import ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
+from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
+
 from . import github, providers, reviews
 from .access import initialize_access
 from .db import Artifact, Job, Resource, Run, Session, init_db, uid
@@ -220,6 +222,10 @@ def validate_resource(kind, data, db, resource_id):
         conn = exists(data["connection_id"], "connections")
         if conn.data["type"] == "mcp":
             raise HTTPException(400, "Choose a model connection.")
+        try:
+            validate_connection(data.get("harness", "builtin"), conn.data["type"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
         for sid in data["skill_ids"]:
             exists(sid, "skills")
         for mcp in data["mcps"]:
@@ -443,9 +449,75 @@ async def test_agent_model(data: AgentModel):
     connection = providers.connection(data.connection_id)
     if connection["type"] == "mcp":
         raise HTTPException(400, "Choose a model connection.")
+    try:
+        validate_connection(data.harness, connection["type"])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
     return await providers.probe(
         connection, data.model, bool({"browser", "computer"} & set(data.capabilities))
     )
+
+
+@app.get("/api/harnesses", dependencies=[Depends(require_admin)])
+def harnesses():
+    return [
+        {"id": key, "name": HARNESS_LABELS[key], "version": version}
+        for key, version in HARNESS_VERSIONS.items()
+    ]
+
+
+@app.post("/api/agents/check", dependencies=[Depends(require_admin)])
+def check_agent(data: AgentModel):
+    from .agent_checks import enqueue
+
+    if not settings().modal_token_id or not settings().modal_token_secret:
+        raise HTTPException(400, "Configure Modal before testing an agent.")
+    if not settings().dispatcher_enabled or not settings().public_url.startswith("https://"):
+        raise HTTPException(400, "Agent tests require a running dispatcher and a public HTTPS URL for Modal.")
+    try:
+        return enqueue(data, {"id": data.connection_id, **providers.connection(data.connection_id)})
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.get("/api/agents/check/{run_id}", dependencies=[Depends(require_admin)])
+def agent_check_status(run_id: str):
+    with Session() as db:
+        run = db.get(Run, run_id)
+        if not run or not run.snapshot.get("harness_check"):
+            raise HTTPException(404)
+        job = db.scalar(select(Job).where(Job.run_id == run_id))
+        return {"id": run.id, "status": job.status, "result": job.result, "logs": job.logs}
+
+
+@app.post("/api/agents/check/{run_id}/cancel", dependencies=[Depends(require_admin)])
+async def cancel_agent_check(run_id: str):
+    from .runtime import terminate
+
+    with Session() as db:
+        run = db.get(Run, run_id)
+        if not run or not run.snapshot.get("harness_check"):
+            raise HTTPException(404)
+        job = db.scalar(select(Job).where(Job.run_id == run_id))
+        sandbox_id = job.sandbox_id
+        db.execute(
+            update(Job)
+            .where(Job.id == job.id, Job.status.in_(["queued", "starting", "running"]))
+            .values(
+                status="failed",
+                finished_at=time.time(),
+                result={
+                    "status": "failed",
+                    "summary": "Test stopped.",
+                    "findings": [],
+                    "limitations": ["Test stopped by the user."],
+                },
+            )
+        )
+        db.commit()
+    if sandbox_id:
+        await terminate(sandbox_id)
+    return {"ok": True}
 
 
 @app.post("/api/agents/{resource_id}/test", dependencies=[Depends(require_admin)])
@@ -597,7 +669,15 @@ def run_public(run):
 @app.get("/api/runs", dependencies=[Depends(require_admin)])
 def runs():
     with Session() as db:
-        return [run_public(r) for r in db.scalars(select(Run).order_by(Run.created_at.desc()).limit(100))]
+        return [
+            run_public(r)
+            for r in db.scalars(
+                select(Run)
+                .where(Run.snapshot["harness_check"].as_boolean().is_not(True))
+                .order_by(Run.created_at.desc())
+                .limit(100)
+            )
+        ]
 
 
 @app.get("/api/runs/{run_id}", dependencies=[Depends(require_admin)])
@@ -697,6 +777,10 @@ async def job_archive(job_id: str, request: Request):
     job = worker(request, job_id)
     with Session() as db:
         run = db.get(Run, job.run_id)
+    if run.snapshot.get("harness_check"):
+        from .agent_checks import archive
+
+        return Response(archive(), media_type="application/gzip")
     return Response(await github.archive(run.repo, run.installation, run.head), media_type="application/gzip")
 
 
@@ -733,6 +817,13 @@ async def mcp_relay(job_id: str, request: Request):
     return await providers.mcp_call(
         providers.snapshot_connection(allowed), body["name"], body.get("arguments", {})
     )
+
+
+@app.post("/api/internal/jobs/{job_id}/llm/{path:path}")
+async def harness_model(job_id: str, path: str, request: Request):
+    from .harnesses import relay_model
+
+    return await relay_model(worker(request, job_id), request, path)
 
 
 @app.post("/api/internal/jobs/{job_id}/event")
@@ -790,6 +881,25 @@ async def finish(job_id: str, request: Request):
     except ValueError:
         raise HTTPException(400, "Submit the review result as a JSON object.") from None
     with Session() as db:
+        job = db.get(Job, job_id)
+        run = db.get(Run, job.run_id)
+        if run.snapshot.get("harness_check") and result["status"] == "completed":
+            missing = []
+            if run.snapshot["check_word"] not in result["summary"]:
+                missing.append("The agent did not return the check word from the attached skill file.")
+            used = {event["message"] for event in job.logs}
+            caps = job.config["capabilities"]
+            if "terminal" in caps and not used.intersection(
+                {"Using terminal", "Using bash", "Using Bash", "Using shell", "Using execute"}
+            ):
+                missing.append("The agent did not exercise its terminal tool.")
+            for cap in ("browser", "computer"):
+                if cap in caps and not any(
+                    "Using " in event and (event.endswith(cap) or event.endswith("lr_" + cap))
+                    for event in used
+                ):
+                    missing.append(f"The agent did not exercise its {cap} tool.")
+            result["limitations"] += missing
         db.execute(
             update(Job)
             .where(Job.id == job_id, Job.status.in_(["starting", "running"]))

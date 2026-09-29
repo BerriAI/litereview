@@ -1,6 +1,6 @@
 # LiteReview
 
-A private workspace for reusable PR reviewers. Configure each agent’s model, instructions, skills, and tools. Call agents directly or use optional groups to bundle them, then comment on a PR:
+A private workspace for reusable PR reviewers. Configure each agent’s harness, model, instructions, skills, and tools. Call agents directly or use optional groups to bundle them, then comment on a PR:
 
 ```text
 @litereview frontend pentest security
@@ -18,9 +18,19 @@ The private workspace is deployed at [litereview.onrender.com](https://literevie
 4. Under **Connections → GitHub**, choose **Create GitHub App**. Choose the account or organization that owns the target repositories. GitHub registers a private App there, returns its credentials to LiteReview, and opens installation. A private App can only be installed on its owning account. For BerriAI repositories, an organization owner may need to create/install the App; they can also create it manually and provide the App credentials. You can instead use an existing App or environment variables; see below.
 5. Refresh repositories and add your selected repositories. For browser/desktop reviews, configure the setup command, start command, and local readiness URL.
 6. Under **Connections → Models**, add your gateway or a direct OpenAI/Anthropic key. Gateway base URLs normally end in `/v1`. Test the connection to discover models. No LiteLLM Gateway is required. For an environment-only first setup, optionally provide `GATEWAY_URL` and `GATEWAY_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) before the first start. These seed an encrypted connection; manage subsequent model connection changes in the UI.
-7. Create a PR agent, select a model, and test its capabilities. In **Access**, add the GitHub accounts allowed to call it and choose which agents/groups each person and repository can use, then comment `@litereview your-agent` on an open PR. Optionally bundle agents into groups, as reusable shortcuts. Mix agent and group names in the same command.
+7. Create a PR agent, select a harness and model, and use **Test agent** to check them in a disposable Modal sandbox. In **Access**, add the GitHub accounts allowed to call it and choose which agents/groups each person and repository can use, then comment `@litereview your-agent` on an open PR. Optionally bundle agents into groups, as reusable shortcuts. Mix agent and group names in the same command.
 
 Modal images and sandboxes are created on demand using your credentials. The first review builds the image and can take several minutes; subsequent reviews reuse it. No separate Modal app deployment, workflow service, Redis, or storage bucket is required.
+
+## Harnesses
+
+Choose **Built-in**, **Pi**, **OpenCode V1**, **OpenCode V2**, **Codex**, **Claude Code**, or **Deep Agents** alongside the model in each agent's editor. Existing agents keep Built-in. Each sandbox installs and launches only the selected harness; there is no pool of idle harnesses.
+
+Terminal uses the selected harness's native command tool. Browser, computer use, repository tools, attached skills, and selected MCP tools are connected to that harness by LiteReview. Code-only agents are not offered a command tool. Native file editing and delegation tools are disabled; commands may create disposable test/build artifacts. Nothing pushes changes to GitHub.
+
+Codex needs a Responses-compatible endpoint. Claude Code needs a Messages-compatible endpoint. A gateway can translate these protocols to compatible models, including Claude with Codex. Pi, OpenCode, and Deep Agents use Chat Completions for gateway/OpenAI connections and Messages for direct Anthropic connections. Browser and desktop checks require image-capable models. Model discovery alone does not establish compatibility: **Test agent** runs the actual selected harness against a sample project, without accessing a GitHub repo or posting comments. It checks sample skill loading and the enabled terminal/browser/desktop tools; it does not execute your review instructions or attached MCP tools. You can stop a test from the editor.
+
+Versions are pinned in `runner/catalog.py` and captured with every job. Runtime updates are application releases. See [harness validation](docs/VALIDATION.md#selectable-harness-validation) for the tested versions and combinations.
 
 ## Capabilities
 
@@ -76,7 +86,7 @@ Only `ADMIN_USERS` can sign in with GitHub. The deployment owner can also use `A
 
 ## Runtime and boundaries
 
-The FastAPI service serves the built React UI and runs a durable Postgres-backed dispatcher. Each job runs the same agent loop in a separate Modal sandbox with Python 3.12, Node 22, Chromium, Playwright, and a Linux desktop. LLM inference happens at the configured provider.
+The FastAPI service serves the built React UI and runs a durable Postgres-backed dispatcher. Each job runs its selected harness in a separate Modal sandbox with Python 3.12, Node 22, Chromium, Playwright, and a Linux desktop. LLM inference happens at the configured provider.
 
 The checkout is a GitHub source archive at the PR's immutable head SHA, rather than a full Git clone. It does not include `.git` history, materialize submodules or Git LFS objects, or preserve symlinks. Repositories that depend on those features need additional support. Executable reviews use the repository's configured setup command, start command, and readiness URL; external services, private package registries, and test accounts still need their own configuration. Modal sandboxes have outbound internet access by default, including package installation and browser navigation. This does not grant access to private networks or credentials.
 

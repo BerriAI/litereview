@@ -36,6 +36,9 @@ class ReviewTarget(BaseModel):
 
 
 class AgentModel(BaseModel):
+    harness: Literal["builtin", "pi", "opencode-v1", "opencode-v2", "codex", "claude-code", "deepagents"] = (
+        "builtin"
+    )
     connection_id: str
     model: str = Field(min_length=1, max_length=250)
     capabilities: list[Literal["terminal", "browser", "computer"]] = Field(default_factory=list)
