@@ -99,6 +99,16 @@ export function SearchPicker({
         .getElementById(`${id}-option-${index}`)
         ?.scrollIntoView({ block: "nearest" });
   }, [open, index, id]);
+  const openPicker = () => {
+    setQuery("");
+    setActive(
+      Math.max(
+        0,
+        options.findIndex((option) => option.value === value),
+      ),
+    );
+    setOpen(true);
+  };
   const choose = (next: string) => {
     onChange(next);
     setOpen(false);
@@ -135,27 +145,9 @@ export function SearchPicker({
           }
           autoComplete="off"
           spellCheck={false}
-          onFocus={() => {
-            setQuery("");
-            setActive(
-              Math.max(
-                0,
-                options.findIndex((option) => option.value === value),
-              ),
-            );
-            setOpen(true);
-          }}
+          onFocus={openPicker}
           onClick={() => {
-            if (!open) {
-              setQuery("");
-              setActive(
-                Math.max(
-                  0,
-                  options.findIndex((option) => option.value === value),
-                ),
-              );
-              setOpen(true);
-            }
+            if (!open) openPicker();
           }}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -169,17 +161,13 @@ export function SearchPicker({
               setOpen(false);
             } else if (event.key === "Enter") {
               event.preventDefault();
-              if (open && choices[index]) choose(choices[index].value);
-              else {
-                setQuery("");
-                setOpen(true);
-              }
+              if (open) {
+                if (choices[index]) choose(choices[index].value);
+              } else openPicker();
             } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
-              if (!open) {
-                setQuery("");
-                setOpen(true);
-              } else
+              if (!open) openPicker();
+              else
                 setActive(
                   Math.max(
                     0,
