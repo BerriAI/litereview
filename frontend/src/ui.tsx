@@ -160,7 +160,7 @@ export function SearchPicker({
               placeholder={
                 allowCustom
                   ? "Search models or enter an ID…"
-                  : "Search connections…"
+                  : `Search ${label.toLowerCase()}…`
               }
               autoComplete="off"
               spellCheck={false}

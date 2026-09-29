@@ -33,6 +33,6 @@ An organization owner can finish either way:
 
 For manual registration, generate a webhook secret, client secret, and private key. Enter the App ID, PEM private key, webhook secret, client ID, client secret, and App URL into LiteReview's existing-App form. Share credentials through a private channel; never commit them.
 
-Install the App on **only `BerriAI/litereview`** for the first test. Refresh repositories in LiteReview, add the repository, create an agent and a group restricted to `moe-berri`, then trigger it on the authorized [draft test PR](https://github.com/BerriAI/litereview/pull/1). Do not merge that test PR.
+Install the App on **only `BerriAI/litereview`** for the first test. Refresh repositories in LiteReview, add the repository, create an agent, and use **Access** to grant `moe-berri` and the repository access to it. Then trigger it on the authorized [draft test PR](https://github.com/BerriAI/litereview/pull/1). Do not merge that test PR.
 
 The web app, gateway, and Modal connectivity are verified. The first production GitHub-triggered review and GitHub sign-in still need verification after App installation. Full evidence is in [VALIDATION.md](VALIDATION.md).

@@ -43,18 +43,31 @@ export function Documentation() {
                 In <a href="/agents">PR agents</a>, choose a model, describe
                 what it should check, and enable the tools it needs. Attach
                 skills or MCP tools if useful. Use Test model to check tool and
-                image support. Choose the repositories and callers allowed to
-                call this agent directly.
+                image support.
               </p>
             </li>
             <li>
               <h3>Optionally, bundle agents into a group</h3>
               <p>
                 In <a href="/groups">Agent groups</a>, name a group, add agents,
-                and choose how many copies of each should run. Select its
-                repositories and allowed callers. You can reuse the same agent
-                in several groups. Calling a group uses the group’s access
-                settings; calling an agent directly uses that agent’s settings.
+                and choose how many copies of each should run. You can reuse the
+                same agent in several groups.
+              </p>
+            </li>
+            <li>
+              <h3>Set access</h3>
+              <p>
+                In <a href="/access">Access</a>, add GitHub usernames under
+                People and manage connected repositories under Repositories.
+                Give each one All agents and groups (including future additions)
+                or select specific ones. New repositories start with All access;
+                you can narrow it here.
+              </p>
+              <p>
+                Both the person and the repository must have access to each name
+                in a command. The person must also have GitHub access to the
+                repository. Access to a group includes its members when called
+                through that group.
               </p>
             </li>
             <li>

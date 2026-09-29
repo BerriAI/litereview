@@ -97,6 +97,7 @@ def setup(owner):
     group = create(
         owner, "groups", name="general", members=[{"agent_id": agent["id"], "count": 2}], repos=[repo["name"]]
     )
+    create(owner, "access", name="trusted", subject="user", scope="all")
     return connection, skill, agent, repo, group
 
 
@@ -215,8 +216,8 @@ def test_only_explicit_commands(body):
 def test_unauthorized_webhooks_and_callers(owner, monkeypatch):
     setup(owner)
     assert owner.post("/api/webhook/github", json=payload()).status_code == 401
-    mock_github(monkeypatch, "read")
-    assert webhook(owner, payload()).status_code == 200
+    mock_github(monkeypatch, "write")
+    assert webhook(owner, payload(actor="unlisted")).status_code == 200
     mock_github(monkeypatch)
     assert webhook(owner, payload(body="@litereview general unknown"), "delivery-2").status_code == 200
     assert webhook(owner, {**payload(), "action": "edited"}).json()["ignored"]

@@ -1,7 +1,7 @@
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Connection(BaseModel):
@@ -28,19 +28,11 @@ class Skill(BaseModel):
 
 class ReviewTarget(BaseModel):
     name: str = Field(min_length=1, max_length=40, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$")
-    repos: list[str] = Field(default_factory=list)
-    caller_policy: Literal["collaborators", "allowlist"] = "collaborators"
-    callers: list[str] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
     def lowercase(cls, v):
         return v.lower()
-
-    @field_validator("callers")
-    @classmethod
-    def normalize_callers(cls, values):
-        return list(dict.fromkeys(value.strip().lower() for value in values if value.strip()))
 
 
 class AgentModel(BaseModel):
@@ -63,7 +55,32 @@ class Member(BaseModel):
 class Group(ReviewTarget):
     description: str = Field(default="", max_length=500)
     members: list[Member] = Field(min_length=1, max_length=20)
-    repos: list[str] = Field(min_length=1)
+
+
+class Access(BaseModel):
+    subject: Literal["user", "repo"] = "user"
+    name: str = Field(min_length=1, max_length=250)
+    scope: Literal["all", "selected"] = "all"
+    target_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value):
+        return value.strip().removeprefix("@").lower()
+
+    @model_validator(mode="after")
+    def validate_grant(self):
+        pattern = (
+            r"[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?"
+            if self.subject == "user"
+            else r"[a-z0-9_.-]+/[a-z0-9_.-]+"
+        )
+        if not re.fullmatch(pattern, self.name):
+            raise ValueError(
+                "Enter a GitHub username." if self.subject == "user" else "Enter a repository as owner/repo."
+            )
+        self.target_ids = [] if self.scope == "all" else list(dict.fromkeys(self.target_ids))
+        return self
 
 
 class Repository(BaseModel):
@@ -110,4 +127,11 @@ class ReviewResult(BaseModel):
     limitations: list[str] = Field(default_factory=list, max_length=30)
 
 
-SCHEMAS = {"agents": Agent, "groups": Group, "connections": Connection, "skills": Skill, "repos": Repository}
+SCHEMAS = {
+    "agents": Agent,
+    "groups": Group,
+    "connections": Connection,
+    "skills": Skill,
+    "repos": Repository,
+    "access": Access,
+}

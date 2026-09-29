@@ -1835,3 +1835,14 @@ summary:hover {
   gap: 18px;
   margin-top: 8px;
 }
+
+.access-targets {
+  max-height: 280px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+.access-targets h4 {
+  margin: 14px 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}

@@ -35,6 +35,15 @@ review_target_names = Index(
 )
 
 
+access_names = Index(
+    "uq_access_names",
+    func.lower(Resource.data["name"].as_string()),
+    unique=True,
+    sqlite_where=Resource.kind == "access",
+    postgresql_where=Resource.kind == "access",
+)
+
+
 class Run(Base):
     __tablename__ = "runs"
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=uid)
@@ -95,3 +104,4 @@ def init_db():
     # create_all does not add indexes to a table that already exists.
     with engine.begin() as connection:
         connection.execute(CreateIndex(review_target_names, if_not_exists=True))
+        connection.execute(CreateIndex(access_names, if_not_exists=True))

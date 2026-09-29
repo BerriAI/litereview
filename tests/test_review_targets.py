@@ -18,7 +18,6 @@ def update(owner, kind, row, **changes):
 def test_direct_agent_needs_no_group(owner, monkeypatch):
     _, _, agent, repo, group = setup(owner)
     owner.delete("/api/resources/groups/" + group["id"]).raise_for_status()
-    update(owner, "agents", agent, repos=[repo["name"]])
     mock_github(monkeypatch)
     response = webhook(owner, payload(body="@litereview REVIEWER reviewer"))
     assert response.status_code == 200
@@ -37,7 +36,6 @@ def test_direct_agent_needs_no_group(owner, monkeypatch):
 
 def test_mixed_targets_expand_independently_and_deduplicate(owner, monkeypatch):
     _, _, agent, repo, _ = setup(owner)
-    update(owner, "agents", agent, repos=[repo["name"]])
     mock_github(monkeypatch)
     response = webhook(owner, payload(body="@litereview reviewer GENERAL reviewer general"))
     with Session() as db:
@@ -54,51 +52,25 @@ def test_mixed_targets_expand_independently_and_deduplicate(owner, monkeypatch):
         assert len(db.scalars(select(Job)).all()) == 3
 
 
-@pytest.mark.parametrize("denial", ["no_repos", "other_repo", "caller", "unknown"])
-def test_invalid_direct_selection_rejects_entire_mixed_command(owner, monkeypatch, denial):
-    _, _, agent, repo, _ = setup(owner)
-    changes = {"repos": [repo["name"]]}
-    if denial == "no_repos":
-        changes["repos"] = []
-    elif denial == "other_repo":
-        other = create(owner, "repos", name="owner/other", installation_id=42)
-        changes["repos"] = [other["name"]]
-    elif denial == "caller":
-        changes.update(caller_policy="allowlist", callers=["someone-else"])
-    update(owner, "agents", agent, **changes)
-    mock_github(monkeypatch)
-    name = "missing" if denial == "unknown" else agent["name"]
-    response = webhook(owner, payload(body=f"@litereview general {name}"))
-    with Session() as db:
-        assert db.get(Run, response.json()["run_id"]).status == "rejected"
-        assert not db.scalars(select(Job)).all()
-    # Group access is independent: membership still works when direct access is disabled.
-    response = webhook(owner, payload(body="@litereview general"), "group-only")
-    with Session() as db:
-        assert db.get(Run, response.json()["run_id"]).status == "queued"
-        assert len(db.scalars(select(Job)).all()) == 2
-
-
-def test_direct_allowlist_does_not_grant_group_access(owner, monkeypatch):
-    _, _, agent, repo, _ = setup(owner)
-    agent = update(
-        owner,
-        "agents",
-        agent,
-        repos=[repo["name"].upper()],
-        caller_policy="allowlist",
-        callers=[" TRUSTED ", "trusted"],
+@pytest.mark.parametrize("subject", ["user", "repo"])
+def test_each_access_rule_must_allow_every_selected_target(owner, monkeypatch, subject):
+    _, _, agent, repo, group = setup(owner)
+    grants = owner.get("/api/resources/access").json()
+    grant = next(
+        g
+        for g in grants
+        if g["subject"] == subject and g["name"] == ("trusted" if subject == "user" else repo["name"])
     )
-    assert agent["callers"] == ["trusted"]
+    update(owner, "access", grant, scope="selected", target_ids=[group["id"]])
     mock_github(monkeypatch, "read")
-    direct = webhook(owner, payload(actor="Trusted", body="@litereview reviewer"))
-    mixed = webhook(owner, payload(actor="Trusted", body="@litereview reviewer general"), "mixed")
+    rejected = webhook(owner, payload(body="@litereview general reviewer"))
     with Session() as db:
-        assert db.get(Run, direct.json()["run_id"]).status == "queued"
-        assert db.get(Run, mixed.json()["run_id"]).status == "rejected"
-        assert len(db.scalars(select(Job)).all()) == 1
-    mock_github(monkeypatch, "none")
-    assert webhook(owner, payload(body="@litereview reviewer"), "no-repo-access").json()["ignored"]
+        assert db.get(Run, rejected.json()["run_id"]).status == "rejected"
+        assert not db.scalars(select(Job)).all()
+    accepted = webhook(owner, payload(body="@litereview general"), "group-only")
+    with Session() as db:
+        assert db.get(Run, accepted.json()["run_id"]).status == "queued"
+        assert len(db.scalars(select(Job)).all()) == 2
 
 
 @pytest.mark.parametrize(
@@ -150,27 +122,11 @@ def test_database_prevents_duplicate_names_even_without_api(owner, kind):
         db.commit()
 
 
-def test_agent_access_validation_and_repository_deletion(owner):
-    _, _, agent, repo, group = setup(owner)
-    response = owner.put(
-        "/api/resources/agents/" + agent["id"], json={**agent, "repos": ["unconnected/repo"]}
-    )
-    assert response.status_code == 400
-    response = owner.put(
-        "/api/resources/agents/" + agent["id"],
-        json={**agent, "caller_policy": "allowlist", "callers": [" ", ""]},
-    )
-    assert response.status_code == 400
+def test_agent_command_name_validation(owner):
+    _, _, agent, _, _ = setup(owner)
     for name in ["two words", "123", "-bad", "x" * 41]:
         response = owner.put("/api/resources/agents/" + agent["id"], json={**agent, "name": name})
         assert response.status_code == 422
-    owner.delete("/api/resources/groups/" + group["id"]).raise_for_status()
-    agent = update(owner, "agents", agent, repos=[repo["name"].upper()])
-    response = owner.delete("/api/resources/repos/" + repo["id"])
-    assert response.status_code == 409
-    assert "agent" in response.text
-    update(owner, "agents", agent, repos=[])
-    assert owner.delete("/api/resources/repos/" + repo["id"]).status_code == 200
 
 
 def test_editor_probes_current_unsaved_model_without_saving_agent(owner, monkeypatch):
