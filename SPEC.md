@@ -4,7 +4,7 @@ Status: implemented v1 · 28 September 2026. See README.md for deployment and do
 
 ## 1. What we are building
 
-A small web app for configuring reusable PR review agents and calling groups of them from GitHub comments. Each agent instance reviews the same PR commit in its own Modal sandbox. LiteReview posts one comment with each agent’s findings, “No findings,” or a clear failure status.
+A small web app for configuring reusable PR review agents and calling them directly or in optional groups from GitHub comments. Each agent instance reviews the same PR commit in its own Modal sandbox. LiteReview posts one comment with each agent’s findings, “No findings,” or a clear failure status.
 
 The purpose of v1 is to run real reviews and judge whether the experience is useful. Ship the complete loop before adding more orchestration.
 
@@ -12,7 +12,7 @@ The purpose of v1 is to run real reviews and judge whether the experience is use
 
 | Object | Owns |
 | --- | --- |
-| **PR agent** | Name, instructions, model, enabled tools, attached MCP connections, attached skills |
+| **PR agent** | Unique command name, instructions, model, enabled tools, attached MCP connections, attached skills, direct-call repositories and callers |
 | **Agent group** | Command name, references to PR agents, instance count for each reference, allowed repositories and callers |
 | **Connection** | A reusable model/provider connection or MCP server connection |
 | **Skill** | Name, description, `SKILL.md`, optional supporting files |
@@ -20,14 +20,14 @@ The purpose of v1 is to run real reviews and judge whether the experience is use
 
 An agent is configured once and can belong to several groups. Groups reference agents; they do not copy them. Instance counts belong to group membership. Updating a shared agent affects future runs in all its groups. An accepted run uses an immutable snapshot of the agent, skill contents, and group configuration. Store secret references in snapshots, not credential values.
 
-For v1, GitHub command names identify **groups**. A group can contain one agent. This keeps repository and caller permissions in one place while keeping agents independent and reusable.
+GitHub commands accept **agents and groups** together. Their command names share one case-insensitive unique namespace. Direct calls use the agent’s repository and caller settings; group calls use the group’s settings. An agent with no direct-call repositories can still be used through groups. Groups are optional convenience bundles.
 
 ## 3. The user flow
 
 1. An administrator connects GitHub, selects repositories, and adds a model connection.
 2. They optionally add reusable MCP connections and skills.
-3. They create PR agents, choosing a model, instructions, capabilities, and attachments for each.
-4. They create groups by selecting existing agents and instance counts, then choose repository and caller access.
+3. They create PR agents, choosing a model, instructions, capabilities, attachments, and direct-call access for each.
+4. They optionally create groups by selecting existing agents and instance counts, then choose repository and caller access.
 5. An allowed user comments on a PR:
 
    ```text
@@ -36,9 +36,9 @@ For v1, GitHub command names identify **groups**. A group can contain one agent.
 
 6. LiteReview posts a running summary, launches the selected instances, and updates that same comment when the review finishes. The web app shows progress and results.
 
-If `frontend` contains one instance, `pentest` one, and `security` five, this runs seven independent jobs.
+If `frontend` and `pentest` are individual agents and `security` contains five instances, this runs seven independent jobs.
 
-Names are case-insensitive. Ignore repeated group names within one command. Expand different groups independently: an agent referenced in two selected groups runs once for each membership, including its configured instance count. Label results with the group, agent, and instance so this is visible.
+Names are case-insensitive. Ignore repeated agent or group names within one command. A directly selected agent runs one instance; if it is also included through a group, both selections run independently. Expand different groups independently: an agent referenced in two selected groups runs once for each membership, including its configured instance count. Label results with the group, agent, and instance so this is visible.
 
 V1 accepts a command at the start of a new top-level PR comment. Unknown names or denied access reject the whole invocation with a short explanation. Only authorized callers receive configuration details. Ignore bot comments and ordinary issue comments. Edited comments and automatic reviews on pushes are outside v1.
 
@@ -104,7 +104,7 @@ The five navigation areas are:
 
 | Page | Main interaction |
 | --- | --- |
-| **PR agents** | List saved agents; create/edit name, instructions, model, capabilities, MCPs, and skills; show which groups use an agent |
+| **PR agents** | List saved agents; create/edit command name, direct-call access, instructions, model, capabilities, MCPs, and skills; show which groups use an agent |
 | **Agent groups** | Create/edit a group; choose existing agents and instance counts; configure repositories/callers; show its GitHub command |
 | **Connections** | Manage GitHub/repositories, model connections, and MCP connections in three tabs |
 | **Skills** | Create, upload, inspect, and edit reusable skills; show which agents use them |
@@ -120,7 +120,7 @@ Initial setup is one workspace per deployment. Administrators sign in with GitHu
 
 Use a GitHub App installed on selected repositories, with repository contents read, metadata read, pull requests write, and issues write permissions. A private GitHub App must be owned by the account or organization where it is installed; organization-owner involvement may be required for setup. Subscribe to issue-comment events. The API uses installation credentials for PR inspection and comment publishing; workers receive repository data without those credentials. Verify the exact comment and collaborator-access endpoints against these permissions during the first integration step.
 
-A group has an allowed repository list and one caller policy:
+Each agent and group has its own allowed repository list and one caller policy:
 
 - Repository collaborators with write, maintain, or admin permission; or
 - An explicit GitHub username allowlist, with repository access verified.

@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import {
   ArrowLeft,
   X,
@@ -8,6 +8,9 @@ import {
   FileCode2,
   Plug,
   Network,
+  ChevronDown,
+  Search,
+  Check,
 } from "lucide-react";
 
 export function Brand() {
@@ -55,6 +58,184 @@ export function Field({
           : child,
       )}
       {hint && <small id={id + "-hint"}>{hint}</small>}
+    </div>
+  );
+}
+
+export function SearchPicker({
+  label,
+  value,
+  options,
+  onChange,
+  allowCustom = false,
+  loading = false,
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+  allowCustom?: boolean;
+  loading?: boolean;
+}) {
+  const id = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const search = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const term = query.trim();
+  const matches = options.filter((option) =>
+    option.label.toLowerCase().includes(term.toLowerCase()),
+  );
+  const choices =
+    allowCustom && term && !options.some((option) => option.value === term)
+      ? [...matches, { value: term, label: `Use “${term}”` }]
+      : matches;
+  const index = Math.min(active, Math.max(0, choices.length - 1));
+  const selected = options.find((option) => option.value === value);
+  useEffect(() => {
+    if (open) search.current?.focus();
+  }, [open]);
+  useEffect(() => {
+    if (open)
+      document
+        .getElementById(`${id}-option-${index}`)
+        ?.scrollIntoView({ block: "nearest" });
+  }, [open, index, id]);
+  const choose = (next: string) => {
+    onChange(next);
+    setOpen(false);
+    trigger.current?.focus();
+  };
+  return (
+    <div
+      className="field search-picker"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <label htmlFor={id}>{label}</label>
+      <button
+        type="button"
+        id={id}
+        ref={trigger}
+        className="picker-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? id + "-options" : undefined}
+        onClick={() => {
+          setQuery("");
+          setActive(0);
+          setOpen(!open);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            setQuery("");
+            setActive(0);
+            setOpen(true);
+          }
+        }}
+      >
+        <span className={value ? "" : "picker-placeholder"}>
+          {selected?.label || value || `Choose ${label.toLowerCase()}`}
+        </span>
+        <ChevronDown size={15} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="picker-popover">
+          <div className="picker-search">
+            <Search size={15} aria-hidden="true" />
+            <input
+              ref={search}
+              role="combobox"
+              aria-label={`Search ${label.toLowerCase()}`}
+              aria-expanded="true"
+              aria-autocomplete="list"
+              aria-controls={id + "-options"}
+              aria-activedescendant={
+                choices.length ? `${id}-option-${index}` : undefined
+              }
+              value={query}
+              placeholder={
+                allowCustom
+                  ? "Search models or enter an ID…"
+                  : "Search connections…"
+              }
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setActive(0);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setOpen(false);
+                  trigger.current?.focus();
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (choices[index]) choose(choices[index].value);
+                } else if (
+                  event.key === "ArrowDown" ||
+                  event.key === "ArrowUp"
+                ) {
+                  event.preventDefault();
+                  setActive(
+                    Math.max(
+                      0,
+                      Math.min(
+                        choices.length - 1,
+                        index + (event.key === "ArrowDown" ? 1 : -1),
+                      ),
+                    ),
+                  );
+                }
+              }}
+            />
+          </div>
+          <div
+            id={id + "-options"}
+            role="listbox"
+            aria-label={label}
+            className="picker-options"
+          >
+            {choices.map((option, i) => (
+              <button
+                type="button"
+                role="option"
+                id={`${id}-option-${i}`}
+                key={option.value}
+                tabIndex={-1}
+                aria-selected={option.value === value}
+                className={
+                  i === index ? "picker-option active" : "picker-option"
+                }
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseMove={() => setActive(i)}
+                onClick={() => choose(option.value)}
+              >
+                <span>{option.label}</span>
+                {option.value === value && (
+                  <Check size={14} aria-hidden="true" />
+                )}
+              </button>
+            ))}
+          </div>
+          {!choices.length && (
+            <p className="picker-empty" role="status">
+              {loading
+                ? "Loading models…"
+                : term
+                  ? "No matches."
+                  : allowCustom
+                    ? "Enter a model ID to use it."
+                    : "No connections available."}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

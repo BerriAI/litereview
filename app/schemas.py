@@ -26,12 +26,31 @@ class Skill(BaseModel):
     files: dict[str, str] = Field(default_factory=dict)
 
 
-class Agent(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    instructions: str = Field(min_length=1, max_length=20000)
+class ReviewTarget(BaseModel):
+    name: str = Field(min_length=1, max_length=40, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$")
+    repos: list[str] = Field(default_factory=list)
+    caller_policy: Literal["collaborators", "allowlist"] = "collaborators"
+    callers: list[str] = Field(default_factory=list)
+
+    @field_validator("name")
+    @classmethod
+    def lowercase(cls, v):
+        return v.lower()
+
+    @field_validator("callers")
+    @classmethod
+    def normalize_callers(cls, values):
+        return list(dict.fromkeys(value.strip().lower() for value in values if value.strip()))
+
+
+class AgentModel(BaseModel):
     connection_id: str
     model: str = Field(min_length=1, max_length=250)
     capabilities: list[Literal["terminal", "browser", "computer"]] = Field(default_factory=list)
+
+
+class Agent(ReviewTarget, AgentModel):
+    instructions: str = Field(min_length=1, max_length=20000)
     skill_ids: list[str] = Field(default_factory=list)
     mcps: list[dict] = Field(default_factory=list)
 
@@ -41,18 +60,10 @@ class Member(BaseModel):
     count: int = Field(default=1, ge=1, le=10)
 
 
-class Group(BaseModel):
-    name: str = Field(min_length=1, max_length=40, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$")
+class Group(ReviewTarget):
     description: str = Field(default="", max_length=500)
     members: list[Member] = Field(min_length=1, max_length=20)
     repos: list[str] = Field(min_length=1)
-    caller_policy: Literal["collaborators", "allowlist"] = "collaborators"
-    callers: list[str] = Field(default_factory=list)
-
-    @field_validator("name")
-    @classmethod
-    def lowercase(cls, v):
-        return v.lower()
 
 
 class Repository(BaseModel):

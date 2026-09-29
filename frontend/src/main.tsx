@@ -29,6 +29,7 @@ import {
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "./style.css";
+import { Documentation } from "./docs";
 import {
   Brand,
   ProviderMark,
@@ -38,6 +39,7 @@ import {
   Modal,
   FormSection,
   Capabilities,
+  SearchPicker,
 } from "./ui";
 
 type Row = { id: string; name: string; [key: string]: any };
@@ -66,7 +68,7 @@ const titles = {
 };
 const descriptions = {
   agents: "Create reusable reviewers with their own model, tools, and skills.",
-  groups: "Combine your agents and choose who can call them from GitHub.",
+  groups: "Optional shortcuts for running several agents together.",
   connections:
     "Connect repositories, models, and the tools your reviewers need.",
   skills: "Reusable instructions and files for your agents.",
@@ -116,6 +118,13 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
   const [models, setModels] = useState<Record<string, string[]>>({});
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [modelError, setModelError] = useState("");
+  const [testingModel, setTestingModel] = useState(false);
+  const [modelCheck, setModelCheck] = useState<{
+    error: boolean;
+    text: string;
+  } | null>(null);
   const [availableRepos, setAvailableRepos] = useState<any[]>([]);
   const [githubForm, setGithubForm] = useState(false);
   const [githubCreate, setGithubCreate] = useState(false);
@@ -124,6 +133,42 @@ function App() {
   const [githubData, setGithubData] = useState<Record<string, string>>({});
   const section = (path.split("/")[1] || "agents") as keyof typeof titles;
   const active = section in titles ? section : "agents";
+  const modelConnection =
+    editor?.kind === "agents" ? editor.data.connection_id : "";
+  useEffect(() => {
+    setModelError("");
+    setLoadingModels(false);
+    if (!modelConnection || models[modelConnection]) return;
+    let active = true;
+    setLoadingModels(true);
+    api("/connections/" + modelConnection + "/test", send("POST"))
+      .then((result) => {
+        if (active)
+          setModels((current) => ({
+            ...current,
+            [modelConnection]: result.models || [],
+          }));
+      })
+      .catch(() => {
+        if (active)
+          setModelError(
+            "Could not load models. Enter a model ID or try loading again.",
+          );
+      })
+      .finally(() => {
+        if (active) setLoadingModels(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [modelConnection]);
+  useEffect(() => {
+    setModelCheck(null);
+  }, [
+    editor?.data.model,
+    modelConnection,
+    JSON.stringify(editor?.data.capabilities),
+  ]);
   const navigate = (next: string) => {
     history.pushState({}, "", next);
     setPath(next);
@@ -224,6 +269,9 @@ function App() {
         capabilities: [],
         skill_ids: [],
         mcps: [],
+        repos: [],
+        caller_policy: "collaborators",
+        callers: [],
       },
       groups: {
         name: "",
@@ -260,6 +308,7 @@ function App() {
       data: structuredClone(
         item
           ? {
+              ...defaults[kind],
               ...item,
               ...(kind === "connections" ? { api_key: "" } : {}),
               ...(kind === "repos" ? { test_secrets: {} } : {}),
@@ -332,7 +381,6 @@ function App() {
           <Brand />
         </div>
         <div className="login-card">
-          <span className="eyebrow">PR REVIEW WORKSPACE</span>
           <h1>Sign in to LiteReview</h1>
           <p>Configure your reviewers. Run them from GitHub.</p>
           <form
@@ -470,16 +518,9 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-help">
-          <a
-            href="https://github.com/BerriAI/litereview#readme"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <BookOpen size={15} /> Documentation <ArrowUpRight size={13} />
+          <a href="/docs">
+            <BookOpen size={15} /> Documentation
           </a>
-          <span>
-            <LockKeyhole size={13} /> Private workspace
-          </span>
         </div>
         <div className="sidebar-bottom">
           <span className="avatar">
@@ -529,7 +570,6 @@ function App() {
           <span className="topbar-product">LiteReview</span>
           <ChevronRight size={13} />
           <span>{titles[active]}</span>
-          <span className="topbar-mode">PR review workspace</span>
         </div>
         <div className="page">
           <header className="page-heading">
@@ -722,7 +762,10 @@ function App() {
                         </span>
                         <h3>{job.config.name}</h3>
                         <span>
-                          {job.config.group} · Instance {job.config.instance}
+                          {job.config.target_kind === "agent"
+                            ? "Direct call"
+                            : job.config.group}{" "}
+                          · Instance {job.config.instance}
                         </span>
                         <Badge
                           tone={
@@ -994,15 +1037,6 @@ function App() {
                                   ? "Started"
                                   : "Connection"}
                         </th>
-                        {(active === "agents" || active === "groups") && (
-                          <th>
-                            {active === "agents"
-                              ? "Groups"
-                              : active === "groups"
-                                ? "GitHub command"
-                                : ""}
-                          </th>
-                        )}
                         <th>
                           <span className="sr-only">Actions</span>
                         </th>
@@ -1111,45 +1145,6 @@ function App() {
                               </span>
                             )}
                           </td>
-                          {(active === "agents" || active === "groups") && (
-                            <td>
-                              {active === "agents" ? (
-                                store.groups
-                                  .filter((g) =>
-                                    g.members.some(
-                                      (m: any) => m.agent_id === row.id,
-                                    ),
-                                  )
-                                  .map((g) => (
-                                    <button
-                                      className="inline-link group-link"
-                                      key={g.id}
-                                      onClick={() => edit("groups", g)}
-                                    >
-                                      {g.name}
-                                    </button>
-                                  ))
-                              ) : active === "groups" ? (
-                                <button
-                                  className="copy"
-                                  title="Copy GitHub command"
-                                  onClick={() => {
-                                    navigator.clipboard
-                                      .writeText("@litereview " + row.name)
-                                      .then(() => setNotice("Command copied."))
-                                      .catch(() =>
-                                        setError(
-                                          "Could not access the clipboard. Copy the command text.",
-                                        ),
-                                      );
-                                  }}
-                                >
-                                  <code>@litereview {row.name}</code>
-                                  <Copy size={13} />
-                                </button>
-                              ) : null}
-                            </td>
-                          )}
                           <td className="row-actions">
                             {active === "connections" && tab !== "github" && (
                               <button
@@ -1157,25 +1152,6 @@ function App() {
                                 onClick={() => testConnection(row)}
                               >
                                 Test
-                              </button>
-                            )}
-                            {active === "agents" && (
-                              <button
-                                className="quiet-action"
-                                disabled={busy}
-                                onClick={() =>
-                                  mutate(async () => {
-                                    await api(
-                                      "/agents/" + row.id + "/test",
-                                      send("POST"),
-                                    );
-                                    setNotice(
-                                      "Model passed tool and visual capability checks.",
-                                    );
-                                  })
-                                }
-                              >
-                                Test model
                               </button>
                             )}
                             {active !== "runs" && (
@@ -1207,7 +1183,7 @@ function App() {
                 <div className="info">
                   <ProviderMark type="github" />
                   <span>
-                    Call several groups together:{" "}
+                    Call agents and groups together:{" "}
                     <code>
                       @litereview{" "}
                       {store.groups
@@ -1264,7 +1240,7 @@ function App() {
                   editor.kind === "groups"
                     ? "The command name is how you call this group in a PR."
                     : editor.kind === "agents"
-                      ? "Give this reviewer a name that describes its job."
+                      ? "The command name is how you call this agent in a PR."
                       : "Identify this resource in your workspace."
                 }
               >
@@ -1295,11 +1271,15 @@ function App() {
                   </Field>
                 ) : (
                   <Field
-                    label={editor.kind === "groups" ? "Command name" : "Name"}
+                    label={
+                      ["agents", "groups"].includes(editor.kind)
+                        ? "Command name"
+                        : "Name"
+                    }
                     hint={
-                      editor.kind === "groups"
-                        ? "Used in GitHub comments: @litereview " +
-                          (editor.data.name || "group-name")
+                      ["agents", "groups"].includes(editor.kind)
+                        ? "Unique across agents and groups. Letters, numbers, hyphens, and underscores; start with a letter. @litereview " +
+                          (editor.data.name || "name")
                         : undefined
                     }
                   >
@@ -1307,17 +1287,51 @@ function App() {
                       value={editor.data.name}
                       onChange={(e) => update("name", e.target.value)}
                       required
-                      maxLength={editor.kind === "groups" ? 40 : 100}
+                      maxLength={
+                        ["agents", "groups"].includes(editor.kind) ? 40 : 100
+                      }
+                      pattern={
+                        ["agents", "groups"].includes(editor.kind)
+                          ? "[a-zA-Z][a-zA-Z0-9_\\-]*"
+                          : undefined
+                      }
                       placeholder={
                         editor.kind === "agents"
-                          ? "Frontend reviewer"
+                          ? "frontend"
                           : editor.kind === "groups"
-                            ? "frontend"
+                            ? "security"
                             : ""
                       }
                     />
                   </Field>
                 )}
+                {editor.id &&
+                  ["agents", "groups"].includes(editor.kind) &&
+                  store[editor.kind].some(
+                    (row) =>
+                      row.id === editor.id &&
+                      row.name === editor.data.name &&
+                      row.repos?.length,
+                  ) && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => {
+                        navigator.clipboard
+                          .writeText(
+                            "@litereview " + editor.data.name.toLowerCase(),
+                          )
+                          .then(() => setNotice("PR comment copied."))
+                          .catch(() =>
+                            setFormError(
+                              "Could not access the clipboard. Copy the example above.",
+                            ),
+                          );
+                      }}
+                    >
+                      <Copy size={14} /> Copy PR comment
+                    </button>
+                  )}
                 {editor.kind === "groups" && (
                   <Field label="Description">
                     <input
@@ -1352,55 +1366,111 @@ function App() {
                     description="Choose a connection and the model this agent uses for every review."
                   >
                     <div className="form-grid">
-                      <Field label="Model connection">
-                        <select
-                          value={editor.data.connection_id}
-                          onChange={(e) =>
-                            update("connection_id", e.target.value)
-                          }
-                          required
-                        >
-                          <option value="">Choose connection</option>
-                          {modelConnections.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                      <Field
+                      <SearchPicker
+                        label="Model connection"
+                        value={editor.data.connection_id}
+                        options={modelConnections.map((connection) => ({
+                          value: connection.id,
+                          label: connection.name,
+                        }))}
+                        onChange={(value) =>
+                          setEditor(
+                            (current) =>
+                              current && {
+                                ...current,
+                                data: {
+                                  ...current.data,
+                                  connection_id: value,
+                                  model: "",
+                                },
+                              },
+                          )
+                        }
+                      />
+                      <SearchPicker
+                        key={editor.data.connection_id}
                         label="Model"
-                        hint="Enter a model ID or load available models."
-                      >
-                        <input
-                          list="model-list"
-                          value={editor.data.model}
-                          onChange={(e) => update("model", e.target.value)}
-                          required
-                          placeholder="Model ID"
-                        />
-                        <datalist id="model-list">
-                          {(models[editor.data.connection_id] || []).map(
-                            (m) => (
-                              <option key={m} value={m} />
-                            ),
-                          )}
-                        </datalist>
-                      </Field>
+                        value={editor.data.model}
+                        options={(models[editor.data.connection_id] || []).map(
+                          (model) => ({ value: model, label: model }),
+                        )}
+                        onChange={(value) => update("model", value)}
+                        allowCustom
+                        loading={loadingModels}
+                      />
                     </div>
-                    <button
-                      type="button"
-                      className="text-button"
-                      disabled={busy || !editor.data.connection_id}
-                      onClick={() => {
-                        const c = store.connections.find(
-                          (c) => c.id === editor.data.connection_id,
-                        );
-                        if (c) testConnection(c);
-                      }}
-                    >
-                      Load available models
-                    </button>
+                    {modelError && <small role="status">{modelError}</small>}
+                    <div className="model-actions">
+                      <button
+                        type="button"
+                        className="text-button"
+                        disabled={
+                          busy || loadingModels || !editor.data.connection_id
+                        }
+                        onClick={() => {
+                          const c = store.connections.find(
+                            (c) => c.id === editor.data.connection_id,
+                          );
+                          if (c) {
+                            setModelError("");
+                            testConnection(c);
+                          }
+                        }}
+                      >
+                        {loadingModels ? "Loading models…" : "Refresh models"}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-button"
+                        disabled={
+                          busy ||
+                          !editor.data.connection_id ||
+                          !editor.data.model
+                        }
+                        onClick={async () => {
+                          setTestingModel(true);
+                          setBusy(true);
+                          setModelCheck(null);
+                          try {
+                            await api(
+                              "/agents/test",
+                              send("POST", {
+                                connection_id: editor.data.connection_id,
+                                model: editor.data.model,
+                                capabilities: editor.data.capabilities,
+                              }),
+                            );
+                            setModelCheck({
+                              error: false,
+                              text: editor.data.capabilities.some(
+                                (capability: string) =>
+                                  ["browser", "computer"].includes(capability),
+                              )
+                                ? "Tool and image checks passed."
+                                : "Tool check passed.",
+                            });
+                          } catch (error) {
+                            setModelCheck({
+                              error: true,
+                              text: (error as Error).message,
+                            });
+                          } finally {
+                            setTestingModel(false);
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        {testingModel ? "Testing…" : "Test model"}
+                      </button>
+                    </div>
+                    {modelCheck && (
+                      <p
+                        className={modelCheck.error ? "error" : "notice"}
+                        role={modelCheck.error ? "alert" : "status"}
+                      >
+                        {modelCheck.text}
+                      </p>
+                    )}
                   </FormSection>
                   <FormSection
                     title="Review instructions"
@@ -1658,9 +1728,17 @@ function App() {
                       </small>
                     )}
                   </FormSection>
+                </>
+              )}
+              {["agents", "groups"].includes(editor.kind) && (
+                <>
                   <FormSection
                     title="Repository access"
-                    description="This group can only be called from these repositories."
+                    description={
+                      editor.kind === "agents"
+                        ? "Choose where this agent can be called directly. Leave empty to use it only through groups. Group calls use the group’s access settings."
+                        : "Calls to this group use these access settings for all its agents."
+                    }
                   >
                     <h4 className="field-label">Allowed repositories</h4>
                     {store.repos.map((r) => (
@@ -1680,7 +1758,13 @@ function App() {
                     title="Caller access"
                     description="Control who can start these reviews from a GitHub comment."
                   >
-                    <Field label="Who can call this group?">
+                    <Field
+                      label={
+                        editor.kind === "agents"
+                          ? "Who can call this agent directly?"
+                          : "Who can call this group?"
+                      }
+                    >
                       <select
                         value={editor.data.caller_policy}
                         onChange={(e) =>
@@ -1956,7 +2040,7 @@ function App() {
                 Cancel
               </button>
               <button className="primary" disabled={busy}>
-                {busy ? (
+                {busy && !testingModel ? (
                   <>
                     <Loader2 size={15} className="spin" />
                     Saving…
@@ -2114,4 +2198,6 @@ function App() {
     </div>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  /^\/docs\/?$/.test(location.pathname) ? <Documentation /> : <App />,
+);
