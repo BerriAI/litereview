@@ -1,7 +1,7 @@
 import os
 from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     modal_token_id: str = ""
     modal_token_secret: str = ""
     modal_app_name: str = "litereview"
-    concurrency: int = 8
+    concurrency: int = Field(default=0, ge=0)  # 0 launches on demand without an app-level cap.
     job_timeout: int = 600
     max_rounds: int = 60
     dispatcher_enabled: bool = True

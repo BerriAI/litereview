@@ -25,7 +25,7 @@ services:
       - key: MODAL_APP_NAME
         value: litereview
       - key: CONCURRENCY
-        value: "8"
+        value: "0"
       - key: JOB_TIMEOUT
         value: "600"
       - key: MAX_ROUNDS

@@ -3,10 +3,12 @@
 The private workspace is live at **https://litereview.onrender.com**.
 
 - [Render web service](https://dashboard.render.com/web/srv-datfmkk9v7es738hgv90): Docker, Starter, Oregon, one instance. Deploys `main` after CI passes; health check `/health`.
-- Database: `litereview-db`, PostgreSQL 16, 256 MB, 5 GB storage, Oregon. The service uses the internal connection string; external access is disabled with an empty IP allowlist.
+- Database: `litereview-db`, paid Basic PostgreSQL 16, 256 MB, 5 GB storage, Oregon. The service uses the internal connection string; external access is disabled with an empty IP allowlist.
 - [Environment settings](https://dashboard.render.com/web/srv-datfmkk9v7es738hgv90/env): Modal credentials, the LiteLLM gateway connection, encryption key, and workspace access key are configured. Sign in using `ADMIN_TOKEN` from these settings. Keep `ADMIN_TOKEN` and `SECRET_KEY` stable between deployments.
 - `ADMIN_USERS` is `moe-berri`. Gateway base URL is `https://gateway.litellm-sandbox.ai/v1`; the replacement key supplied by the owner is configured. Change the existing model connection through the UI after initial bootstrap.
 - No development GitHub token is configured. No demo agents, test runs, or local screenshots were copied to production.
+
+Both paid services stay running when idle; there is no free-tier wake-up delay. This does not imply zero downtime during maintenance or deployments. Sandboxes are created on demand in Modal, with 2 CPU cores and 4 GiB requested per agent. `CONCURRENCY=0` removes the app-level queue cap; a positive value sets an optional workspace-wide limit. Modal quotas and provider rate limits still apply.
 
 ## Remaining GitHub setup
 

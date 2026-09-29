@@ -69,3 +69,18 @@ On 28 September 2026, the Docker service deployed in the Litellm Render workspac
 - GitHub explicitly reported: “You don't have permission to create apps for BerriAI.” No personal App was created as a fallback. **Production PR triggers and GitHub OAuth sign-in are not enabled or verified yet.** A BerriAI organization owner must complete App registration/installation; see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 No direct OpenAI or Anthropic account credentials were provided, so live direct-provider account verification remains outside this run. Gateway calls and protocol-level adapter tests passed.
+
+
+## Private cross-repository acceptance validation
+
+Separate private snapshots of `BerriAI/litellm-roi-calculator` and `pallets/flask` were reviewed through an actual private GitHub App installation. The test service had its own database and Modal app; it used no development GitHub token. No test data or configuration was copied into the deployed workspace.
+
+- Actual GitHub comment → signed webhook → installation-authenticated source download → independent Modal sandbox → gateway → App-authored PR comment worked on both repositories.
+- Each repository ran five reviewers: code only, terminal, browser, desktop computer use, and MCP with an attached skill/supporting file. Following the runtime fixes, all ten completed their configured checks without limitations and found the seeded navigation or authorization regression.
+- The source applications were installed and started inside the sandboxes: the ROI app with sample data, and Flask's tutorial blog with disposable local users. Browser and desktop reviewers inspected screenshots and interacted with those running apps. Terminal reviewers ran tests/reproductions and verified outbound HTTPS. Exact supporting skill paths and real Streamable HTTP MCP calls were recorded.
+- Ten simultaneous comment requests were accepted alongside two larger reviews. Twenty real sandboxes overlapped, with distinct sandbox IDs. The optional workspace cap is also covered by automated tests.
+- Claude Haiku 4.5 and GPT-4o mini were exercised via the gateway. The no-findings publication path was exercised. Clean documentation changes also produced false-positive findings: review criteria and model choice remain user-controlled, and infrastructure validation is not a guarantee of review quality.
+- GitHub OAuth sign-in completed as the allowed administrator. Private API/run/screenshot endpoints returned 401 without authentication. Redelivering a real GitHub webhook did not create a duplicate review. All 40 validation sandboxes exited.
+- Invalid completion payloads now produce a recoverable 422 response; the agent can correct its response instead of receiving an opaque server error. Supporting skill files have explicit paths. Browser tool guidance matches the accessibility tree and ambiguous selectors no longer silently choose the first element.
+
+Private evidence, model tool-call audits, screenshots, source SHAs, and run IDs remain under the ignored local `.test-artifacts/private-validation-20260928/` directory. Automated validation now includes 31 tests, plus a successful frontend build. Direct-provider adapters are covered by protocol fixtures; live calls in this test used the supplied gateway credentials.
