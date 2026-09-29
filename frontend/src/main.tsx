@@ -29,6 +29,7 @@ import {
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "./style.css";
+import { Documentation } from "./docs";
 import {
   Brand,
   ProviderMark,
@@ -332,7 +333,6 @@ function App() {
           <Brand />
         </div>
         <div className="login-card">
-          <span className="eyebrow">PR REVIEW WORKSPACE</span>
           <h1>Sign in to LiteReview</h1>
           <p>Configure your reviewers. Run them from GitHub.</p>
           <form
@@ -470,16 +470,9 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-help">
-          <a
-            href="https://github.com/BerriAI/litereview#readme"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <BookOpen size={15} /> Documentation <ArrowUpRight size={13} />
+          <a href="/docs">
+            <BookOpen size={15} /> Documentation
           </a>
-          <span>
-            <LockKeyhole size={13} /> Private workspace
-          </span>
         </div>
         <div className="sidebar-bottom">
           <span className="avatar">
@@ -529,7 +522,6 @@ function App() {
           <span className="topbar-product">LiteReview</span>
           <ChevronRight size={13} />
           <span>{titles[active]}</span>
-          <span className="topbar-mode">PR review workspace</span>
         </div>
         <div className="page">
           <header className="page-heading">
@@ -2114,4 +2106,6 @@ function App() {
     </div>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  /^\/docs\/?$/.test(location.pathname) ? <Documentation /> : <App />,
+);
