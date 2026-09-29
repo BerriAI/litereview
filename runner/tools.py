@@ -44,7 +44,7 @@ def definitions(cfg):
         function("read_diff", "Read the immutable PR diff (paged by character offset).", {"offset": N}),
         function(
             "finish_review",
-            "Submit the completed review. Report only actionable issues with evidence. If checks are incomplete, record limitations; empty findings with no limitations means no findings.",
+            "Submit the review according to your configured scope. Put findings and their evidence in findings, and successful checks in summary. Limitations contains actual obstacles to completing the configured checks, not successful checks or reproduced findings. Use arrays for findings and limitations; use [] when empty.",
             {
                 "summary": S,
                 "findings": {
@@ -81,7 +81,7 @@ def definitions(cfg):
         tools.append(
             function(
                 "browser",
-                "Operate Chromium. Every action returns a screenshot to inspect plus visible page text. Selectors use Playwright syntax (e.g. text=Save, button, #id).",
+                'Operate Chromium. Every action returns a screenshot and an accessibility tree. For tree roles use role selectors, e.g. role=textbox[name="Username"] or role=button[name="Log In"]. CSS #username and input[name="password"] also work. Select exactly one element. Use fill with text to enter a whole field value; press is for keyboard shortcuts. A bare role name like textbox is not a CSS selector.',
                 {
                     "action": {
                         "type": "string",
@@ -386,9 +386,9 @@ class Toolset:
                 raise ValueError("Browser URLs must use HTTP or HTTPS.")
             await page.goto(a["url"], wait_until="domcontentloaded", timeout=30000)
         elif action == "click":
-            await page.locator(a["selector"]).first.click(timeout=10000)
+            await page.locator(a["selector"]).click(timeout=10000)
         elif action == "fill":
-            await page.locator(a["selector"]).first.fill(a["text"], timeout=10000)
+            await page.locator(a["selector"]).fill(a["text"], timeout=10000)
         elif action == "press":
             await page.keyboard.press(a["key"])
         elif action == "scroll":

@@ -331,12 +331,18 @@ async def dispatcher():
                         if job.sandbox_id:
                             asyncio.create_task(terminate(job.sandbox_id))
                 db.commit()
-                count = db.scalar(
-                    select(func.count()).select_from(Job).where(Job.status.in_(["starting", "running"]))
+                queued = (
+                    select(Job)
+                    .join(Run, Job.run_id == Run.id)
+                    .where(Job.status == "queued")
+                    .order_by(Run.created_at, Job.id)
                 )
-                pending = db.scalars(
-                    select(Job).where(Job.status == "queued").limit(max(0, settings().concurrency - count))
-                ).all()
+                if settings().concurrency:
+                    count = db.scalar(
+                        select(func.count()).select_from(Job).where(Job.status.in_(["starting", "running"]))
+                    )
+                    queued = queued.limit(max(0, settings().concurrency - count))
+                pending = db.scalars(queued).all()
                 for job in pending:
                     token = secrets.token_urlsafe(40)
                     updated = db.execute(

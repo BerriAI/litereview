@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import io
@@ -17,6 +18,54 @@ from app.db import Job, Resource, Run, Session
 from app.security import digest
 from runner.agent import extract_archive
 from runner.tools import Toolset
+
+
+@pytest.mark.parametrize("cap, expected", [(0, 20), (3, 3)])
+async def test_dispatcher_across_ten_reviews(owner, monkeypatch, cap, expected):
+    from app import runtime
+    from app.settings import settings
+
+    setup(owner)
+    mock_github(monkeypatch)
+    for i in range(10):
+        await reviews.accept(payload(), f"concurrent-{i}")
+    monkeypatch.setattr(settings(), "concurrency", cap)
+    started = set()
+    ready = asyncio.Event()
+    release = asyncio.Event()
+
+    async def launch(job_id, token):
+        started.add(job_id)
+        if len(started) == expected:
+            ready.set()
+        await release.wait()
+
+    monkeypatch.setattr(runtime, "launch", launch)
+    monkeypatch.setattr(reviews, "publish", AsyncMock())
+    dispatcher = asyncio.create_task(reviews.dispatcher())
+    try:
+        await asyncio.wait_for(ready.wait(), 5)
+        with Session() as db:
+            jobs = db.scalars(select(Job)).all()
+            assert sum(j.status == "starting" for j in jobs) == expected
+            assert sum(j.status == "queued" for j in jobs) == 20 - expected
+            assert len({j.run_id for j in jobs}) == 10
+    finally:
+        dispatcher.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await dispatcher
+
+
+def test_concurrency_defaults_to_on_demand(monkeypatch):
+    from pydantic import ValidationError
+
+    from app.settings import Settings
+
+    monkeypatch.delenv("CONCURRENCY", raising=False)
+    assert Settings(_env_file=None).concurrency == 0
+    with pytest.raises(ValidationError):
+        Settings(concurrency=-1, _env_file=None)
 
 
 def create(owner, kind, **data):
@@ -208,6 +257,53 @@ def test_worker_permissions_limits_and_idempotent_finish(owner, monkeypatch):
     assert owner.post(base + "/model", headers=headers, json={}).status_code == 401
     with Session() as db:
         assert db.get(Job, job_id).result["summary"] == "Checked repository."
+
+
+def test_invalid_review_result_can_be_corrected(owner, monkeypatch):
+    setup(owner)
+    mock_github(monkeypatch)
+    webhook(owner, payload())
+    with Session() as db:
+        job = db.scalar(select(Job))
+        job.status = "running"
+        job.started_at = time.time()
+        job.token_hash = digest("result-token")
+        job_id = job.id
+        db.commit()
+    url = "/api/internal/jobs/" + job_id + "/finish"
+    headers = {"Authorization": "Bearer result-token"}
+    result = {"status": "completed", "summary": "Reviewed", "findings": [], "limitations": []}
+    invalid = owner.post(url, headers=headers, json={**result, "limitations": "untrusted-invalid-value"})
+    assert invalid.status_code == 422
+    assert "limitations" in invalid.json()["detail"]
+    assert "untrusted-invalid-value" not in invalid.text
+    with Session() as db:
+        assert db.get(Job, job_id).status == "running"
+    assert owner.post(url, headers=headers, json=result).status_code == 200
+    with Session() as db:
+        assert db.get(Job, job_id).status == "completed"
+
+
+async def test_attached_supporting_file_paths_are_readable(tmp_path, monkeypatch):
+    import base64
+
+    from runner import agent, tools
+
+    monkeypatch.setattr(agent, "SKILLS", tmp_path / "skills")
+    monkeypatch.setattr(tools, "SKILLS", tmp_path / "skills")
+    monkeypatch.setattr(tools, "REPO", tmp_path / "repo")
+    skill = {
+        "id": "guide",
+        "name": "Guide",
+        "instructions": "Read reference/checklist.txt.",
+        "files": {"reference/checklist.txt": base64.b64encode(b"Review evidence checklist").decode()},
+    }
+    agent.stage_skills([skill])
+    path = "skills/guide/reference/checklist.txt"
+    assert path in agent.skill_context([skill])
+    toolset = Toolset({"config": {"capabilities": [], "mcp_definitions": []}}, AsyncMock())
+    result = await toolset.execute("read_file", {"path": path})
+    assert "Review evidence checklist" in result["content"]
 
 
 def test_skill_archive_traversal_and_size(owner):

@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from pydantic import ValidationError
 from sqlalchemy import func, select, update
 
 from . import github, providers, reviews
@@ -718,7 +719,16 @@ async def finish(job_id: str, request: Request):
         if job.status in reviews.TERMINAL:
             return {"ok": True}
     worker(request, job_id)
-    result = ReviewResult.model_validate(await request.json()).model_dump()
+    try:
+        result = ReviewResult.model_validate(await request.json()).model_dump()
+    except ValidationError as exc:
+        fields = ", ".join(".".join(map(str, error["loc"])) for error in exc.errors()[:10])
+        raise HTTPException(
+            422,
+            f"Invalid review result fields: {fields}. Follow the finish_review schema: findings and limitations must be arrays, and each finding needs title, severity, and explanation. Correct the result and submit again.",
+        ) from None
+    except ValueError:
+        raise HTTPException(400, "Submit the review result as a JSON object.") from None
     with Session() as db:
         db.execute(
             update(Job)
