@@ -54,7 +54,15 @@ def expand(groups, resources):
                     }
                 )
             for instance in range(1, member["count"] + 1):
-                jobs.append({**data, "agent_id": agent.id, "group": group["name"], "instance": instance})
+                jobs.append(
+                    {
+                        **data,
+                        "agent_id": agent.id,
+                        "group": group["name"],
+                        "instance": instance,
+                        "target_kind": group.get("target_kind", "group"),
+                    }
+                )
     if len(jobs) > 30:
         raise HTTPException(400, "A review can launch at most 30 agent instances.")
     return jobs
@@ -109,12 +117,18 @@ async def accept(payload, delivery):
         return None
     selected = []
     for name in names:
-        group = next(
-            (r.data for r in resources.values() if r.kind == "groups" and r.data["name"] == name), None
+        target = next(
+            (
+                r
+                for r in resources.values()
+                if r.kind in ("agents", "groups") and r.data["name"].lower() == name
+            ),
+            None,
         )
-        allowed = group and repo.lower() in [r.lower() for r in group["repos"]]
-        if group and group["caller_policy"] == "allowlist":
-            allowed = allowed and actor.lower() in [u.lower() for u in group["callers"]]
+        group = target.data.copy() if target else None
+        allowed = group and repo.lower() in [r.lower() for r in group.get("repos", [])]
+        if group and group.get("caller_policy") == "allowlist":
+            allowed = allowed and actor.lower() in [u.lower() for u in group.get("callers", [])]
         else:
             allowed = allowed and perm in ("write", "maintain", "admin")
         if not allowed:
@@ -125,8 +139,11 @@ async def accept(payload, delivery):
                 pr,
                 actor,
                 installation,
-                "This review command is unavailable for this repository or caller. Check the group names and access settings in LiteReview.",
+                "This review command is unavailable for this repository or caller. Check the agent or group names and access settings in LiteReview.",
             )
+        group["target_kind"] = "agent" if target.kind == "agents" else "group"
+        if target.kind == "agents":
+            group["members"] = [{"agent_id": target.id, "count": 1}]
         selected.append(group)
     pr_info = (await github.repo_request(repo, installation, "GET", f"pulls/{pr}")).json()
     if pr_info["state"] != "open":
@@ -206,7 +223,8 @@ def render_comment(run, jobs, newer=False):
     for job in jobs:
         section_start = len(lines)
         c = job.config
-        lines += [f"### {md(c['group'])} / {md(c['name'])} · {c['instance']}", ""]
+        label = md(c["name"]) if c.get("target_kind") == "agent" else f"{md(c['group'])} / {md(c['name'])}"
+        lines += [f"### {label} · {c['instance']}", ""]
         if job.status not in TERMINAL:
             lines += [f"{job.status.capitalize()}…", ""]
             continue

@@ -2,8 +2,9 @@ import time
 import uuid
 from pathlib import Path
 
-from sqlalchemy import JSON, BigInteger, Float, Integer, LargeBinary, String, Text, create_engine
+from sqlalchemy import JSON, BigInteger, Float, Index, Integer, LargeBinary, String, Text, create_engine, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.schema import CreateIndex
 
 from .settings import settings
 
@@ -23,6 +24,15 @@ class Resource(Base):
     data: Mapped[dict] = mapped_column(JSON)
     secret: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[float] = mapped_column(Float, default=time.time)
+
+
+review_target_names = Index(
+    "uq_review_target_names",
+    func.lower(Resource.data["name"].as_string()),
+    unique=True,
+    sqlite_where=Resource.kind.in_(["agents", "groups"]),
+    postgresql_where=Resource.kind.in_(["agents", "groups"]),
+)
 
 
 class Run(Base):
@@ -82,3 +92,6 @@ Session = sessionmaker(engine, expire_on_commit=False)
 
 def init_db():
     Base.metadata.create_all(engine)
+    # create_all does not add indexes to a table that already exists.
+    with engine.begin() as connection:
+        connection.execute(CreateIndex(review_target_names, if_not_exists=True))

@@ -23,7 +23,7 @@ async def main():
         # Recover only this test's named resources after an interrupted earlier pass.
         for kind, names in [
             ("groups", {"ui-acceptance-one", "ui-acceptance-two"}),
-            ("agents", {"UI acceptance reviewer"}),
+            ("agents", {"ui-acceptance-reviewer"}),
         ]:
             rows = await (await page.request.get(os.environ["PUBLIC_URL"] + "/api/resources/" + kind)).json()
             for row in rows:
@@ -36,9 +36,13 @@ async def main():
         await page.get_by_role("heading", name="PR agents", exact=True).wait_for()
         await page.locator(".page-heading").get_by_role("button", name="Create agent", exact=True).click()
         dialog = page.get_by_role("dialog")
-        await dialog.get_by_label("Name", exact=True).fill("UI acceptance reviewer")
-        await dialog.get_by_label("Model connection").select_option(label="Sandbox gateway")
-        await dialog.get_by_label("Model", exact=True).fill("claude-haiku-4-5-20251001")
+        await dialog.get_by_label("Command name", exact=True).fill("ui-acceptance-reviewer")
+        await dialog.get_by_label("Model connection", exact=True).click()
+        await dialog.get_by_role("combobox", name="Search model connection").fill("Sandbox")
+        await dialog.get_by_role("option", name="Sandbox gateway", exact=True).click()
+        await dialog.get_by_label("Model", exact=True).click()
+        await dialog.get_by_role("combobox", name="Search model", exact=True).fill("claude-haiku-4-5-20251001")
+        await dialog.get_by_role("combobox", name="Search model", exact=True).press("Enter")
         await dialog.get_by_text("See and operate the desktop").click()
         await dialog.get_by_role("checkbox", name=re.compile("Evidence-based review")).check()
         await page.screenshot(path=".test-artifacts/agent-editor.png")
@@ -49,14 +53,14 @@ async def main():
             await page.locator(".page-heading").get_by_role("button", name="Create group", exact=True).click()
             dialog = page.get_by_role("dialog")
             await dialog.get_by_label("Command name").fill(name)
-            await dialog.get_by_label("Add agent to group").select_option(label="UI acceptance reviewer")
+            await dialog.get_by_label("Add agent to group").select_option(label="ui-acceptance-reviewer")
             await dialog.get_by_label("Instances").fill(str(count))
             await dialog.get_by_text("BerriAI/litereview", exact=True).click()
             await dialog.get_by_role("button", name="Save group", exact=True).click()
             await dialog.wait_for(state="hidden")
         await page.screenshot(path=".test-artifacts/groups.png")
         await page.get_by_role("button", name="PR agents", exact=True).click()
-        await page.get_by_role("button", name="UI acceptance reviewer", exact=True).click()
+        await page.get_by_role("button", name="ui-acceptance-reviewer", exact=True).click()
         dialog = page.get_by_role("dialog")
         assert await dialog.get_by_text("Changes apply to future runs in:").count() == 1
         await dialog.get_by_label("Review instructions").fill(
@@ -65,16 +69,17 @@ async def main():
         await dialog.get_by_role("button", name="Save agent", exact=True).click()
         await dialog.wait_for(state="hidden")
         await page.screenshot(path=".test-artifacts/agents.png")
-        # The new capability filters and group links must preserve reusable identities.
+        # Capability filters and group memberships must preserve reusable identities.
         await page.get_by_role("button", name="Computer use", exact=True).click()
-        assert await page.get_by_role("button", name="UI acceptance reviewer", exact=True).count() == 1
+        assert await page.get_by_role("button", name="ui-acceptance-reviewer", exact=True).count() == 1
         await page.get_by_role("button", name="Code only", exact=True).click()
-        assert await page.get_by_role("button", name="UI acceptance reviewer", exact=True).count() == 0
+        assert await page.get_by_role("button", name="ui-acceptance-reviewer", exact=True).count() == 0
         await page.get_by_role("button", name=re.compile("^All agents")).click()
+        await page.get_by_role("button", name="Agent groups", exact=True).click()
         await page.get_by_role("button", name="ui-acceptance-one", exact=True).click()
         dialog = page.get_by_role("dialog")
         assert await dialog.get_by_label("Instances").input_value() == "2"
-        assert await dialog.get_by_text("@litereview ui-acceptance-one", exact=True).count() == 1
+        assert await dialog.get_by_text(re.compile("Unique across agents and groups.*@litereview ui-acceptance-one")).count() == 1
         await page.keyboard.press("Escape")
         await dialog.wait_for(state="hidden")
         for width in [768, 390, 320]:
@@ -134,7 +139,7 @@ async def main():
         # Delete only resources created by this test, through authenticated API calls.
         for kind, names in [
             ("groups", {"ui-acceptance-one", "ui-acceptance-two"}),
-            ("agents", {"UI acceptance reviewer"}),
+            ("agents", {"ui-acceptance-reviewer"}),
         ]:
             rows = await (await page.request.get(os.environ["PUBLIC_URL"] + "/api/resources/" + kind)).json()
             for row in rows:

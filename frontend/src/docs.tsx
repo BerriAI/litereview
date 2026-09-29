@@ -43,30 +43,39 @@ export function Documentation() {
                 In <a href="/agents">PR agents</a>, choose a model, describe
                 what it should check, and enable the tools it needs. Attach
                 skills or MCP tools if useful. Use Test model to check tool and
-                image support.
+                image support. Choose the repositories and callers allowed to
+                call this agent directly.
               </p>
             </li>
             <li>
-              <h3>Create an agent group</h3>
+              <h3>Optionally, bundle agents into a group</h3>
               <p>
                 In <a href="/groups">Agent groups</a>, name a group, add agents,
                 and choose how many copies of each should run. Select its
                 repositories and allowed callers. You can reuse the same agent
-                in several groups.
+                in several groups. Calling a group uses the group’s access
+                settings; calling an agent directly uses that agent’s settings.
               </p>
             </li>
             <li>
               <h3>Comment on an open PR</h3>
               <p>
-                Use your group names in a new comment, with nothing else in it:
+                Use agent names, group names, or both in a new comment, with
+                nothing else in it:
               </p>
               <pre>
                 <code>@litereview frontend security</code>
               </pre>
               <p>
-                If frontend has one agent and security has five, this starts six
-                independent reviewers. Each checks the PR commit at the time you
-                called it.
+                If frontend is an agent and security is a group of five, this
+                starts six independent reviewers. Use just @litereview frontend
+                to run that agent alone. Each checks the PR commit at the time
+                you called it.
+              </p>
+              <p>
+                Agent and group names must be unique, ignoring capitalization.
+                Repeating a name in one comment runs it once. An agent selected
+                directly and through a group runs separately for each selection.
               </p>
             </li>
             <li>
