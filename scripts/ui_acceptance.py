@@ -55,7 +55,6 @@ async def main():
             await dialog.get_by_label("Command name").fill(name)
             await dialog.get_by_label("Add agent to group").select_option(label="ui-acceptance-reviewer")
             await dialog.get_by_label("Instances").fill(str(count))
-            await dialog.get_by_text("BerriAI/litereview", exact=True).click()
             await dialog.get_by_role("button", name="Save group", exact=True).click()
             await dialog.wait_for(state="hidden")
         await page.screenshot(path=".test-artifacts/groups.png")

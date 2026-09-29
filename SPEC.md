@@ -12,22 +12,22 @@ The purpose of v1 is to run real reviews and judge whether the experience is use
 
 | Object | Owns |
 | --- | --- |
-| **PR agent** | Unique command name, instructions, model, enabled tools, attached MCP connections, attached skills, direct-call repositories and callers |
-| **Agent group** | Command name, references to PR agents, instance count for each reference, allowed repositories and callers |
+| **PR agent** | Unique command name, instructions, model, enabled tools, attached MCP connections, attached skills |
+| **Agent group** | Command name, references to PR agents, instance count for each reference |
 | **Connection** | A reusable model/provider connection or MCP server connection |
 | **Skill** | Name, description, `SKILL.md`, optional supporting files |
 | **Review run** | PR and commit, configuration snapshot, individual agent jobs, results and artifacts |
 
 An agent is configured once and can belong to several groups. Groups reference agents; they do not copy them. Instance counts belong to group membership. Updating a shared agent affects future runs in all its groups. An accepted run uses an immutable snapshot of the agent, skill contents, and group configuration. Store secret references in snapshots, not credential values.
 
-GitHub commands accept **agents and groups** together. Their command names share one case-insensitive unique namespace. Direct calls use the agent’s repository and caller settings; group calls use the group’s settings. An agent with no direct-call repositories can still be used through groups. Groups are optional convenience bundles.
+GitHub commands accept **agents and groups** together. Their command names share one case-insensitive unique namespace. Access is managed centrally for People and Repositories. Each entry grants all current and future agents/groups or specific target IDs; both the person and repository must permit each requested target. Group access includes its members when invoked through that group. Groups are optional convenience bundles.
 
 ## 3. The user flow
 
 1. An administrator connects GitHub, selects repositories, and adds a model connection.
 2. They optionally add reusable MCP connections and skills.
-3. They create PR agents, choosing a model, instructions, capabilities, attachments, and direct-call access for each.
-4. They optionally create groups by selecting existing agents and instance counts, then choose repository and caller access.
+3. They create PR agents, choosing a model, instructions, capabilities, and attachments for each.
+4. They optionally create groups by selecting existing agents and instance counts, then use Access to configure people and repository grants.
 5. An allowed user comments on a PR:
 
    ```text
@@ -104,10 +104,11 @@ The five navigation areas are:
 
 | Page | Main interaction |
 | --- | --- |
-| **PR agents** | List saved agents; create/edit command name, direct-call access, instructions, model, capabilities, MCPs, and skills; show which groups use an agent |
-| **Agent groups** | Create/edit a group; choose existing agents and instance counts; configure repositories/callers; show its GitHub command |
+| **PR agents** | List saved agents; create/edit command name, instructions, model, capabilities, MCPs, and skills; show which groups use an agent |
+| **Agent groups** | Create/edit a group; choose existing agents and instance counts; show its GitHub command |
 | **Connections** | Manage GitHub/repositories, model connections, and MCP connections in three tabs |
 | **Skills** | Create, upload, inspect, and edit reusable skills; show which agents use them |
+| **Access** | Manage people and repository grants centrally; all targets or selected agents/groups |
 | **Runs** | List PR reviews; open per-agent status, findings, logs, and screenshots |
 
 The home page is **PR agents**. Selecting an agent opens its editor. Selecting a group opens its member list and settings. Group membership controls selection and count; editing a shared agent clearly states which groups will be affected.
@@ -120,10 +121,7 @@ Initial setup is one workspace per deployment. Administrators sign in with GitHu
 
 Use a GitHub App installed on selected repositories, with repository contents read, metadata read, pull requests write, and issues write permissions. A private GitHub App must be owned by the account or organization where it is installed; organization-owner involvement may be required for setup. Subscribe to issue-comment events. The API uses installation credentials for PR inspection and comment publishing; workers receive repository data without those credentials. Verify the exact comment and collaborator-access endpoints against these permissions during the first integration step.
 
-Each agent and group has its own allowed repository list and one caller policy:
-
-- Repository collaborators with write, maintain, or admin permission; or
-- An explicit GitHub username allowlist, with repository access verified.
+**Access** has People and Repositories views. Add GitHub usernames and grant each person and connected repository either All agents/groups (including future additions) or a set of specific target IDs. Both grants must permit every requested name. GitHub repository access is verified independently; being a repository collaborator alone does not grant LiteReview access. Newly connected repositories start with All access. Workspace administrators are seeded into People on first setup only; subsequent revocations are not recreated. Editing web-app administration remains separate from review-trigger access.
 
 Check installation, repository, and actor permissions on every trigger. Run pages and artifacts require workspace administrator sign-in. Workspace administrators can see all connected repositories; the administrator allowlist must match that access. No team synchronization in v1.
 

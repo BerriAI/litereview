@@ -25,6 +25,7 @@ import {
   FileCode2,
   ArrowLeft,
   LockKeyhole,
+  Users,
 } from "lucide-react";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
@@ -43,7 +44,7 @@ import {
 } from "./ui";
 
 type Row = { id: string; name: string; [key: string]: any };
-type Kind = "agents" | "groups" | "connections" | "skills" | "repos";
+type Kind = "agents" | "groups" | "connections" | "skills" | "repos" | "access";
 type Store = Record<Kind, Row[]>;
 const empty: Store = {
   agents: [],
@@ -51,8 +52,10 @@ const empty: Store = {
   connections: [],
   skills: [],
   repos: [],
+  access: [],
 };
 const icons = {
+  access: Users,
   agents: Bot,
   groups: Layers,
   connections: Plug,
@@ -60,6 +63,7 @@ const icons = {
   runs: History,
 };
 const titles = {
+  access: "Access",
   agents: "PR agents",
   groups: "Agent groups",
   connections: "Connections",
@@ -67,6 +71,8 @@ const titles = {
   runs: "Runs",
 };
 const descriptions = {
+  access:
+    "Choose which agents and groups people and repositories can use. Both must have access to start a review.",
   agents: "Create reusable reviewers with their own model, tools, and skills.",
   groups: "Optional shortcuts for running several agents together.",
   connections:
@@ -104,6 +110,8 @@ function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [query, setQuery] = useState("");
+  const [accessSubject, setAccessSubject] = useState<"user" | "repo">("user");
+  const [accessQuery, setAccessQuery] = useState("");
   const [tab, setTab] = useState("github");
   const [agentFilter, setAgentFilter] = useState("all");
   const [mobileNav, setMobileNav] = useState(false);
@@ -258,7 +266,14 @@ function App() {
   };
   const edit = (kind: Kind, item?: Row) => {
     setNotice("");
+    setAccessQuery("");
     const defaults: Record<Kind, any> = {
+      access: {
+        name: "",
+        subject: accessSubject,
+        scope: "all",
+        target_ids: [],
+      },
       agents: {
         name: "",
         instructions:
@@ -269,17 +284,11 @@ function App() {
         capabilities: [],
         skill_ids: [],
         mcps: [],
-        repos: [],
-        caller_policy: "collaborators",
-        callers: [],
       },
       groups: {
         name: "",
         description: "",
         members: [],
-        repos: [],
-        caller_policy: "collaborators",
-        callers: [],
       },
       connections: {
         name: "",
@@ -347,7 +356,13 @@ function App() {
     }
   };
   const remove = (kind: Kind, item: Row) => {
-    if (confirm(`Delete “${item.name}”?`))
+    if (
+      confirm(
+        kind === "access"
+          ? `Remove access for “${item.name}”?`
+          : `Delete “${item.name}”?`,
+      )
+    )
       mutate(async () => {
         await api(`/resources/${kind}/${item.id}`, send("DELETE"));
         await load();
@@ -429,13 +444,15 @@ function App() {
   const rows =
     active === "runs"
       ? runs
-      : active === "connections"
-        ? tab === "github"
-          ? store.repos
-          : store.connections.filter((c) =>
-              tab === "mcp" ? c.type === "mcp" : c.type !== "mcp",
-            )
-        : store[active as Kind];
+      : active === "access"
+        ? store.access.filter((grant) => grant.subject === accessSubject)
+        : active === "connections"
+          ? tab === "github"
+            ? store.repos
+            : store.connections.filter((c) =>
+                tab === "mcp" ? c.type === "mcp" : c.type !== "mcp",
+              )
+          : store[active as Kind];
   const filtered = rows.filter((row) => {
     const searchable = [row.name, row.model, row.description, row.repo, row.pr]
       .filter(Boolean)
@@ -451,15 +468,19 @@ function App() {
     );
   });
   const createLabel =
-    active === "agents"
-      ? "Create agent"
-      : active === "groups"
-        ? "Create group"
-        : active === "skills"
-          ? "Create skill"
-          : tab === "github"
-            ? "Add repository"
-            : "Add connection";
+    active === "access"
+      ? accessSubject === "user"
+        ? "Add person"
+        : "Add repository access"
+      : active === "agents"
+        ? "Create agent"
+        : active === "groups"
+          ? "Create group"
+          : active === "skills"
+            ? "Create skill"
+            : tab === "github"
+              ? "Add repository"
+              : "Add connection";
   const PageIcon = icons[active];
   const isRunDetail = active === "runs" && Boolean(path.split("/")[2]);
   const newKind: Kind =
@@ -490,7 +511,7 @@ function App() {
         <nav aria-label="Main navigation">
           {[
             ["Review", ["agents", "groups", "runs"]],
-            ["Workspace", ["connections", "skills"]],
+            ["Workspace", ["connections", "skills", "access"]],
           ].map(([label, keys]) => (
             <div className="nav-group" key={label as string}>
               <div className="workspace-label">{label as string}</div>
@@ -900,6 +921,28 @@ function App() {
             </>
           ) : (
             <>
+              {active === "access" && (
+                <div className="tabs" aria-label="Access settings">
+                  {(
+                    [
+                      ["user", "People"],
+                      ["repo", "Repositories"],
+                    ] as const
+                  ).map(([subject, label]) => (
+                    <button
+                      key={subject}
+                      className={accessSubject === subject ? "active" : ""}
+                      aria-pressed={accessSubject === subject}
+                      onClick={() => {
+                        setAccessSubject(subject);
+                        setQuery("");
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {active === "agents" && (
                 <div className="tabs agent-tabs" aria-label="Filter agents">
                   {[
@@ -951,7 +994,15 @@ function App() {
                       : "connections"
                     : active === "runs"
                       ? "runs"
-                      : active}
+                      : active === "access"
+                        ? accessSubject === "user"
+                          ? filtered.length === 1
+                            ? "person"
+                            : "people"
+                          : filtered.length === 1
+                            ? "repository"
+                            : "repositories"
+                        : active}
                 </span>
               </div>
               {filtered.length === 0 ? (
@@ -966,25 +1017,29 @@ function App() {
                         ? "No agents with this capability"
                         : active === "agents"
                           ? "Create your first PR agent"
-                          : active === "groups"
-                            ? "Build a review group"
-                            : active === "skills"
-                              ? "Add your review playbook"
-                              : active === "runs"
-                                ? "Your reviews will appear here"
-                                : tab === "github"
-                                  ? "Connect a repository"
-                                  : "Add your first connection"}
+                          : active === "access"
+                            ? accessSubject === "user"
+                              ? "Add people who can start reviews"
+                              : "Choose repository access"
+                            : active === "groups"
+                              ? "Build a review group"
+                              : active === "skills"
+                                ? "Add your review playbook"
+                                : active === "runs"
+                                  ? "Your reviews will appear here"
+                                  : tab === "github"
+                                    ? "Connect a repository"
+                                    : "Add your first connection"}
                   </h3>
                   <p>
                     {query
                       ? "Try a different search."
                       : active === "runs"
-                        ? "Post @litereview followed by a group name on a connected PR. Your review will appear here."
+                        ? "Post @litereview followed by agent or group names on a connected PR. Your review will appear here."
                         : active === "agents" && !modelConnections.length
                           ? "Connect a model provider or gateway, then create your first reviewer."
                           : active === "groups"
-                            ? "Choose existing PR agents and set their repository access."
+                            ? "Choose existing PR agents and set how many instances to run."
                             : descriptions[active]}
                   </p>
                   {!query && active !== "runs" && (
@@ -1012,30 +1067,42 @@ function App() {
                   <table>
                     <thead>
                       <tr>
-                        <th>{active === "runs" ? "Pull request" : "Name"}</th>
                         <th>
-                          {active === "agents"
-                            ? "Model"
-                            : active === "groups"
-                              ? "Agents"
-                              : active === "skills"
-                                ? "Used by"
-                                : active === "runs"
-                                  ? "Status"
-                                  : tab === "github"
-                                    ? "Environment"
-                                    : "Type"}
+                          {active === "runs"
+                            ? "Pull request"
+                            : active === "access"
+                              ? accessSubject === "user"
+                                ? "GitHub account"
+                                : "Repository"
+                              : "Name"}
                         </th>
                         <th>
-                          {active === "agents"
-                            ? "Capabilities"
-                            : active === "groups"
-                              ? "Repositories"
-                              : active === "skills"
-                                ? "Supporting files"
-                                : active === "runs"
-                                  ? "Started"
-                                  : "Connection"}
+                          {active === "access"
+                            ? "Access"
+                            : active === "agents"
+                              ? "Model"
+                              : active === "groups"
+                                ? "Agents"
+                                : active === "skills"
+                                  ? "Used by"
+                                  : active === "runs"
+                                    ? "Status"
+                                    : tab === "github"
+                                      ? "Environment"
+                                      : "Type"}
+                        </th>
+                        <th>
+                          {active === "access"
+                            ? "Agents and groups"
+                            : active === "agents"
+                              ? "Capabilities"
+                              : active === "groups"
+                                ? "Includes"
+                                : active === "skills"
+                                  ? "Supporting files"
+                                  : active === "runs"
+                                    ? "Started"
+                                    : "Connection"}
                         </th>
                         <th>
                           <span className="sr-only">Actions</span>
@@ -1069,7 +1136,13 @@ function App() {
                             </small>
                           </td>
                           <td>
-                            {active === "agents" ? (
+                            {active === "access" ? (
+                              row.scope === "all" ? (
+                                "All"
+                              ) : (
+                                "Specific"
+                              )
+                            ) : active === "agents" ? (
                               <div className="model-cell">
                                 <code>{row.model}</code>
                                 <small>
@@ -1125,12 +1198,38 @@ function App() {
                             )}
                           </td>
                           <td>
-                            {active === "agents" ? (
+                            {active === "access" ? (
+                              row.scope === "all" ? (
+                                <span>
+                                  All agents and groups
+                                  <small>Includes future additions</small>
+                                </span>
+                              ) : (
+                                <span>
+                                  {row.target_ids
+                                    .map(
+                                      (id: string) =>
+                                        [...store.agents, ...store.groups].find(
+                                          (target) => target.id === id,
+                                        )?.name,
+                                    )
+                                    .filter(Boolean)
+                                    .join(", ") || "None selected"}
+                                </span>
+                              )
+                            ) : active === "agents" ? (
                               <Capabilities values={row.capabilities} />
                             ) : active === "groups" ? (
                               <div className="repo-list">
-                                {row.repos.map((repo: string) => (
-                                  <span key={repo}>{repo}</span>
+                                {row.members.map((member: any) => (
+                                  <span key={member.agent_id}>
+                                    {
+                                      store.agents.find(
+                                        (agent) => agent.id === member.agent_id,
+                                      )?.name
+                                    }{" "}
+                                    × {member.count}
+                                  </span>
                                 ))}
                               </div>
                             ) : active === "skills" ? (
@@ -1157,7 +1256,11 @@ function App() {
                             {active !== "runs" && (
                               <button
                                 className="icon"
-                                aria-label={"Delete " + row.name}
+                                aria-label={
+                                  (active === "access"
+                                    ? "Remove access for "
+                                    : "Delete ") + row.name
+                                }
                                 onClick={() => remove(newKind, row)}
                               >
                                 <Trash2 size={15} />
@@ -1206,8 +1309,9 @@ function App() {
             {
               agents:
                 "Set the model, review instructions, and tools for this reusable agent.",
-              groups:
-                "Choose agents, set instance counts, and control access from GitHub.",
+              groups: "Choose agents and how many instances to run together.",
+              access:
+                "Choose which agents and groups can be called from PR comments.",
               skills: "Write instructions once and attach them to any agent.",
               repos: "Configure the environment used to run this repository.",
               connections:
@@ -1215,14 +1319,20 @@ function App() {
             }[editor.kind]
           }
           title={
-            (editor.id ? "Edit " : "Create ") +
-            {
-              agents: "PR agent",
-              groups: "agent group",
-              connections: "connection",
-              skills: "skill",
-              repos: "repository",
-            }[editor.kind]
+            editor.kind === "access"
+              ? (editor.id ? "Edit " : "Add ") +
+                (editor.data.subject === "user"
+                  ? "person"
+                  : "repository access")
+              : (editor.id ? "Edit " : "Create ") +
+                {
+                  access: "access",
+                  agents: "PR agent",
+                  groups: "agent group",
+                  connections: "connection",
+                  skills: "skill",
+                  repos: "repository",
+                }[editor.kind]
           }
           close={() => !busy && setEditor(null)}
         >
@@ -1244,7 +1354,17 @@ function App() {
                       : "Identify this resource in your workspace."
                 }
               >
-                {editor.kind === "repos" ? (
+                {editor.kind === "access" && editor.data.subject === "repo" ? (
+                  <SearchPicker
+                    label="Repository"
+                    value={editor.data.name}
+                    options={store.repos.map((repo) => ({
+                      value: repo.name.toLowerCase(),
+                      label: repo.name,
+                    }))}
+                    onChange={(value) => update("name", value)}
+                  />
+                ) : editor.kind === "repos" ? (
                   <Field
                     label="Repository"
                     hint="Select a repository from the GitHub App installation, or enter owner/repo."
@@ -1274,13 +1394,17 @@ function App() {
                     label={
                       ["agents", "groups"].includes(editor.kind)
                         ? "Command name"
-                        : "Name"
+                        : editor.kind === "access"
+                          ? "GitHub username"
+                          : "Name"
                     }
                     hint={
                       ["agents", "groups"].includes(editor.kind)
                         ? "Unique across agents and groups. Letters, numbers, hyphens, and underscores; start with a letter. @litereview " +
                           (editor.data.name || "name")
-                        : undefined
+                        : editor.kind === "access"
+                          ? "They must also have access to the repository on GitHub."
+                          : undefined
                     }
                   >
                     <input
@@ -1309,9 +1433,7 @@ function App() {
                   ["agents", "groups"].includes(editor.kind) &&
                   store[editor.kind].some(
                     (row) =>
-                      row.id === editor.id &&
-                      row.name === editor.data.name &&
-                      row.repos?.length,
+                      row.id === editor.id && row.name === editor.data.name,
                   ) && (
                     <button
                       type="button"
@@ -1730,72 +1852,84 @@ function App() {
                   </FormSection>
                 </>
               )}
-              {["agents", "groups"].includes(editor.kind) && (
-                <>
-                  <FormSection
-                    title="Repository access"
-                    description={
-                      editor.kind === "agents"
-                        ? "Choose where this agent can be called directly. Leave empty to use it only through groups. Group calls use the group’s access settings."
-                        : "Calls to this group use these access settings for all its agents."
-                    }
-                  >
-                    <h4 className="field-label">Allowed repositories</h4>
-                    {store.repos.map((r) => (
-                      <Toggle
-                        key={r.id}
-                        checked={editor.data.repos.includes(r.name)}
-                        onChange={(on) => toggleArray("repos", r.name, on)}
-                      >
-                        {r.name}
-                      </Toggle>
-                    ))}
-                    {!store.repos.length && (
-                      <p>Add repositories under Connections → GitHub.</p>
-                    )}
-                  </FormSection>
-                  <FormSection
-                    title="Caller access"
-                    description="Control who can start these reviews from a GitHub comment."
-                  >
-                    <Field
-                      label={
-                        editor.kind === "agents"
-                          ? "Who can call this agent directly?"
-                          : "Who can call this group?"
-                      }
+              {editor.kind === "access" && (
+                <FormSection
+                  title="Can trigger"
+                  description="All includes agents and groups added later. Specific grants access only to your selections."
+                >
+                  <div className="tabs" aria-label="Access scope">
+                    <button
+                      type="button"
+                      aria-pressed={editor.data.scope === "all"}
+                      className={editor.data.scope === "all" ? "active" : ""}
+                      onClick={() => update("scope", "all")}
                     >
-                      <select
-                        value={editor.data.caller_policy}
-                        onChange={(e) =>
-                          update("caller_policy", e.target.value)
-                        }
-                      >
-                        <option value="collaborators">
-                          Repository collaborators with write access
-                        </option>
-                        <option value="allowlist">Specific GitHub users</option>
-                      </select>
-                    </Field>
-                    {editor.data.caller_policy === "allowlist" && (
-                      <Field
-                        label="Allowed GitHub usernames"
-                        hint="Comma-separated. Users must also have access to the repository."
-                      >
+                      All agents and groups
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={editor.data.scope === "selected"}
+                      className={
+                        editor.data.scope === "selected" ? "active" : ""
+                      }
+                      onClick={() => update("scope", "selected")}
+                    >
+                      Specific
+                    </button>
+                  </div>
+                  {editor.data.scope === "all" ? (
+                    <p className="meta">
+                      All {store.agents.length} agents and {store.groups.length}{" "}
+                      groups, plus future additions.
+                    </p>
+                  ) : (
+                    <>
+                      <Field label="Find agents and groups">
                         <input
-                          value={editor.data.callers.join(", ")}
-                          onChange={(e) =>
-                            update(
-                              "callers",
-                              e.target.value.split(",").map((v) => v.trim()),
-                            )
+                          value={accessQuery}
+                          onChange={(event) =>
+                            setAccessQuery(event.target.value)
                           }
-                          required
+                          placeholder="Search by name…"
                         />
                       </Field>
-                    )}
-                  </FormSection>
-                </>
+                      <div className="access-targets">
+                        {(["agents", "groups"] as const).map((kind) => (
+                          <div key={kind}>
+                            <h4>{kind === "agents" ? "Agents" : "Groups"}</h4>
+                            {store[kind]
+                              .filter((target) =>
+                                target.name
+                                  .toLowerCase()
+                                  .includes(accessQuery.toLowerCase()),
+                              )
+                              .map((target) => (
+                                <Toggle
+                                  key={target.id}
+                                  checked={editor.data.target_ids.includes(
+                                    target.id,
+                                  )}
+                                  onChange={(checked) =>
+                                    toggleArray(
+                                      "target_ids",
+                                      target.id,
+                                      checked,
+                                    )
+                                  }
+                                >
+                                  {target.name}
+                                </Toggle>
+                              ))}
+                          </div>
+                        ))}
+                      </div>
+                      <small>
+                        Access to a group includes running all of its members
+                        through that group.
+                      </small>
+                    </>
+                  )}
+                </FormSection>
               )}
               {editor.kind === "connections" && (
                 <FormSection
@@ -2048,6 +2182,7 @@ function App() {
                 ) : (
                   "Save " +
                   {
+                    access: "access",
                     agents: "agent",
                     groups: "group",
                     connections: "connection",

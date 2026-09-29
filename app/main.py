@@ -17,6 +17,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from . import github, providers, reviews
+from .access import initialize_access
 from .db import Artifact, Job, Resource, Run, Session, init_db, uid
 from .schemas import SCHEMAS, AgentModel, ReviewResult
 from .security import decrypt, digest, encrypt, require_admin, signed, unsign, verify_signature
@@ -30,6 +31,7 @@ async def lifespan(app):
             "Set SECRET_KEY (32+ characters) and ADMIN_TOKEN (20+ characters). See .env.example."
         )
     init_db()
+    initialize_access()
     # Optional first-deploy model bootstrap; subsequent edits belong to the UI.
     with Session() as db:
         s = settings()
@@ -228,26 +230,32 @@ def validate_resource(kind, data, db, resource_id):
                 or not set(mcp["tools"]).issubset({t["name"] for t in c.data["tools"]})
             ):
                 raise HTTPException(400, "Select valid tools from a tested MCP connection.")
-    if kind in ("agents", "groups"):
-        if not data["callers"] and data["caller_policy"] == "allowlist":
-            raise HTTPException(400, "Add at least one allowed GitHub username.")
-        for member in data.get("members", []):
+    if kind == "groups":
+        for member in data["members"]:
             exists(member["agent_id"], "agents")
-        if kind == "groups" and len({m["agent_id"] for m in data["members"]}) != len(data["members"]):
+        if len({m["agent_id"] for m in data["members"]}) != len(data["members"]):
             raise HTTPException(400, "Use the instance count instead of adding an agent twice.")
-        configured = {
-            r.data["name"].lower() for r in db.scalars(select(Resource).where(Resource.kind == "repos"))
-        }
-        if not {r.lower() for r in data["repos"]}.issubset(configured):
-            raise HTTPException(400, "Connect each repository before granting access.")
-    if kind in ("agents", "groups", "repos"):
-        kinds = ["agents", "groups"] if kind in ("agents", "groups") else ["repos"]
+    if kind == "access":
+        for target_id in data["target_ids"]:
+            target = db.get(Resource, target_id)
+            if not target or target.kind not in ("agents", "groups"):
+                raise HTTPException(400, "A selected agent or group no longer exists.")
+        if data["subject"] == "repo":
+            configured = {
+                r.data["name"].lower() for r in db.scalars(select(Resource).where(Resource.kind == "repos"))
+            }
+            if data["name"] not in configured:
+                raise HTTPException(400, "Connect this repository before granting access.")
+    if kind in ("agents", "groups", "repos", "access"):
+        kinds = ["agents", "groups"] if kind in ("agents", "groups") else [kind]
         for other in db.scalars(select(Resource).where(Resource.kind.in_(kinds), Resource.id != resource_id)):
             if other.data["name"].lower() == data["name"].lower():
                 raise HTTPException(
                     409,
                     "This repository is already connected."
                     if kind == "repos"
+                    else "This account or repository already has an access entry."
+                    if kind == "access"
                     else "This name is already in use. Agents and groups must have unique names.",
                 )
     if kind == "skills":
@@ -308,6 +316,23 @@ async def save_resource(kind: str, request: Request, resource_id: str | None = N
             keys = data.pop("test_secrets")
             if keys:
                 secret = encrypt(json.dumps(keys))
+        if kind == "repos":
+            if not row:
+                db.add(
+                    Resource(
+                        kind="access",
+                        data={
+                            "subject": "repo",
+                            "name": data["name"].lower(),
+                            "scope": "all",
+                            "target_ids": [],
+                        },
+                    )
+                )
+            elif row.data["name"].lower() != data["name"].lower():
+                for grant in db.scalars(select(Resource).where(Resource.kind == "access")):
+                    if grant.data["subject"] == "repo" and grant.data["name"] == row.data["name"].lower():
+                        grant.data = {**grant.data, "name": data["name"].lower()}
         if not row:
             row = Resource(id=rid, kind=kind, data=data)
             db.add(row)
@@ -317,7 +342,10 @@ async def save_resource(kind: str, request: Request, resource_id: str | None = N
         except IntegrityError:
             db.rollback()
             raise HTTPException(
-                409, "This name is already in use. Agents and groups must have unique names."
+                409,
+                "This account or repository already has an access entry."
+                if kind == "access"
+                else "This name is already in use. Agents and groups must have unique names.",
             ) from None
         return public_resource(row)
 
@@ -333,16 +361,9 @@ def delete_resource(kind: str, resource_id: str):
                 resource_id == other.data["connection_id"]
                 or resource_id in other.data["skill_ids"]
                 or any(m["connection_id"] == resource_id for m in other.data["mcps"])
-                or (
-                    kind == "repos"
-                    and row.data["name"].lower() in [r.lower() for r in other.data.get("repos", [])]
-                )
             ):
                 raise HTTPException(409, f'Remove this item from agent "{other.data["name"]}" first.')
-            if other.kind == "groups" and (
-                any(m["agent_id"] == resource_id for m in other.data["members"])
-                or (kind == "repos" and row.data["name"].lower() in [r.lower() for r in other.data["repos"]])
-            ):
+            if other.kind == "groups" and (any(m["agent_id"] == resource_id for m in other.data["members"])):
                 raise HTTPException(409, f'Remove this item from group "{other.data["name"]}" first.')
         active = db.scalar(
             select(func.count()).select_from(Job).where(Job.status.in_(["queued", "starting", "running"]))
@@ -351,6 +372,18 @@ def delete_resource(kind: str, resource_id: str):
             raise HTTPException(
                 409, "Wait for active reviews to finish before deleting connections or repositories."
             )
+        for grant in db.scalars(select(Resource).where(Resource.kind == "access")):
+            if (
+                kind == "repos"
+                and grant.data["subject"] == "repo"
+                and grant.data["name"] == row.data["name"].lower()
+            ):
+                db.delete(grant)
+            elif kind in ("agents", "groups") and resource_id in grant.data["target_ids"]:
+                grant.data = {
+                    **grant.data,
+                    "target_ids": [id for id in grant.data["target_ids"] if id != resource_id],
+                }
         db.delete(row)
         db.commit()
     return {"ok": True}

@@ -8,6 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from . import github
+from .access import permits
 from .db import Job, Resource, Run, Session, uid
 from .security import digest
 from .settings import settings
@@ -115,6 +116,9 @@ async def accept(payload, delivery):
     perm = await github.permission(repo, installation, actor)
     if perm not in ("read", "triage", "write", "maintain", "admin"):
         return None
+    grants = {(r.data["subject"], r.data["name"]): r for r in resources.values() if r.kind == "access"}
+    caller_access = grants.get(("user", actor.lower()))
+    repo_access = grants.get(("repo", repo.lower()))
     selected = []
     for name in names:
         target = next(
@@ -126,11 +130,7 @@ async def accept(payload, delivery):
             None,
         )
         group = target.data.copy() if target else None
-        allowed = group and repo.lower() in [r.lower() for r in group.get("repos", [])]
-        if group and group.get("caller_policy") == "allowlist":
-            allowed = allowed and actor.lower() in [u.lower() for u in group.get("callers", [])]
-        else:
-            allowed = allowed and perm in ("write", "maintain", "admin")
+        allowed = target and permits(caller_access, target.id) and permits(repo_access, target.id)
         if not allowed:
             # Generic rejection avoids exposing group membership to unauthorized readers.
             return reject_command(
@@ -139,7 +139,7 @@ async def accept(payload, delivery):
                 pr,
                 actor,
                 installation,
-                "This review command is unavailable for this repository or caller. Check the agent or group names and access settings in LiteReview.",
+                "This review command is unavailable for this repository or caller. Check the agent or group names and the People and Repositories settings in Access.",
             )
         group["target_kind"] = "agent" if target.kind == "agents" else "group"
         if target.kind == "agents":
