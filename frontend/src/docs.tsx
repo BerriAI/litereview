@@ -119,9 +119,17 @@ export function Documentation() {
               <p>
                 A private App must belong to the account where it is installed.
                 To connect an organization, create an App owned by that
-                organization. An organization owner may need to create or
-                approve it. Copy setup request provides a handoff you can send
-                yourself.
+                organization. An organization owner or organization-wide App
+                Manager can create it; installation may need an owner’s
+                approval. Copy setup request includes the role-assignment steps
+                you can send to an owner.
+              </p>
+              <p>
+                To manage installation yourself, you need Admin access on each
+                repository and the organization must allow repository admins to
+                install GitHub Apps. An owner controls this in GitHub’s Settings
+                → Member privileges → GitHub Apps. Once the App is installed,
+                use Add repositories to change its selection.
               </p>
             </li>
             <li>
@@ -171,6 +179,13 @@ export function Documentation() {
         </section>
         <section>
           <h2>Resume or repair setup</h2>
+          <p>
+            Linking your GitHub account lets LiteReview recognize your PR
+            comments. Connecting repositories lets the workspace access code.
+            Repositories and Account show these separately. If your account is
+            linked but repository access is missing, choose Connect GitHub
+            repositories from Account or open Repositories to finish setup.
+          </p>
           <p>
             Repositories checks GitHub when you open the page or return from
             GitHub. If approval is pending, use Check installation after an

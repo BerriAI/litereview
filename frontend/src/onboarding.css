@@ -3,6 +3,63 @@
   max-width: 1080px;
   margin: 0 auto;
 }
+.github-next-step {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 0;
+  margin-bottom: 24px;
+  border-block: 1px solid var(--line);
+}
+.github-next-step > div {
+  flex: 1;
+  min-width: 0;
+}
+.github-next-step strong {
+  font-size: 14px;
+}
+.github-next-step p {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 5px;
+}
+.github-account-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.github-account-summary strong,
+.github-account-summary span {
+  display: block;
+  font-size: 12px;
+}
+.github-account-summary span {
+  color: var(--muted);
+  margin-top: 5px;
+}
+.account-repositories {
+  margin: 30px 0;
+}
+@media (max-width: 767px) {
+  .github-next-step {
+    flex-wrap: wrap;
+  }
+  .github-next-step > div {
+    flex-basis: calc(100% - 48px);
+  }
+  .github-next-step > button,
+  .github-next-step > a {
+    width: 100%;
+  }
+  .github-account-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}
 .repositories-page h1:focus,
 .member-start h1:focus,
 .page-heading h1:focus {

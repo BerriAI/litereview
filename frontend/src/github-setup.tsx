@@ -36,6 +36,10 @@ type Readiness = {
 };
 type Props = {
   setup: any;
+  githubAccount: string;
+  ssoRequired: boolean;
+  canLinkGithub: boolean;
+  onAccount: () => void;
   connected: Row[];
   agents: Row[];
   groups: Row[];
@@ -185,7 +189,17 @@ export function GitHubSetup(p: Props) {
               : "review";
   const copyRequest = () =>
     run(async () => {
-      const text = `Please help connect the LiteReview GitHub App to ${organization || "our organization"}. An organization owner must create or approve the App and select repositories. Continue at ${location.origin}/repositories. No extra LiteReview access is granted by this link.`;
+      const account = p.githubAccount
+        ? `@${p.githubAccount}`
+        : "my GitHub account";
+      const text = `Please help connect LiteReview to ${organization || "our organization"} on GitHub.
+
+To let me create the GitHub App, an organization owner can open organization Settings → Organization roles → Role assignments → New role assignment, select ${account} and App Manager, then choose Add new assignment. This role manages all organization-owned Apps and is available on supported GitHub plans. If unavailable, an organization owner can create the App instead.
+
+To let me install it myself, open organization Settings → Member privileges → GitHub Apps, enable “Allow repository admins to install GitHub Apps for their repositories,” and save. I also need Admin access on each target repository. This policy applies to all repository admins. If you prefer to keep installations restricted, please install the App on the repositories we choose.
+
+Continue at ${location.origin}/repositories. No extra LiteReview access is granted by this link.
+GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-access-to-your-organization-with-roles/using-organization-roles`;
       await navigator.clipboard.writeText(text);
       setNotice("Setup request copied. Nothing was sent.");
     });
@@ -207,7 +221,7 @@ export function GitHubSetup(p: Props) {
       <header className="page-heading">
         <div>
           <h1 tabIndex={-1}>Repositories</h1>
-          <p>Choose where LiteReview can run.</p>
+          <p>Connect GitHub to choose where LiteReview can run.</p>
         </div>
         {hasRepos && !error && (
           <a
@@ -224,6 +238,27 @@ export function GitHubSetup(p: Props) {
           </a>
         )}
       </header>
+      {p.ssoRequired && (
+        <div className="github-account-summary">
+          <div>
+            <strong>Your GitHub account</strong>
+            <span>
+              {p.githubAccount ? `@${p.githubAccount} · Linked` : "Not linked"}
+            </span>
+          </div>
+          {p.githubAccount ? (
+            <button className="text-button" onClick={p.onAccount}>
+              Account settings
+            </button>
+          ) : p.canLinkGithub ? (
+            <a className="button" href="/api/auth/github?next=/repositories">
+              Connect your account
+            </a>
+          ) : (
+            <small>Connect repositories below to enable account linking.</small>
+          )}
+        </div>
+      )}
       {p.setup.github_reset && (
         <div className="setup-recovery">
           <div>
@@ -269,14 +304,14 @@ export function GitHubSetup(p: Props) {
             <ProviderMark type="github" />
             <h2>
               {mismatch
-                ? `This App belongs to ${status.owner}.`
+                ? `${organization} repositories aren’t connected.`
                 : status.state === "unconfigured"
-                  ? "Connect your repositories."
-                  : "Finish choosing repositories."}
+                  ? "GitHub repositories aren’t connected."
+                  : "No repositories are connected yet."}
             </h2>
             <p>
               {mismatch
-                ? `Private Apps can only be installed on their owning account. To connect ${organization}, use an App owned by that organization. An organization owner may need to complete this step.`
+                ? `The saved private GitHub App belongs to @${status.owner} and can only be installed on that personal account. A ${organization} owner or organization-wide App Manager can create the organization’s App. Repository installation may need an owner’s approval.`
                 : status.state === "unconfigured"
                   ? `Connect the LiteReview App${organization ? ` to ${organization}` : ""}, then choose repositories on GitHub. Your selections will appear here automatically.`
                   : "The App is saved. Continue on GitHub to install it and select repositories. You won’t need to enter credentials again."}
@@ -284,7 +319,7 @@ export function GitHubSetup(p: Props) {
             {status.state === "unconfigured" || mismatch ? (
               <button className="primary" onClick={p.onCreate}>
                 {mismatch
-                  ? `Create App for ${organization}`
+                  ? `Connect ${organization} repositories`
                   : organization
                     ? `Connect ${organization}`
                     : "Connect GitHub"}
