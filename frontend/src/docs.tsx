@@ -125,6 +125,14 @@ export function Documentation() {
         <section>
           <h2>Resume GitHub setup</h2>
           <p>
+            To start over, choose Reset in Connections → GitHub. Reviews pause
+            while your agents, models, skills, MCP connections, repository
+            settings and secrets, access rules, and review history stay saved.
+            The App remains on GitHub. Undo reset restores the previous
+            connection, even after a refresh. Saving a new App replaces that
+            backup. Finish active PR reviews before resetting.
+          </p>
+          <p>
             App saved means credentials are stored; it does not mean GitHub has
             granted repository access. Connections → GitHub checks the App when
             you open the page and when you return from GitHub. Use Check again

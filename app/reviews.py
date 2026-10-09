@@ -129,6 +129,9 @@ def reject_command(delivery, repo, pr, actor, installation, reason):
 
 
 async def accept(payload, delivery):
+    github_state = github.setup_state()
+    if github_state.get("disabled"):
+        return None
     if payload.get("action") != "created" or "pull_request" not in payload.get("issue", {}):
         return None
     comment_data = payload.get("comment", {})
@@ -247,6 +250,10 @@ async def accept(payload, delivery):
     )
     configurations = expand(selected, resources)
     with Session() as db:
+        github_row = db.get(Resource, "github", with_for_update=True)
+        state = github_row.data if github_row else {}
+        if state.get("disabled") or state.get("generation", "") != github_state.get("generation", ""):
+            return None
         db.add(run)
         for cfg in configurations:
             db.add(Job(id=uid(), run_id=run.id, config=cfg))

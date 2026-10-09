@@ -220,9 +220,61 @@ function App() {
     setSetup(await api("/setup"));
     setWorkspaceLoaded(true);
   };
+  const resetGithub = async (undo: boolean) => {
+    const result = await api(
+      "/github/reset" + (undo ? "/undo" : ""),
+      send("POST"),
+    );
+    setSetup((current: any) => ({
+      ...current,
+      github: false,
+      github_app_url: "",
+      github_reset: result.github_reset,
+    }));
+    setAppOwner("");
+    setAppOwnerType("organization");
+    setGithubData({});
+    setGithubForm(false);
+    setGithubCreate(false);
+    setError("");
+    setNotice(undo ? "GitHub setup restored. Checking repository access…" : "");
+    history.replaceState({}, "", location.pathname);
+    // Remount to abort discovery and discard stale repository/search state.
+    setGithubRevision((v) => v + 1);
+    try {
+      await load();
+      setSession(await api("/session"));
+    } catch (err) {
+      setError(
+        "GitHub setup changed, but the workspace could not refresh. Reload the page. " +
+          (err as Error).message,
+      );
+    }
+  };
   useEffect(() => {
     if (session?.user?.admin) load().catch((e) => setError(e.message));
   }, [session]);
+  useEffect(() => {
+    if (!session?.user?.admin || active !== "connections") return;
+    let alive = true;
+    const refreshSetup = () => {
+      api("/setup")
+        .then((value) => {
+          if (alive) setSetup(value);
+        })
+        .catch(() => {});
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshSetup();
+    };
+    window.addEventListener("focus", refreshSetup);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      window.removeEventListener("focus", refreshSetup);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [session?.user?.admin, active, githubRevision]);
   useEffect(() => {
     if (!session?.user?.admin || active !== "runs") return;
     let alive = true;
@@ -737,12 +789,14 @@ function App() {
               </div>
               {tab === "github" && (
                 <GitHubSetup
+                  key={githubRevision}
                   setup={setup}
                   connected={store.repos as any}
                   revision={githubRevision}
                   onConnected={load}
                   onCreate={() => setGithubCreate(true)}
                   onExisting={() => setGithubForm(true)}
+                  onReset={resetGithub}
                 />
               )}
               {tab === "mcp" && (
@@ -763,13 +817,15 @@ function App() {
               >
                 <div>
                   <h3>
-                    {!store.repos.length
-                      ? "Next: connect a repository"
-                      : !modelConnections.length
-                        ? "Next: connect a model"
-                        : !store.agents.length
-                          ? "Next: create your first PR agent"
-                          : "Check access and start a review"}
+                    {setup.github_reset
+                      ? "Next: reconnect GitHub"
+                      : !store.repos.length
+                        ? "Next: connect a repository"
+                        : !modelConnections.length
+                          ? "Next: connect a model"
+                          : !store.agents.length
+                            ? "Next: create your first PR agent"
+                            : "Check access and start a review"}
                   </h3>
                   <p>
                     {store.repos.length} repositories ·{" "}
@@ -783,21 +839,23 @@ function App() {
                       creating agents now.
                     </p>
                   )}
-                  {!store.repos.length && (
+                  {(setup.github_reset || !store.repos.length) && (
                     <p>
                       Your model connections and access settings are kept while
                       you finish GitHub setup.
                     </p>
                   )}
-                  {store.repos.length > 0 && store.agents.length > 0 && (
-                    <p>
-                      Check People and repository permissions in Access, then
-                      post <code>@litereview {store.agents[0].name} t=5</code>{" "}
-                      on an open PR. Results appear in Runs and on GitHub.
-                    </p>
-                  )}
+                  {!setup.github_reset &&
+                    store.repos.length > 0 &&
+                    store.agents.length > 0 && (
+                      <p>
+                        Check People and repository permissions in Access, then
+                        post <code>@litereview {store.agents[0].name} t=5</code>{" "}
+                        on an open PR. Results appear in Runs and on GitHub.
+                      </p>
+                    )}
                 </div>
-                {!store.repos.length ? (
+                {setup.github_reset || !store.repos.length ? (
                   active !== "connections" && (
                     <button
                       className="primary"
@@ -2511,7 +2569,9 @@ function App() {
                 </Field>
               ))}
               <small>
-                Leave existing secret fields blank to keep their saved values.
+                {setup.github_reset
+                  ? "Enter the App credentials to replace the previous setup, or cancel and choose Undo reset to restore it."
+                  : "Leave existing secret fields blank to keep their saved values."}{" "}
                 Add your GitHub username to ADMIN_USERS to enable GitHub
                 sign-in.
               </small>

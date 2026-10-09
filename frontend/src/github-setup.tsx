@@ -21,13 +21,15 @@ export function GitHubSetup({
   onConnected,
   onCreate,
   onExisting,
+  onReset,
 }: {
-  setup: { github?: boolean; github_app_url?: string };
+  setup: { github?: boolean; github_app_url?: string; github_reset?: boolean };
   connected: Repository[];
   revision: number;
   onConnected: () => Promise<void>;
   onCreate: () => void;
   onExisting: () => void;
+  onReset: (undo: boolean) => Promise<void>;
 }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [checking, setChecking] = useState(true);
@@ -36,6 +38,8 @@ export function GitHubSetup({
   const [query, setQuery] = useState("");
   const [connecting, setConnecting] = useState("");
   const [notice, setNotice] = useState("");
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState("");
   const refresh = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -114,6 +118,16 @@ export function GitHubSetup({
       setConnecting("");
     }
   };
+  const reset = async () => {
+    setResetting(true);
+    setResetError("");
+    try {
+      await onReset(!!setup.github_reset);
+    } catch (err) {
+      setResetError((err as Error).message);
+      setResetting(false);
+    }
+  };
 
   return (
     <section className="setup-panel github-setup" aria-label="GitHub setup">
@@ -177,12 +191,12 @@ export function GitHubSetup({
             <ArrowUpRight size={14} />
           </a>
         ) : !checking && !error && !configured ? (
-          <button className="primary" onClick={onCreate}>
+          <button className="primary" onClick={onCreate} disabled={resetting}>
             Connect GitHub organization <ArrowUpRight size={14} />
           </button>
         ) : null}
         <button
-          disabled={checking || !!connecting}
+          disabled={checking || !!connecting || resetting}
           onClick={() => refresh.current()}
         >
           {checking ? (
@@ -193,9 +207,42 @@ export function GitHubSetup({
           {checking ? "Checking…" : "Check again"}
         </button>
         {!configured && !checking && !error && (
-          <button onClick={onExisting}>Use existing App</button>
+          <button onClick={onExisting} disabled={resetting}>
+            Use existing App
+          </button>
         )}
+        <button
+          aria-label={
+            setup.github_reset
+              ? "Undo reset GitHub setup"
+              : "Reset GitHub setup"
+          }
+          disabled={resetting || !!connecting}
+          onClick={reset}
+          title={
+            setup.github_reset
+              ? "Restore the previous GitHub App connection."
+              : "Restart GitHub setup. Your workspace settings are kept. You can undo this."
+          }
+        >
+          {resetting
+            ? "Updating…"
+            : setup.github_reset
+              ? "Undo reset"
+              : "Reset"}
+        </button>
       </div>
+      {setup.github_reset && (
+        <p className="notice" role="status">
+          GitHub setup reset. Your agents and workspace settings are saved. The
+          App remains on GitHub. Connect again or choose Undo reset.
+        </p>
+      )}
+      {resetError && (
+        <p className="error" role="alert">
+          {resetError}
+        </p>
+      )}
       {configured && (
         <p className="setup-help">
           Select only the repositories you want to review on GitHub. This page
@@ -217,7 +264,9 @@ export function GitHubSetup({
               organization. An organization owner may need to complete this
               step.
             </p>
-            <button onClick={onCreate}>Connect an organization instead</button>
+            <button onClick={onCreate} disabled={resetting || !!connecting}>
+              Connect an organization instead
+            </button>
           </div>
         )}
       {!checking &&
@@ -232,7 +281,7 @@ export function GitHubSetup({
             . An organization owner needs to restore it on GitHub.
           </p>
         )}
-      {!checking && !error && unavailable.length > 0 && (
+      {!setup.github_reset && !checking && !error && unavailable.length > 0 && (
         <p role="alert" className="error">
           GitHub access is missing for{" "}
           {unavailable.map((r) => r.name).join(", ")}. Their review settings are
@@ -262,7 +311,7 @@ export function GitHubSetup({
                   </span>
                 ) : (
                   <button
-                    disabled={!!connecting}
+                    disabled={!!connecting || resetting}
                     onClick={() => connect(repo)}
                     aria-label={`Connect ${repo.name}`}
                   >
@@ -307,10 +356,12 @@ export function GitHubSetup({
             settings; reconnect repositories to the new installation.
           </p>
           <div className="actions">
-            <button onClick={onCreate}>
+            <button onClick={onCreate} disabled={resetting || !!connecting}>
               Create App for another account <ArrowUpRight size={14} />
             </button>
-            <button onClick={onExisting}>Update App credentials</button>
+            <button onClick={onExisting} disabled={resetting || !!connecting}>
+              Update App credentials
+            </button>
           </div>
         </details>
       )}

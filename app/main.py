@@ -204,6 +204,8 @@ async def oauth_callback(request: Request, code: str, state: str):
     ):
         raise HTTPException(403, "Invalid sign-in state.")
     conf = github.config()
+    if not conf.get("client_id") or not conf.get("client_secret"):
+        raise HTTPException(400, "GitHub setup changed. Return to LiteReview and sign in again.")
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
             "https://github.com/login/oauth/access_token",
@@ -574,6 +576,7 @@ def setup_status():
         "modal": bool(settings().modal_token_id and settings().modal_token_secret),
         "github": bool(conf.get("app_id") and conf.get("private_key")),
         "github_app_url": conf.get("html_url", ""),
+        "github_reset": bool(github.setup_state().get("disabled")),
         "development_github_token": bool(settings().github_token),
         "webhook_url": settings().public_url + "/api/webhook/github",
         "admin_users": sorted(settings().admins),
@@ -597,8 +600,42 @@ async def github_status():
         ) from None
 
 
+@app.post("/api/github/reset", dependencies=[Depends(require_admin)])
+@app.post("/api/github/reset/undo", dependencies=[Depends(require_admin)])
+def reset_github(request: Request):
+    disabled = not request.url.path.endswith("/undo")
+    with Session() as db:
+        row = db.get(Resource, "github", with_for_update=True)
+        state = row.data if row else {}
+        if disabled != bool(state.get("disabled")):
+            active = db.scalar(
+                select(Job.id)
+                .join(Run, Job.run_id == Run.id)
+                .where(
+                    Job.status.in_(["queued", "starting", "running"]),
+                    Run.snapshot["harness_check"].as_boolean().is_not(True),
+                )
+                .limit(1)
+            )
+            if active:
+                raise HTTPException(
+                    409, "Wait for active PR reviews to finish before resetting GitHub setup."
+                )
+            row = row or Resource(id="github", kind="system", data={})
+            # Keep the encrypted credentials for Undo; no GitHub resources are deleted.
+            row.data = {**state, "disabled": disabled, "generation": secrets.token_urlsafe(24)}
+            row.updated_at = time.time()
+            db.add(row)
+            db.commit()
+    response = JSONResponse({"ok": True, "github_reset": disabled})
+    response.delete_cookie("lr_manifest")
+    response.delete_cookie("lr_oauth")
+    return response
+
+
 @app.post("/api/github/connect", dependencies=[Depends(require_admin)])
 async def connect_repository(request: Request):
+    generation = github.setup_state().get("generation", "")
     name = str((await request.json()).get("name", "")).strip().lower()
     try:
         available = await asyncio.wait_for(github.installed_repositories(), timeout=25)
@@ -613,6 +650,10 @@ async def connect_repository(request: Request):
             "This repository is not available to the App. Update its GitHub installation, then check again.",
         )
     with Session() as db:
+        github_row = db.get(Resource, "github", with_for_update=True)
+        state = github_row.data if github_row else {}
+        if state.get("disabled") or state.get("generation", "") != generation:
+            raise HTTPException(409, "GitHub setup changed. Check repository access again.")
         existing = db.scalar(
             select(Resource).where(
                 Resource.kind == "repos", func.lower(Resource.data["name"].as_string()) == name
@@ -655,7 +696,13 @@ async def connect_repository(request: Request):
 @app.post("/api/github/manifest", dependencies=[Depends(require_admin)])
 async def manifest(request: Request):
     body = await request.json()
-    state = signed({"purpose": "manifest", "nonce": secrets.token_urlsafe(20)})
+    state = signed(
+        {
+            "purpose": "manifest",
+            "nonce": secrets.token_urlsafe(20),
+            "generation": github.setup_state().get("generation", ""),
+        }
+    )
     base = settings().public_url
     if not base.startswith("https://"):
         raise HTTPException(
@@ -704,9 +751,11 @@ async def manifest_callback(request: Request, code: str, state: str):
 
     try:
         require_admin(request)
+        state_data = unsign(state, 900)
         if (
             not secrets.compare_digest(state, request.cookies.get("lr_manifest", ""))
-            or unsign(state, 900).get("purpose") != "manifest"
+            or state_data.get("purpose") != "manifest"
+            or state_data.get("generation", "") != github.setup_state().get("generation", "")
         ):
             return failed("expired")
     except HTTPException:
@@ -731,7 +780,12 @@ async def manifest_callback(request: Request, code: str, state: str):
         "html_url": data["html_url"],
     }
     with Session() as db:
-        row = db.get(Resource, "github") or Resource(id="github", kind="system", data={})
+        row = db.get(Resource, "github", with_for_update=True) or Resource(
+            id="github", kind="system", data={}
+        )
+        if row.data.get("generation", "") != state_data.get("generation", ""):
+            return failed("expired")
+        row.data = {"disabled": False, "overrides_environment": True, "generation": secrets.token_urlsafe(24)}
         row.secret = encrypt(json.dumps(conf))
         db.add(row)
         db.commit()
@@ -746,8 +800,13 @@ async def github_config(request: Request):
     allowed = {"app_id", "private_key", "webhook_secret", "client_id", "client_secret", "html_url"}
     conf = github.config()
     conf.update({k: v for k, v in data.items() if k in allowed and v})
+    if not all(conf.get(key) for key in ("app_id", "private_key", "webhook_secret")):
+        raise HTTPException(400, "Enter the App ID, private key, and webhook secret to connect an App.")
     with Session() as db:
-        row = db.get(Resource, "github") or Resource(id="github", kind="system", data={})
+        row = db.get(Resource, "github", with_for_update=True) or Resource(
+            id="github", kind="system", data={}
+        )
+        row.data = {"disabled": False, "overrides_environment": True, "generation": secrets.token_urlsafe(24)}
         row.secret = encrypt(json.dumps(conf))
         db.add(row)
         db.commit()
