@@ -873,6 +873,9 @@ dialog::backdrop {
   margin-bottom: 20px;
 }
 .page-editor {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   scroll-padding-top: 130px;
   scroll-padding-bottom: 115px;
   position: fixed;
@@ -1076,10 +1079,29 @@ dialog::backdrop {
   padding: 16px;
   margin-bottom: 12px;
 }
-.mcp-selector > strong {
-  display: block;
+.mcp-selector-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.mcp-selector-all {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+}
+.mcp-selector-all strong {
   font-size: 13px;
-  margin-bottom: 8px;
+}
+.mcp-selector-expand {
+  flex-shrink: 0;
+}
+.mcp-selector-expand[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.mcp-selector-tools {
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 4px;
 }
 .mcp-selector .check > span {
   min-width: 0;
