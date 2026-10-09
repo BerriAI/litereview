@@ -587,6 +587,7 @@ def setup_status():
         "development_github_token": bool(settings().github_token),
         "webhook_url": settings().public_url + "/api/webhook/github",
         "admin_users": sorted(settings().admins),
+        "max_review_minutes": settings().max_review_minutes,
     }
 
 

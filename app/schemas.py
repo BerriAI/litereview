@@ -46,8 +46,18 @@ class AgentModel(BaseModel):
 
 class Agent(ReviewTarget, AgentModel):
     instructions: str = Field(min_length=1, max_length=20000)
+    minimum_minutes: int = Field(default=0, ge=0, le=1440, strict=True)
     skill_ids: list[str] = Field(default_factory=list)
     mcps: list[dict] = Field(default_factory=list)
+
+    @field_validator("minimum_minutes")
+    @classmethod
+    def bounded_minimum(cls, value):
+        from .settings import settings
+
+        if value > settings().max_review_minutes:
+            raise ValueError(f"Minimum review time cannot exceed {settings().max_review_minutes} minutes.")
+        return value
 
 
 class Member(BaseModel):

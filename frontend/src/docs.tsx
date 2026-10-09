@@ -68,17 +68,17 @@ export function Documentation() {
                 Repeating a name in one comment runs it once. An agent selected
                 directly and through a group runs separately for each selection.
               </p>
-              <pre>
-                <code>@litereview frontend t=5 security t=10</code>
-              </pre>
               <p>
-                Add t=MINUTES after a name to request a minimum review duration
-                for that agent or every instance in that group. The clock starts
-                after setup. Agents continue investigating and cannot finish
-                successfully before their time elapses. Failures and exhausted
-                limits are reported as incomplete. Omit t= to keep the usual
-                behavior. Use whole minutes, up to 120 by default. Tools,
-                skills, and model selections stay the same.
+                Workspace owners set Minimum review time (minutes) in the
+                reviewer’s PR agents editor. Use 0 for no minimum, or whole
+                minutes up to the workspace limit (120 by default). Every
+                instance uses its reviewer’s saved time, including inside
+                groups. Comments contain only names; time options in comments
+                are rejected. The clock starts after setup. Agents continue
+                investigating and cannot finish successfully before that time
+                elapses. Failures and exhausted limits are reported as
+                incomplete. Longer reviews can use more credits. Private harness
+                checks do not use this minimum.
               </p>
             </li>
             <li>

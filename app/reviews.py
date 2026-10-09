@@ -33,22 +33,16 @@ def command_requests(body):
     selected = []
     for token in match[1].lower().split():
         if token.startswith("t="):
-            duration = re.fullmatch(r"t=([0-9]{1,4})m?", token)
-            if not selected or selected[-1]["minutes"] is not None or not duration:
-                raise ValueError("Place t=MINUTES immediately after each agent or group name.")
-            minutes = int(duration[1])
-            if not 1 <= minutes <= settings().max_review_minutes:
-                raise ValueError(f"Review time must be 1–{settings().max_review_minutes} whole minutes.")
-            selected[-1]["minutes"] = minutes
+            raise ValueError(
+                "Set minimum review time in LiteReview → PR agents. "
+                "Comments use only reviewer names: @litereview name1 name2."
+            )
         elif re.fullmatch(r"[a-z0-9_-]+", token):
-            selected.append({"name": token, "minutes": None})
+            selected.append({"name": token})
         else:
-            raise ValueError("Use @litereview AGENT t=MINUTES; names may contain letters, digits, _ and -.")
+            raise ValueError("Use @litereview name1 name2; names may contain letters, digits, _ and -.")
     unique = {}
     for item in selected:
-        previous = unique.get(item["name"])
-        if previous and previous != item:
-            raise ValueError("Repeated agent or group names must use the same duration.")
         unique[item["name"]] = item
     if len(unique) > 20:
         raise ValueError("A review can select at most 20 agents or groups.")
@@ -65,8 +59,13 @@ def expand(groups, resources):
             data = agent.data.copy()
             data.setdefault("harness", "builtin")
             data["harness_version"] = HARNESS_VERSIONS[data["harness"]]
-            if group.get("minimum_minutes"):
-                data.update(timing_limits(group["minimum_minutes"]))
+            minutes = data.get("minimum_minutes", 0)
+            if minutes > settings().max_review_minutes:
+                raise HTTPException(
+                    409, "A reviewer's minimum time exceeds the workspace limit. Update it in PR agents."
+                )
+            if minutes:
+                data.update(timing_limits(minutes))
             conn = resources.get(data["connection_id"])
             if not conn or conn.kind != "connections" or conn.data["type"] == "mcp":
                 raise HTTPException(409, "An agent needs a model connection.")
@@ -198,11 +197,9 @@ async def accept(payload, delivery):
                 pr,
                 actor,
                 installation,
-                "This review command is unavailable for this repository or caller. Check the agent or group names and the People and Repositories settings in Access.",
+                "This review command is unavailable for this repository or caller. Check the agent or group names and the permissions in People and Repositories.",
             )
         group["target_kind"] = "agent" if target.kind == "agents" else "group"
-        if selection["minutes"] is not None:
-            group["minimum_minutes"] = selection["minutes"]
         if target.kind == "agents":
             group["members"] = [{"agent_id": target.id, "count": 1}]
         selected.append(group)

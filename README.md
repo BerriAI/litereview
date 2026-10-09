@@ -8,13 +8,13 @@ A private workspace for reusable PR reviewers. Configure each agent’s harness,
 
 Every instance runs in a separate Modal sandbox. Results appear in one GitHub comment, with findings, **No findings**, or an explicit incomplete result for each agent. LiteReview never pushes fixes.
 
-Add a minimum review duration after each agent or group name:
+Set **Minimum review time (minutes)** when creating a reviewer or under **PR agents → reviewer → Review instructions**. For example, save `5` for `frontend` and `10` for `security`, then comment:
 
 ```text
-@litereview frontend t=5 security t=10
+@litereview frontend security
 ```
 
-`t=5` means at least five minutes of review after repository/tool setup. For a group, every instance gets its own five-minute minimum. `t=5m` and `light review frontend t=5` are also accepted. Names without `t=` keep the usual behavior. Durations must be whole minutes from 1 to `MAX_REVIEW_MINUTES` (120 by default); conflicting durations for a repeated name reject the command.
+Every instance uses its reviewer's saved minimum, including when called through a group. The clock starts after repository/tool setup. `0` means no minimum and preserves the normal behavior for existing reviewers. Use whole minutes up to `MAX_REVIEW_MINUTES` (120 by default). Changing the setting affects future reviews; accepted jobs keep their saved duration. Comment time options are rejected with instructions to use the UI setting. Private harness checks do not run for this minimum.
 
 The harness checks a monotonic clock, asks the agent to keep investigating and verifying, and rejects early completion. The API independently checks elapsed time. Codex continues the same thread if it returns without submitting; the other harnesses retain their sessions too. This does not invoke the interactive `/goal` slash command. Time and model-call limits still apply: provider failures, cancellation, and exhausted limits produce an incomplete review, never a successful early completion. Timed jobs add the requested minimum to `JOB_TIMEOUT` and add one `MAX_ROUNDS` budget per started ten minutes. Existing MCP selections, skills, capabilities, models, and instructions are preserved.
 
@@ -126,7 +126,7 @@ The checkout is a GitHub source archive at the PR's immutable head SHA, rather t
 
 Long-lived model and MCP keys are encrypted in the database using `SECRET_KEY`. They stay in the API service. Sandboxes use bounded, expiring job tokens to call the configured model/MCP relay. GitHub credentials never enter the checkout. Optional repository test secrets are deliberately made available to the sandbox; use test credentials only.
 
-For a small v1, screenshots are private, bounded Postgres artifacts rather than a separate storage service. Each job stores at most 20 PNGs, 2 MB each. Logs are bounded to 200 events. Repository archives are limited to 50 MB compressed / 250 MB expanded; PRs to 300 changed files / a 2 MB diff. Sandboxes launch on demand across reviews by default. Set `CONCURRENCY` to a positive number for an optional workspace-wide cap; `0` leaves concurrency to Modal account quotas and provider rate limits. Each sandbox requests 2 CPU cores and 4 GiB of memory. Defaults are ten minutes per agent and 60 model calls, configurable through environment variables. Keep Postgres backups enabled; deleting the database loses settings and run history.
+For a small v1, screenshots are private, bounded Postgres artifacts rather than a separate storage service. Each job stores at most 20 PNGs, 2 MB each. Logs are bounded to 200 events. Repository archives are limited to 50 MB compressed / 250 MB expanded; PRs to 300 changed files / a 2 MB diff. Sandboxes launch on demand across reviews by default. Set `CONCURRENCY` to a positive number for an optional workspace-wide cap; `0` leaves concurrency to Modal account quotas and provider rate limits. Each sandbox requests 2 CPU cores and 4 GiB of memory. The default execution budget is ten minutes per agent and 60 model calls, configurable through environment variables; saved minimum review times extend those budgets. Existing reviewers have no minimum by default. Keep Postgres backups enabled; deleting the database loses settings and run history.
 
 GitHub retries are deduplicated by delivery ID. Pending jobs survive API restarts; completed jobs are never rerun automatically. Sandboxes have hard timeouts and are terminated on normal completion. A lost worker callback becomes an incomplete result. Publication retries update the original marked comment. Results always name the reviewed SHA; later pushes are called out.
 

@@ -280,17 +280,10 @@ export function MemberStart({
                           Copy comment
                         </button>
                       </div>
-                      <details className="duration-help">
-                        <summary>Give the review more time</summary>
-                        <p>
-                          <code>
-                            {command} t={Math.min(10, data.max_minutes)}
-                          </code>{" "}
-                          requests at least {Math.min(10, data.max_minutes)}{" "}
-                          minutes. Longer reviews can use more model credits.
-                          The workspace maximum is {data.max_minutes} minutes.
-                        </p>
-                      </details>
+                      <p className="member-note">
+                        Minimum review time comes from each reviewer's saved
+                        settings. Your comment only needs reviewer names.
+                      </p>
                       <section className="member-repositories">
                         <h2>Your repositories</h2>
                         {data.repositories.map((r) => (

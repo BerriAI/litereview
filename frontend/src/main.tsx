@@ -36,6 +36,7 @@ import { api, send } from "./api";
 import { GitHubSetup, GitHubSettings } from "./github-setup";
 import { MemberStart } from "./member-start";
 import { StarterReviewer } from "./starter-reviewer";
+import { MinimumReviewTime } from "./review-time";
 import {
   Brand,
   ProviderMark,
@@ -379,6 +380,7 @@ function App() {
       agents: {
         name: "",
         harness: "codex",
+        minimum_minutes: 0,
         instructions:
           "Review this PR for actionable defects. Explain a concrete failure scenario and cite the affected code. Report no findings when appropriate.",
         connection_id:
@@ -1314,6 +1316,8 @@ function App() {
                                   {store.connections.find(
                                     (c) => c.id === row.connection_id,
                                   )?.name || "Connection unavailable"}
+                                  {row.minimum_minutes > 0 &&
+                                    ` · ${row.minimum_minutes} min minimum`}
                                 </small>
                               </div>
                             ) : active === "groups" ? (
@@ -1470,6 +1474,7 @@ function App() {
       {starter && (
         <StarterReviewer
           connections={modelConnections}
+          maxMinutes={setup.max_review_minutes || 120}
           close={() => {
             setStarter(false);
             void load();
@@ -1831,7 +1836,8 @@ function App() {
                       Checks this harness, model, and enabled tools on a sample
                       project. Uses Modal and model credits. Your review
                       instructions, attached skills, and MCP tools are not run
-                      in this check.
+                      in this check. The minimum review time applies to PR
+                      reviews, not this check.
                     </small>
                     {modelCheck && (
                       <p
@@ -1854,6 +1860,11 @@ function App() {
                         required
                       />
                     </Field>
+                    <MinimumReviewTime
+                      value={editor.data.minimum_minutes || 0}
+                      max={setup.max_review_minutes || 120}
+                      onChange={(value) => update("minimum_minutes", value)}
+                    />
                   </FormSection>
                   <FormSection
                     title="Tools & environment"
@@ -2015,7 +2026,7 @@ function App() {
                 <>
                   <FormSection
                     title="Agents in this group"
-                    description="Add existing PR agents and choose how many instances of each to run in parallel."
+                    description="Add existing PR agents and choose how many instances of each to run in parallel. Each instance uses its reviewer's saved minimum time."
                   >
                     {editor.data.members.map((m: any, i: number) => (
                       <div className="member" key={m.agent_id}>

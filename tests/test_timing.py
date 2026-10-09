@@ -6,63 +6,104 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 from test_harnesses import seed_job
-from test_reviews import mock_github, payload, setup, webhook
+from test_reviews import create, mock_github, payload, setup, webhook
 
 from app import reviews
-from app.db import Job, ReviewTiming, Run, Session
+from app.db import Job, Resource, ReviewTiming, Run, Session
+from app.settings import settings
 from runner import harness
 from runner.bridge import Bridge
 from runner.timing import ReviewClock
 from runner.tools import Toolset
 
 
-@pytest.mark.parametrize(
-    "body", ["@litereview security t=10 frontend t=5", "light review security t=10m frontend t=5"]
-)
-def test_independent_durations(body):
-    assert reviews.command_requests(body) == [
-        {"name": "security", "minutes": 10},
-        {"name": "frontend", "minutes": 5},
-    ]
-    assert reviews.command("@litereview security security frontend") == ["security", "frontend"]
+@pytest.mark.parametrize("body", ["@litereview security frontend security", "light review security frontend"])
+def test_comments_only_select_names(body):
+    assert reviews.command_requests(body) == [{"name": "security"}, {"name": "frontend"}]
 
 
 @pytest.mark.parametrize(
     "tail",
-    [
-        "t=10 security",
-        "security t=",
-        "security t=-1",
-        "security t=0",
-        "security t=121",
-        "security t=NaN",
-        "security t=1.5",
-        "security t=5 t=6",
-        "security t=5 security t=6",
-    ],
+    ["t=10 security", "security t=5", "security t=5m", "security t=0", "security t=-1", "security t=1.5"],
 )
-def test_invalid_durations_reject_entire_command(tail):
-    with pytest.raises(ValueError):
+def test_comment_time_options_are_rejected_with_ui_guidance(tail):
+    with pytest.raises(ValueError, match="PR agents"):
         reviews.command_requests("@litereview " + tail)
 
 
-def test_timed_group_snapshots_preserve_tools_skills_and_dedup(owner, monkeypatch):
-    setup(owner)
+def test_saved_times_apply_independently_to_direct_agents_and_group_instances(owner, monkeypatch):
+    _, _, agent, _, group = setup(owner)
+    owner.put(
+        "/api/resources/agents/" + agent["id"], json={**agent, "minimum_minutes": 10}
+    ).raise_for_status()
+    second = create(owner, "agents", **{**agent, "name": "frontend", "minimum_minutes": 5})
+    owner.put(
+        "/api/resources/groups/" + group["id"],
+        json={**group, "members": group["members"] + [{"agent_id": second["id"], "count": 1}]},
+    ).raise_for_status()
     mock_github(monkeypatch)
-    response = webhook(owner, payload(body="@litereview reviewer t=10 general t=5 reviewer t=10"))
+    response = webhook(owner, payload(body="@litereview reviewer general reviewer"))
     with Session() as db:
         jobs = db.scalars(select(Job)).all()
-        assert sorted(j.config["minimum_review_seconds"] for j in jobs) == [300, 300, 600]
-        assert len({j.config["agent_id"] for j in jobs}) == 1
+        assert sorted(j.config["minimum_review_seconds"] for j in jobs) == [300, 600, 600, 600]
         assert all(j.config["skills"] and "mcp_definitions" in j.config for j in jobs)
         assert all(j.config["timeout_seconds"] > j.config["minimum_review_seconds"] for j in jobs)
         assert "Requested minimum: 10 minutes." in reviews.render_comment(
             db.get(Run, response.json()["run_id"]), jobs
         )
-    bad = webhook(owner, payload(body="@litereview general t=0"), "invalid-time")
+    owner.put("/api/resources/agents/" + agent["id"], json={**agent, "minimum_minutes": 3}).raise_for_status()
+    assert (
+        next(a for a in owner.get("/api/resources/agents").json() if a["id"] == agent["id"])[
+            "minimum_minutes"
+        ]
+        == 3
+    )
+    with Session() as db:
+        assert sorted(j.config["minimum_review_seconds"] for j in db.scalars(select(Job)).all()) == [
+            300,
+            600,
+            600,
+            600,
+        ]
+    fresh = webhook(owner, payload(body="@litereview reviewer"), "new-time")
+    with Session() as db:
+        assert (
+            db.scalar(select(Job).where(Job.run_id == fresh.json()["run_id"])).config[
+                "minimum_review_seconds"
+            ]
+            == 180
+        )
+    bad = webhook(owner, payload(body="@litereview general t=1"), "invalid-time")
     with Session() as db:
         assert db.get(Run, bad.json()["run_id"]).status == "rejected"
-        assert len(db.scalars(select(Job)).all()) == 3
+        assert len(db.scalars(select(Job)).all()) == 5
+
+
+@pytest.mark.parametrize("minutes", [-1, 1.5, "5", True, 121])
+def test_saved_time_rejects_invalid_or_unbounded_values(owner, minutes):
+    _, _, agent, _, _ = setup(owner)
+    response = owner.put("/api/resources/agents/" + agent["id"], json={**agent, "minimum_minutes": minutes})
+    assert response.status_code == 422
+
+
+def test_time_default_disabled_and_workspace_limit(owner, monkeypatch):
+    _, _, agent, _, _ = setup(owner)
+    assert agent["minimum_minutes"] == 0
+    monkeypatch.setattr(settings(), "max_review_minutes", 2)
+    assert owner.get("/api/setup").json()["max_review_minutes"] == 2
+    assert (
+        owner.put("/api/resources/agents/" + agent["id"], json={**agent, "minimum_minutes": 3}).status_code
+        == 422
+    )
+    mock_github(monkeypatch)
+    # Existing agents created before this field was introduced remain untimed.
+    with Session() as db:
+        row = db.get(Resource, agent["id"])
+        row.data = {k: v for k, v in row.data.items() if k != "minimum_minutes"}
+        db.commit()
+    webhook(owner, payload())
+    with Session() as db:
+        assert all(not j.config.get("minimum_review_seconds") for j in db.scalars(select(Job)).all())
 
 
 async def test_finish_tool_keeps_agent_working_until_monotonic_minimum():

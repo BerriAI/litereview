@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { api, send } from "./api";
 import { Field, Modal } from "./ui";
+import { MinimumReviewTime } from "./review-time";
 
 export function StarterReviewer({
   connections,
+  maxMinutes,
   onSaved,
   close,
 }: {
   connections: any[];
+  maxMinutes: number;
   onSaved: () => Promise<void>;
   close: () => void;
 }) {
@@ -15,6 +18,7 @@ export function StarterReviewer({
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState("");
   const [name, setName] = useState("reviewer");
+  const [minimumMinutes, setMinimumMinutes] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modelError, setModelError] = useState("");
@@ -56,6 +60,7 @@ export function StarterReviewer({
           "/resources/agents",
           send("POST", {
             name,
+            minimum_minutes: minimumMinutes,
             harness,
             model,
             connection_id: connectionId,
@@ -145,6 +150,12 @@ export function StarterReviewer({
               />
             )}
           </Field>
+          <MinimumReviewTime
+            value={minimumMinutes}
+            max={maxMinutes}
+            onChange={setMinimumMinutes}
+            disabled={!!saved || busy}
+          />
           <p className="starter-note">
             Harness: {harness === "codex" ? "Codex" : "Claude Code"}. Review
             instructions, skills, and MCP tools remain editable in Agents.
