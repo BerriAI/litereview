@@ -15,12 +15,18 @@ export function MemberStart({
   user,
   account,
   githubLogin,
+  workspaceLoaded,
+  repositoryCount,
+  githubConfigured,
   navigate,
   onLogout,
 }: {
   user: any;
   account: boolean;
   githubLogin: boolean;
+  workspaceLoaded: boolean;
+  repositoryCount: number;
+  githubConfigured: boolean;
   navigate: (path: string) => void;
   onLogout: () => void;
 }) {
@@ -77,6 +83,8 @@ export function MemberStart({
     }
   };
   const owner = data?.owner || "your workspace owner";
+  const needsRepositories =
+    user.admin && workspaceLoaded && (!githubConfigured || !repositoryCount);
   return (
     <div className="member-start">
       <header className="member-header">
@@ -118,6 +126,43 @@ export function MemberStart({
                 <ProviderMark type="github" />
                 {user.github_login ? "Change GitHub account" : "Connect GitHub"}
               </a>
+            )}
+            {!githubLogin && (
+              <p className="member-note">
+                {user.admin
+                  ? "Connect the workspace’s GitHub repositories below first. Then you can link the account you use to comment on PRs."
+                  : "Your workspace owner needs to finish repository setup before you can link your GitHub account."}
+              </p>
+            )}
+            {user.admin && (
+              <section
+                className="account-repositories"
+                aria-label="GitHub repository access"
+              >
+                <div className="account-detail">
+                  <strong>Repository access</strong>
+                  <span>
+                    {!workspaceLoaded
+                      ? "Checking…"
+                      : !githubConfigured || !repositoryCount
+                        ? "Not connected"
+                        : `${repositoryCount} saved ${repositoryCount === 1 ? "repository" : "repositories"}`}
+                  </span>
+                </div>
+                <p className="member-note">
+                  Linking your account lets LiteReview recognize your PR
+                  comments. Repository access lets the workspace read and review
+                  code.
+                </p>
+                <button
+                  className="primary full"
+                  onClick={() => navigate("/repositories")}
+                >
+                  {githubConfigured && repositoryCount
+                    ? "Manage repository access"
+                    : "Connect GitHub repositories"}
+                </button>
+              </section>
             )}
             <p className="member-note">
               Sign in with Google again after{" "}
@@ -174,10 +219,15 @@ export function MemberStart({
                   )}
                   {data.state === "workspace" && (
                     <>
-                      <h1 tabIndex={-1}>Your workspace is being connected.</h1>
+                      <h1 tabIndex={-1}>
+                        {user.admin
+                          ? "Connect GitHub repositories."
+                          : "GitHub setup is not finished."}
+                      </h1>
                       <p className="member-intro">
-                        {owner} needs to finish GitHub setup before you can
-                        connect your account and request a review.
+                        {user.admin
+                          ? "Connect the workspace to GitHub and choose repositories. Then link your account and set up a reviewer."
+                          : `${owner} needs to finish GitHub setup before you can connect your account and request a review.`}
                       </p>
                     </>
                   )}
@@ -185,32 +235,50 @@ export function MemberStart({
                     <>
                       <h1 tabIndex={-1}>You’re connected. Access is next.</h1>
                       <p className="member-intro">
-                        Ask {owner} to add @{user.github_login} to People so you
-                        can request reviews.
+                        {user.admin
+                          ? `Add @${user.github_login} in People to allow review requests from this account.`
+                          : `Ask ${owner} to add @${user.github_login} to People so you can request reviews.`}
                       </p>
                       <button
                         className="primary"
                         onClick={() =>
-                          copy(
-                            `Please approve @${user.github_login} in LiteReview → People so I can request reviews.`,
-                          )
+                          user.admin
+                            ? navigate("/people")
+                            : copy(
+                                `Please approve @${user.github_login} in LiteReview → People so I can request reviews.`,
+                              )
                         }
                       >
-                        <Copy size={15} />
-                        Copy access request
+                        {user.admin ? (
+                          "Manage People"
+                        ) : (
+                          <>
+                            <Copy size={15} /> Copy access request
+                          </>
+                        )}
                       </button>
-                      <p className="member-note">
-                        Nothing is sent automatically.
-                      </p>
+                      {!user.admin && (
+                        <p className="member-note">
+                          Nothing is sent automatically.
+                        </p>
+                      )}
                     </>
                   )}
                   {data.state === "reviewer" && (
                     <>
-                      <h1 tabIndex={-1}>Your reviewer isn’t ready yet.</h1>
+                      <h1 tabIndex={-1}>
+                        {needsRepositories
+                          ? "GitHub repositories aren’t connected."
+                          : user.admin
+                            ? "Finish setting up reviews."
+                            : "Your reviewer isn’t ready yet."}
+                      </h1>
                       <p className="member-intro">
-                        {owner} needs to connect a repository and test a
-                        reviewer you have access to. Your Google and GitHub
-                        accounts are already connected.
+                        {needsRepositories
+                          ? `Your GitHub account is linked as @${user.github_login}. Connect repository access before requesting a review.`
+                          : user.admin
+                            ? "Your Google and GitHub accounts are linked. Continue setup to connect repository access and test your first reviewer."
+                            : `${owner} needs to connect a repository and test a reviewer you have access to. Your Google and GitHub accounts are already connected.`}
                       </p>
                     </>
                   )}
@@ -226,13 +294,29 @@ export function MemberStart({
                   {["workspace", "reviewer", "unavailable"].includes(
                     data.state,
                   ) && (
-                    <button
-                      className="primary"
-                      onClick={refresh}
-                      disabled={loading}
-                    >
-                      {loading ? "Checking…" : "Check again"}
-                    </button>
+                    <div className="actions">
+                      {user.admin && data.state !== "unavailable" && (
+                        <button
+                          className="primary"
+                          onClick={() => navigate("/repositories")}
+                        >
+                          {data.state === "workspace" || needsRepositories
+                            ? "Connect GitHub"
+                            : "Continue setup"}
+                        </button>
+                      )}
+                      <button
+                        className={
+                          user.admin && data.state !== "unavailable"
+                            ? "text-button"
+                            : "primary"
+                        }
+                        onClick={refresh}
+                        disabled={loading}
+                      >
+                        {loading ? "Checking…" : "Check again"}
+                      </button>
+                    </div>
                   )}
                   {data.state === "ready" && repo && (
                     <>

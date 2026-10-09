@@ -25,7 +25,7 @@ The private workspace is deployed at [litereview.onrender.com](https://literevie
 1. Create a **Blueprint** in Render from this repository. `render.yaml` provisions one Docker web service and Postgres. If Render cannot see the BerriAI repo, an organization owner may need to approve Render’s GitHub access.
 2. Set `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`. The app automatically uses Render’s assigned HTTPS URL; set `PUBLIC_URL` explicitly if using a custom domain. Keep the generated `SECRET_KEY` stable across deploys. Configure Google sign-in as described below, with at least one administrator email.
 3. Sign in with Google. The owner lands in the workspace; teammates go directly to personal setup.
-4. Open **Repositories → Connect GitHub** (or **Connect BerriAI** when `GITHUB_ORGANIZATION=BerriAI`). Use an App owned by the account that owns your repositories. The guided flow registers the App, stores its credentials encrypted, and opens installation. An organization owner may need to create or approve the App. A private personal App cannot be installed in an organization.
+4. Open **Repositories → Connect GitHub** (or **Connect BerriAI** when `GITHUB_ORGANIZATION=BerriAI`). Use an App owned by the account that owns your repositories. Continue to GitHub in the same tab; the guided flow registers the App, stores its credentials encrypted, and opens installation. An organization owner or organization-wide App Manager can create the App; installation may need an owner’s approval. A private personal App cannot be installed in an organization.
 5. Select repositories on GitHub and return to **Repositories**. LiteReview imports the selection automatically; installation IDs and a second repository picker are unnecessary. Public and private repositories are supported. New selections allow existing approved People to call their permitted reviewers. Open a repository’s **Review permissions** to narrow that access.
 6. If no model connection exists, add one under **Settings → Models**. Reuse an existing gateway or direct provider where possible. **Configure reviewer** asks for its name and model, then **Save and check reviewer** runs a private harness check using Modal and model credits. Codex is the default; a direct Anthropic connection uses Claude Code. Full instructions, capabilities, skills, and MCP tools remain in the agent editor.
 7. Approve GitHub usernames in **People**. Each teammate chooses **Sign in with Google → Connect GitHub** once. The start page shows commands only for permitted repositories and checked reviewers, after verifying current GitHub access. Post the command in a PR; successful setup ends with an actual review result. Provider consent can require additional clicks.
@@ -34,7 +34,11 @@ The private workspace is deployed at [litereview.onrender.com](https://literevie
 
 **Repositories** checks the App and syncs repository selection when opened or when you return from GitHub. Signed installation webhooks also sync selection. Use **GitHub connection options → Sync repositories** to retry. Failed checks preserve configuration. If GitHub approval is pending, copy the setup request for an organization owner and resume afterward.
 
-A saved App does not establish repository access. If it belongs to the wrong account, the page identifies that owner and offers the appropriate organization setup. The target organization comes from saved setup or `GITHUB_ORGANIZATION`; it is never inferred from the Google email domain.
+A linked GitHub account lets LiteReview recognize your PR comments. It does not establish repository access. **Account** and **Repositories** show identity and repository access separately. When no repositories are connected, workspace pages show **Connect GitHub**, and the owner’s start page links directly to setup.
+
+A saved App also does not establish repository access. If it belongs to the wrong account, Repositories identifies that owner and offers the appropriate organization setup. **Copy setup request** includes instructions for an organization owner to assign the organization-wide App Manager role on supported GitHub plans, or create the App themselves. App management and installation are separate permissions. The target organization comes from saved setup or `GITHUB_ORGANIZATION`; it is never inferred from the Google email domain.
+
+To install LiteReview yourself, you need Admin access on the target repositories and the organization’s **Settings → Member privileges → GitHub Apps → Allow repository admins to install GitHub Apps for their repositories** setting enabled. This policy applies to all repository admins. An owner can instead keep installations restricted and select repositories for you. Once installed, use **Add repositories** to update the existing App’s access; no new App is needed. LiteReview’s People and repository grants still restrict who can request reviews.
 
 **Settings → GitHub App** contains credential recovery and **Reset setup**. A reset pauses GitHub reviews while preserving agents, models, MCP connections, skills, repository environments and secrets, access rules, and review history. The App remains on GitHub. **Undo reset** restores the prior connection; saving a new App replaces that backup. Active reviews must finish before resetting.
 
@@ -108,7 +112,7 @@ For the full LiteReview app check, run `uv run python -m scripts.modal_app_smoke
 
 ## Existing GitHub App
 
-Configure **Connections → GitHub → Use existing App** (or **App settings and recovery → Update App credentials** if an App is saved), or set:
+Configure **Repositories → Use existing App** (or **Settings → GitHub App → App credentials** if an App is saved), or set:
 
 - `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY` (PEM, escaped newlines supported), and `GITHUB_WEBHOOK_SECRET`.
 - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` for GitHub sign-in.

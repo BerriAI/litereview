@@ -227,10 +227,29 @@ function App() {
     };
   }, [mobileNav]);
   useEffect(() => {
-    api("/session")
-      .then(setSession)
-      .catch((e) => setError(e.message));
-  }, []);
+    let alive = true;
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      api("/session")
+        .then((next) => {
+          if (alive)
+            setSession((current: any) =>
+              JSON.stringify(current) === JSON.stringify(next) ? current : next,
+            );
+        })
+        .catch((e) => {
+          if (alive) setError(e.message);
+        });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      alive = false;
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [path]);
   useEffect(() => {
     const expiredSession = () => {
       setExpired(true);
@@ -255,7 +274,7 @@ function App() {
     );
   }, [session?.user?.admin, workspaceLoaded]);
   useEffect(() => {
-    if (!session?.user?.admin) return;
+    if (!session?.user?.admin || ["/account", "/start"].includes(path)) return;
     document.title = titles[active] + " · LiteReview";
     if (!editor)
       document
@@ -490,6 +509,10 @@ function App() {
     });
   const modelConnections = store.connections.filter((c) => c.type !== "mcp");
   const mcpConnections = store.connections.filter((c) => c.type === "mcp");
+  const needsRepositories =
+    !setup.github || setup.github_reset || !store.repos.length;
+  const needsGithubAccount =
+    session?.sso_required && !session?.user?.github_login;
   if (session === undefined)
     return (
       <div className="center">
@@ -584,6 +607,9 @@ function App() {
         user={session.user}
         account={path === "/account"}
         githubLogin={session.github_login}
+        workspaceLoaded={workspaceLoaded}
+        repositoryCount={store.repos.length}
+        githubConfigured={!!setup.github && !setup.github_reset}
         navigate={navigate}
         onLogout={() =>
           mutate(async () => {
@@ -805,6 +831,45 @@ function App() {
               {notice}
             </div>
           )}
+          {workspaceLoaded &&
+            active !== "repos" &&
+            (needsRepositories || needsGithubAccount) && (
+              <section
+                className="github-next-step"
+                aria-label="GitHub connection needed"
+              >
+                <ProviderMark type="github" />
+                <div>
+                  <strong>
+                    {needsRepositories
+                      ? "GitHub repositories aren’t connected."
+                      : "Your GitHub account isn’t linked."}
+                  </strong>
+                  <p>
+                    {!needsRepositories
+                      ? "Link the account you use to comment on PRs so LiteReview can recognize your review requests."
+                      : session.user.github_login
+                        ? `Your account is linked as @${session.user.github_login}. Connect repository access to start PR reviews.`
+                        : "Connect GitHub and choose repositories before starting PR reviews."}
+                  </p>
+                </div>
+                {needsRepositories ? (
+                  <button
+                    className="primary"
+                    onClick={() => navigate("/repositories")}
+                  >
+                    Connect GitHub
+                  </button>
+                ) : (
+                  <a
+                    className="button primary"
+                    href={"/api/auth/github?next=" + encodeURIComponent(path)}
+                  >
+                    Connect GitHub account
+                  </a>
+                )}
+              </section>
+            )}
           {active === "connections" && (
             <>
               <div className="tabs">
@@ -854,6 +919,10 @@ function App() {
             <GitHubSetup
               key={githubRevision}
               setup={setup}
+              githubAccount={session.user.github_login || ""}
+              onAccount={() => navigate("/account")}
+              ssoRequired={session.sso_required}
+              canLinkGithub={session.github_login}
               connected={store.repos}
               agents={store.agents}
               groups={store.groups}
@@ -2452,35 +2521,20 @@ function App() {
       )}
       {githubCreate && (
         <Modal
-          title="Connect your GitHub account or organization"
+          title="Connect GitHub repositories"
           close={() => setGithubCreate(false)}
         >
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              const target = "litereview-github-" + crypto.randomUUID();
-              const githubWindow = window.open("", target);
-              if (!githubWindow) {
-                setError(
-                  "Allow this site to open a GitHub tab, then try again. Your setup is saved.",
-                );
-                return;
-              }
-              githubWindow.opener = null;
               mutate(async () => {
-                let r;
-                try {
-                  r = await api(
-                    "/github/manifest",
-                    send("POST", { owner_type: appOwnerType, owner: appOwner }),
-                  );
-                } catch (error) {
-                  githubWindow.close();
-                  throw error;
-                }
+                const r = await api(
+                  "/github/manifest",
+                  send("POST", { owner_type: appOwnerType, owner: appOwner }),
+                );
                 const form = document.createElement("form");
                 form.method = "POST";
-                form.target = target;
+                form.target = "_self";
                 form.action = r.url;
                 const input = document.createElement("input");
                 input.type = "hidden";
@@ -2492,16 +2546,16 @@ function App() {
                 form.remove();
                 setGithubCreate(false);
                 setNotice(
-                  "Continue in the GitHub tab. Your setup is saved here; check again when you return.",
+                  "Opening GitHub. After you approve the App and choose repositories, GitHub will return you here.",
                 );
               });
             }}
           >
             <div className="dialog-body">
               <p>
-                A private GitHub App can only be installed on the account that
-                owns it. Choose the account or organization that owns your
-                repositories.
+                Choose where your repositories live. GitHub will ask you to
+                create the LiteReview App there and choose which repositories it
+                can access, then return you here.
               </p>
               <Field label="App owner">
                 <select
@@ -2515,7 +2569,7 @@ function App() {
               {appOwnerType === "organization" && (
                 <Field
                   label="Organization name"
-                  hint="An organization owner must allow App creation here. If GitHub denies access, ask an owner to open this workspace and finish this step. Your other settings stay saved."
+                  hint="Use an organization where you are an owner or have the organization-wide App Manager role. If GitHub denies creation, ask an owner to grant that role or create the App. Repository installation may need separate approval."
                 >
                   <input
                     value={appOwner}
