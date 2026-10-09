@@ -28,6 +28,8 @@ services:
         value: berri.ai
       - key: GOOGLE_ADMIN_EMAILS
         sync: false
+      - key: GITHUB_ORGANIZATION
+        value: BerriAI
       - key: MODAL_TOKEN_ID
         sync: false
       - key: MODAL_TOKEN_SECRET

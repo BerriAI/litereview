@@ -3,13 +3,14 @@
 import asyncio
 import base64
 import hashlib
+import re
 import secrets
 import time
 from urllib.parse import urlencode
 
 import httpx
 import jwt
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
@@ -22,6 +23,32 @@ from .settings import settings
 router = APIRouter()
 keys_client = jwt.PyJWKClient("https://www.googleapis.com/oauth2/v3/certs", lifespan=3600)
 login_attempts = []
+
+
+def return_path(value):
+    # Only known in-app destinations; never pass an arbitrary OAuth redirect through.
+    path = (value or "").split("?", 1)[0]
+    if re.fullmatch(r"/runs/[a-f0-9]{32}", path):
+        return path
+    return (
+        path
+        if path
+        in {
+            "/",
+            "/start",
+            "/account",
+            "/repositories",
+            "/agents",
+            "/groups",
+            "/skills",
+            "/settings",
+            "/people",
+            "/runs",
+            "/connections",
+            "/access",
+        }
+        else "/"
+    )
 
 
 def configured():
@@ -57,6 +84,7 @@ def current_user(request):
         "email": identity.email,
         "login": identity.github_login or identity.email,
         "github_login": identity.github_login,
+        "github_id": identity.github_id,
         "expires_at": identity.expires_at,
         "admin": identity.email in settings().google_admins
         or identity.github_login.lower() in settings().admins,
@@ -129,11 +157,13 @@ def redirect(url, browser):
 
 
 @router.get("/api/auth/google")
-def google_start():
+def google_start(next_path: str = Query("/", alias="next")):
     if not configured():
         raise HTTPException(503, "Google sign-in is not configured. Contact the workspace administrator.")
     nonce, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
-    state, browser = start_state("google", {"nonce": nonce, "verifier": verifier})
+    state, browser = start_state(
+        "google", {"nonce": nonce, "verifier": verifier, "next": return_path(next_path)}
+    )
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     s = settings()
     return redirect(
@@ -227,7 +257,7 @@ async def google_callback(request: Request, state: str = "", code: str = "", err
         identity.session_id = secrets.token_urlsafe(32)
         db.add(identity)
         db.commit()
-    response = RedirectResponse("/account", status_code=303)
+    response = RedirectResponse(return_path(data.get("next")), status_code=303)
     response.delete_cookie("lr_sso_state", path="/api/auth")
     response.set_cookie(
         "lr_session",
@@ -247,7 +277,9 @@ def github_start(request):
         raise HTTPException(
             409, "An administrator must connect the GitHub App before accounts can be linked."
         )
-    state, browser = start_state("github-link", {"sub": user["sub"]})
+    state, browser = start_state(
+        "github-link", {"sub": user["sub"], "next": return_path(request.query_params.get("next", "/start"))}
+    )
     return redirect(
         "https://github.com/login/oauth/authorize?"
         + urlencode(
@@ -298,7 +330,7 @@ async def github_callback(request, code, state):
             raise HTTPException(
                 409, "This GitHub account is already linked to another Google identity."
             ) from None
-    response = RedirectResponse("/account", status_code=303)
+    response = RedirectResponse(return_path(data.get("next", "/start")), status_code=303)
     response.delete_cookie("lr_sso_state", path="/api/auth")
     return response
 

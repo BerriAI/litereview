@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     github_client_id: str = ""
     github_client_secret: str = ""
     github_token: str = ""  # Explicit development-only integration testing.
+    github_organization: str = ""
     modal_token_id: str = ""
     modal_token_secret: str = ""
     modal_app_name: str = "litereview"

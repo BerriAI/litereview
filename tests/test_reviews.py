@@ -544,7 +544,7 @@ def test_manifest_callback_requires_same_browser_and_clears_state(owner, monkeyp
     params = {"code": "temporary-code", "state": state}
     assert (
         owner.get("/api/github/manifest/callback", params=params, follow_redirects=False).headers["location"]
-        == "/connections?github_error=expired"
+        == "/repositories?github_error=expired"
     )
     exchange.assert_not_awaited()
     owner.cookies.set("lr_manifest", state, domain="testserver.local", path="/")
@@ -555,7 +555,7 @@ def test_manifest_callback_requires_same_browser_and_clears_state(owner, monkeyp
     assert github.config()["app_id"] == "123"
     assert (
         owner.get("/api/github/manifest/callback", params=params, follow_redirects=False).headers["location"]
-        == "/connections?github_error=expired"
+        == "/repositories?github_error=expired"
     )
     exchange.assert_awaited_once()
 

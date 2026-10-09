@@ -20,7 +20,7 @@ def setup_state():
 
 def require_enabled():
     if setup_state().get("disabled"):
-        raise HTTPException(409, "GitHub setup was reset. Connect an App or undo the reset in Connections.")
+        raise HTTPException(409, "GitHub setup was reset. Connect an App or undo the reset in Repositories.")
 
 
 def config():
@@ -42,7 +42,7 @@ def config():
 def app_jwt():
     c = config()
     if not c.get("app_id") or not c.get("private_key"):
-        raise HTTPException(503, "Create or connect a GitHub App in Connections → GitHub.")
+        raise HTTPException(503, "Create or connect a GitHub App in Repositories.")
     return jwt.encode(
         {"iat": int(time.time()) - 60, "exp": int(time.time()) + 540, "iss": c["app_id"]},
         c["private_key"],
@@ -79,9 +79,12 @@ async def repo_request(repo, installation, method, suffix, **kwargs):
     return await request(method, f"/repos/{repo}/{suffix}", await token(installation), **kwargs)
 
 
-async def permission(repo, installation, user):
+async def permission(repo, installation, user, expected_id=None):
     response = await repo_request(repo, installation, "GET", f"collaborators/{user}/permission")
-    return response.json().get("permission", "none")
+    data = response.json()
+    if expected_id and str(data.get("user", {}).get("id", "")) != str(expected_id):
+        return "none"
+    return data.get("permission", "none")
 
 
 async def archive(repo, installation, sha):
@@ -154,6 +157,7 @@ async def connection_status():
         "app_url": app["html_url"],
         "owner": app.get("owner", {}).get("login", ""),
         "owner_type": app.get("owner", {}).get("type", ""),
+        "public": app.get("public"),
         "repositories": sorted(repos, key=lambda r: r["name"].lower()),
         "installations": [
             {"account": i["account"]["login"], "suspended": bool(i.get("suspended_at"))} for i in installs

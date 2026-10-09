@@ -1,4 +1,7 @@
-"""Opt-in live UI acceptance test; requires a running app and .env."""
+"""Opt-in legacy local UI test; requires seeded fixtures and SSO disabled.
+
+Google SSO/onboarding acceptance is documented in docs/VALIDATION.md.
+"""
 
 import asyncio
 import os
@@ -19,6 +22,7 @@ async def main():
         await page.goto(os.environ["PUBLIC_URL"])
         await page.get_by_label("Workspace access key").fill(os.environ["ADMIN_TOKEN"])
         await page.get_by_role("button", name="Sign in", exact=True).click()
+        await page.goto(os.environ["PUBLIC_URL"] + "/agents")
         await page.get_by_role("heading", name="PR agents", exact=True).wait_for()
         # Recover only this test's named resources after an interrupted earlier pass.
         for kind, names in [
@@ -34,7 +38,7 @@ async def main():
                     assert response.ok
         await page.reload()
         await page.get_by_role("heading", name="PR agents", exact=True).wait_for()
-        await page.locator(".page-heading").get_by_role("button", name="Create agent", exact=True).click()
+        await page.get_by_role("button", name="Create agent", exact=True).click()
         dialog = page.get_by_role("dialog")
         await dialog.get_by_label("Command name", exact=True).fill("ui-acceptance-reviewer")
         await dialog.get_by_label("Model connection", exact=True).click()
@@ -50,7 +54,7 @@ async def main():
         await dialog.wait_for(state="hidden")
         for name, count in [("ui-acceptance-one", 2), ("ui-acceptance-two", 1)]:
             await page.get_by_role("button", name="Agent groups", exact=True).click()
-            await page.locator(".page-heading").get_by_role("button", name="Create group", exact=True).click()
+            await page.get_by_role("button", name="Create group", exact=True).click()
             dialog = page.get_by_role("dialog")
             await dialog.get_by_label("Command name").fill(name)
             await dialog.get_by_label("Add agent to group").select_option(label="ui-acceptance-reviewer")
@@ -99,7 +103,7 @@ async def main():
         await page.get_by_role("button", name="Open navigation").click()
         await page.get_by_role("button", name="Skills", exact=True).click()
         await page.get_by_role("heading", name="Skills", exact=True).wait_for()
-        await page.locator(".page-heading").get_by_role("button", name="Create skill", exact=True).click()
+        await page.get_by_role("button", name="Create skill", exact=True).click()
         dialog = page.get_by_role("dialog")
         assert await dialog.evaluate("el => el.scrollWidth <= el.clientWidth"), "mobile editor overflow"
         await dialog.get_by_role("button", name="Cancel", exact=True).click()
@@ -114,16 +118,17 @@ async def main():
         await page.screenshot(path=".test-artifacts/system-dark-light-ui.png")
         await page.emulate_media(color_scheme="light")
         # Inspect every data surface and editor without launching models or jobs.
-        for title, action in [("Skills", "Create skill"), ("Connections", "Add repository")]:
+        for title, action in [("Skills", "Create skill")]:
             await page.get_by_role("button", name=title, exact=True).click()
             await page.get_by_role("heading", name=title, exact=True).wait_for()
-            await page.locator(".page-heading").get_by_role("button", name=action, exact=True).click()
+            await page.get_by_role("button", name=action, exact=True).click()
             dialog = page.get_by_role("dialog")
             await dialog.get_by_role("button", name="Cancel", exact=True).click()
+        await page.get_by_role("button", name="Settings", exact=True).click()
         for tab in ["Models", "MCP servers"]:
             await page.get_by_role("button", name=tab, exact=True).click()
             await (
-                page.locator(".page-heading").get_by_role("button", name="Add connection", exact=True).click()
+                page.get_by_role("button", name="Add connection", exact=True).click()
             )
             dialog = page.get_by_role("dialog")
             await dialog.get_by_role("button", name="Cancel", exact=True).click()

@@ -23,6 +23,8 @@ from . import github, providers, reviews
 from .access import initialize_access
 from .db import Artifact, Job, Resource, ReviewTiming, Run, Session, init_db, uid
 from .limits import job_timeout, model_rounds
+from .onboarding import exclude_repository, include_repository
+from .onboarding import router as onboarding_router
 from .schemas import SCHEMAS, AgentModel, ReviewResult
 from .security import decrypt, digest, encrypt, require_admin, require_user, signed, unsign, verify_signature
 from .settings import settings
@@ -71,6 +73,7 @@ async def lifespan(app):
 
 app = FastAPI(title="LiteReview", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.include_router(sso_router)
+app.include_router(onboarding_router)
 
 
 @app.middleware("http")
@@ -357,6 +360,7 @@ async def save_resource(kind: str, request: Request, resource_id: str | None = N
             if keys:
                 secret = encrypt(json.dumps(keys))
         if kind == "repos":
+            include_repository(db, data["name"])
             if not row:
                 db.add(
                     Resource(
@@ -412,6 +416,8 @@ def delete_resource(kind: str, resource_id: str):
             raise HTTPException(
                 409, "Wait for active reviews to finish before deleting connections or repositories."
             )
+        if kind == "repos":
+            exclude_repository(db, row.data["name"])
         for grant in db.scalars(select(Resource).where(Resource.kind == "access")):
             if (
                 kind == "repos"
@@ -577,9 +583,11 @@ def setup_status():
         "github": bool(conf.get("app_id") and conf.get("private_key")),
         "github_app_url": conf.get("html_url", ""),
         "github_reset": bool(github.setup_state().get("disabled")),
+        "github_organization": github.setup_state().get("organization") or settings().github_organization,
         "development_github_token": bool(settings().github_token),
         "webhook_url": settings().public_url + "/api/webhook/github",
         "admin_users": sorted(settings().admins),
+        "max_review_minutes": settings().max_review_minutes,
     }
 
 
@@ -654,6 +662,7 @@ async def connect_repository(request: Request):
         state = github_row.data if github_row else {}
         if state.get("disabled") or state.get("generation", "") != generation:
             raise HTTPException(409, "GitHub setup changed. Check repository access again.")
+        include_repository(db, name)
         existing = db.scalar(
             select(Resource).where(
                 Resource.kind == "repos", func.lower(Resource.data["name"].as_string()) == name
@@ -701,6 +710,7 @@ async def manifest(request: Request):
             "purpose": "manifest",
             "nonce": secrets.token_urlsafe(20),
             "generation": github.setup_state().get("generation", ""),
+            "organization": body.get("owner", "") if body.get("owner_type") == "organization" else "",
         }
     )
     base = settings().public_url
@@ -714,7 +724,7 @@ async def manifest(request: Request):
         "hook_attributes": {"url": base + "/api/webhook/github", "active": True},
         "redirect_url": base + "/api/github/manifest/callback",
         "callback_urls": [base + "/api/auth/github/callback"],
-        "setup_url": base + "/connections",
+        "setup_url": base + "/repositories",
         "public": False,
         "default_permissions": {
             "contents": "read",
@@ -745,7 +755,7 @@ async def manifest(request: Request):
 @app.get("/api/github/manifest/callback")
 async def manifest_callback(request: Request, code: str, state: str):
     def failed(reason):
-        result = RedirectResponse("/connections?" + urlencode({"github_error": reason}))
+        result = RedirectResponse("/repositories?" + urlencode({"github_error": reason}))
         result.delete_cookie("lr_manifest")
         return result
 
@@ -785,7 +795,12 @@ async def manifest_callback(request: Request, code: str, state: str):
         )
         if row.data.get("generation", "") != state_data.get("generation", ""):
             return failed("expired")
-        row.data = {"disabled": False, "overrides_environment": True, "generation": secrets.token_urlsafe(24)}
+        row.data = {
+            "disabled": False,
+            "overrides_environment": True,
+            "generation": secrets.token_urlsafe(24),
+            "organization": state_data.get("organization", ""),
+        }
         row.secret = encrypt(json.dumps(conf))
         db.add(row)
         db.commit()
@@ -806,7 +821,12 @@ async def github_config(request: Request):
         row = db.get(Resource, "github", with_for_update=True) or Resource(
             id="github", kind="system", data={}
         )
-        row.data = {"disabled": False, "overrides_environment": True, "generation": secrets.token_urlsafe(24)}
+        row.data = {
+            **row.data,
+            "disabled": False,
+            "overrides_environment": True,
+            "generation": secrets.token_urlsafe(24),
+        }
         row.secret = encrypt(json.dumps(conf))
         db.add(row)
         db.commit()
@@ -820,7 +840,13 @@ async def webhook(request: Request):
         body, request.headers.get("x-hub-signature-256"), github.config().get("webhook_secret", "")
     ):
         raise HTTPException(401, "Invalid webhook signature.")
-    if request.headers.get("x-github-event") != "issue_comment":
+    event = request.headers.get("x-github-event")
+    if event in ("installation", "installation_repositories"):
+        from .onboarding import sync_repositories
+
+        await sync_repositories()
+        return {"synced": True}
+    if event != "issue_comment":
         return {"ignored": True}
     delivery = request.headers.get("x-github-delivery")
     if not delivery or len(delivery) > 150:

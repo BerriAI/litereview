@@ -1,50 +1,78 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Check, Loader2, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  ArrowUpRight,
+  Check,
+  ChevronRight,
+  Loader2,
+  LockKeyhole,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
 import { api, send } from "./api";
-import { Badge, Field, ProviderMark } from "./ui";
+import { ProviderMark } from "./ui";
 
-type Repository = { name: string; installation_id: number };
+type Row = { id: string; name: string; [key: string]: any };
 type Status = {
   state: "unconfigured" | "needs_installation" | "available";
-  app_name?: string;
-  app_url?: string;
   owner?: string;
   owner_type?: string;
-  repositories: Repository[];
+  public?: boolean;
+  app_url?: string;
+  repositories: { name: string; installation_id: number }[];
   installations: { account: string; suspended: boolean }[];
+  excluded?: string[];
 };
-
-export function GitHubSetup({
-  setup,
-  connected,
-  revision,
-  onConnected,
-  onCreate,
-  onExisting,
-  onReset,
-}: {
-  setup: { github?: boolean; github_app_url?: string; github_reset?: boolean };
-  connected: Repository[];
+type Readiness = {
+  runtime: boolean;
+  has_review: boolean;
+  agents: {
+    id: string;
+    name: string;
+    checked: boolean;
+    check_id?: string;
+    check_status?: string;
+  }[];
+};
+type Props = {
+  setup: any;
+  connected: Row[];
+  agents: Row[];
+  groups: Row[];
+  connections: Row[];
+  access: Row[];
   revision: number;
   onConnected: () => Promise<void>;
   onCreate: () => void;
   onExisting: () => void;
   onReset: (undo: boolean) => Promise<void>;
-}) {
+  onSettings: () => void;
+  onModel: () => void;
+  onAgent: (agent?: Row) => void;
+  onEdit: (repo: Row) => void;
+  onAccess: (repo: Row) => void;
+  onRemove: (repo: Row) => void;
+  onPeople: () => void;
+  onStart: () => void;
+};
+export function GitHubSetup(p: Props) {
   const [status, setStatus] = useState<Status | null>(null);
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState("");
-  const [connectError, setConnectError] = useState("");
-  const [query, setQuery] = useState("");
-  const [connecting, setConnecting] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const [resetting, setResetting] = useState(false);
-  const [resetError, setResetError] = useState("");
-  const refresh = useRef<() => void>(() => {});
-
+  const [query, setQuery] = useState("");
+  const [refresh, setRefresh] = useState(0);
   useEffect(() => {
-    let alive = true;
-    let pending = false;
+    document
+      .querySelector<HTMLElement>(".repositories-page h1")
+      ?.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
+    let alive = true,
+      pending = false;
     const controller = new AbortController();
     const check = async () => {
       if (pending) return;
@@ -52,293 +80,164 @@ export function GitHubSetup({
       setChecking(true);
       setError("");
       try {
-        const result = await api("/github/status", {
+        const result = await api("/github/sync", {
+          ...send("POST"),
           signal: controller.signal,
         });
-        if (alive) setStatus(result);
-      } catch (err) {
-        if (alive) setError((err as Error).message);
+        if (!alive) return;
+        await p.onConnected();
+        const ready = await api("/workspace/readiness", {
+          signal: controller.signal,
+        });
+        if (alive) {
+          setStatus(result);
+          setReadiness(ready);
+        }
+      } catch (e) {
+        if (alive) setError((e as Error).message);
       } finally {
         pending = false;
         if (alive) setChecking(false);
       }
     };
-    refresh.current = check;
-    check();
-    const onVisible = () => {
-      if (document.visibilityState === "visible") check();
+    void check();
+    const visible = () => {
+      if (document.visibilityState === "visible") void check();
     };
-    window.addEventListener("focus", check);
-    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", visible);
+    document.addEventListener("visibilitychange", visible);
     return () => {
       alive = false;
       controller.abort();
-      window.removeEventListener("focus", check);
-      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", visible);
+      document.removeEventListener("visibilitychange", visible);
     };
-  }, [revision]);
-
-  const appUrl = status?.app_url || setup.github_app_url;
-  const configured = status ? status.state !== "unconfigured" : setup.github;
-  const repositories = status?.repositories || [];
-  const connectedNames = new Set(
-    connected
-      .filter((r) =>
-        repositories.some(
-          (repo) =>
-            repo.name.toLowerCase() === r.name.toLowerCase() &&
-            repo.installation_id === r.installation_id,
-        ),
-      )
-      .map((r) => r.name.toLowerCase()),
+  }, [p.revision, refresh]);
+  const pending = readiness?.agents.find((a) =>
+    ["queued", "starting", "running"].includes(a.check_status || ""),
   );
-  const verifiedCount = repositories.filter((r) =>
-    connectedNames.has(r.name.toLowerCase()),
-  ).length;
-  const unavailable = connected.filter(
-    (r) =>
-      !repositories.some(
-        (repo) => repo.name.toLowerCase() === r.name.toLowerCase(),
-      ),
-  );
-  const matches = repositories.filter((r) =>
-    r.name.toLowerCase().includes(query.toLowerCase()),
-  );
-  const connect = async (repo: Repository) => {
-    setConnecting(repo.name);
-    setConnectError("");
+  useEffect(() => {
+    if (!pending) return;
+    let alive = true;
+    const timer = setInterval(() => {
+      api("/workspace/readiness")
+        .then((r) => {
+          if (alive) setReadiness(r);
+        })
+        .catch((e) => {
+          if (alive) setActionError(e.message);
+        });
+    }, 4000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [pending?.check_id]);
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setActionError("");
     setNotice("");
     try {
-      await api("/github/connect", send("POST", { name: repo.name }));
-      await onConnected();
-      setNotice(`${repo.name} connected. Continue with your PR agent below.`);
-    } catch (err) {
-      setConnectError((err as Error).message);
+      await fn();
+    } catch (e) {
+      setActionError((e as Error).message);
     } finally {
-      setConnecting("");
+      setBusy(false);
     }
   };
-  const reset = async () => {
-    setResetting(true);
-    setResetError("");
-    try {
-      await onReset(!!setup.github_reset);
-    } catch (err) {
-      setResetError((err as Error).message);
-      setResetting(false);
-    }
-  };
-
+  const installed = status?.repositories || [];
+  const available = (r: Row) =>
+    installed.some(
+      (i) =>
+        i.name.toLowerCase() === r.name.toLowerCase() &&
+        i.installation_id === r.installation_id,
+    );
+  const repos = p.connected.filter((r) =>
+    r.name.toLowerCase().includes(query.toLowerCase()),
+  );
+  const hasRepos = p.connected.some(available);
+  const checked = readiness?.agents.filter((a) => a.checked) || [];
+  const organization = p.setup.github_organization || "";
+  const mismatch =
+    status?.owner_type === "User" &&
+    organization &&
+    status.owner?.toLowerCase() !== organization.toLowerCase() &&
+    status.public !== true &&
+    !installed.length;
+  const hasModels = p.connections.some((c) => c.type !== "mcp");
+  const hasPeople = p.access.some(
+    (g) => g.subject === "user" && (g.scope === "all" || g.target_ids.length),
+  );
+  const appUrl = status?.app_url || p.setup.github_app_url;
+  const installUrl = appUrl ? appUrl + "/installations/new" : "";
+  const needs = !hasModels
+    ? "model"
+    : !p.agents.length
+      ? "agent"
+      : !readiness?.runtime
+        ? "runtime"
+        : pending
+          ? "pending"
+          : !checked.length
+            ? "check"
+            : !hasPeople
+              ? "people"
+              : "review";
+  const copyRequest = () =>
+    run(async () => {
+      const text = `Please help connect the LiteReview GitHub App to ${organization || "our organization"}. An organization owner must create or approve the App and select repositories. Continue at ${location.origin}/repositories. No extra LiteReview access is granted by this link.`;
+      await navigator.clipboard.writeText(text);
+      setNotice("Setup request copied. Nothing was sent.");
+    });
   return (
-    <section className="setup-panel github-setup" aria-label="GitHub setup">
-      <div className="setup-title">
-        <ProviderMark type="github" />
+    <section
+      className="repositories-page"
+      aria-label="Repository setup"
+      onKeyDown={(e) => {
+        if (e.key !== "Escape") return;
+        const menu = (e.target as HTMLElement).closest<HTMLDetailsElement>(
+          "details.connection-menu",
+        );
+        if (menu?.open) {
+          menu.open = false;
+          menu.querySelector("summary")?.focus();
+        }
+      }}
+    >
+      <header className="page-heading">
         <div>
-          <h3>
-            {checking
-              ? "Checking GitHub access…"
-              : error
-                ? "GitHub access could not be checked"
-                : !configured
-                  ? "Connect GitHub"
-                  : repositories.length
-                    ? "Choose repositories to review"
-                    : "Finish GitHub installation"}
-          </h3>
-          <p>
-            {status?.owner && (
-              <>
-                App owned by <strong>{status.owner}</strong>.{" "}
-              </>
-            )}
-            {checking
-              ? "Checking the App and the repositories it can access."
-              : error
-                ? "Your saved configuration is unchanged. Retry the check or update the App settings below."
-                : !configured
-                  ? "Create an App in the account that owns your repositories. GitHub sends its credentials back automatically."
-                  : !repositories.length
-                    ? "The App is saved, but GitHub has not made any repositories available to it."
-                    : "Connect a repository below. Installation details are filled in automatically."}
-          </p>
+          <h1 tabIndex={-1}>Repositories</h1>
+          <p>Choose where LiteReview can run.</p>
         </div>
-        <Badge tone={!checking && !error && verifiedCount ? "green" : ""}>
-          {checking
-            ? "Checking"
-            : error
-              ? "Check failed"
-              : verifiedCount
-                ? `${verifiedCount} connected`
-                : "Setup needed"}
-        </Badge>
-      </div>
-      {error && (
-        <div className="error" role="alert">
-          {error}
-        </div>
-      )}
-      <div className="actions">
-        {configured && appUrl ? (
+        {hasRepos && !error && (
           <a
-            className={"button " + (!repositories.length ? "primary" : "")}
-            href={appUrl + "/installations/new"}
+            className={
+              "button " +
+              (needs === "review" && readiness?.has_review ? "primary" : "")
+            }
+            href={installUrl}
             target="_blank"
             rel="noreferrer"
           >
-            {repositories.length
-              ? "Manage GitHub access"
-              : "Continue installation on GitHub"}{" "}
-            <ArrowUpRight size={14} />
+            <Plus size={16} />
+            Add repositories
           </a>
-        ) : !checking && !error && !configured ? (
-          <button className="primary" onClick={onCreate} disabled={resetting}>
-            Connect GitHub organization <ArrowUpRight size={14} />
-          </button>
-        ) : null}
-        <button
-          disabled={checking || !!connecting || resetting}
-          onClick={() => refresh.current()}
-        >
-          {checking ? (
-            <Loader2 size={14} className="spin" />
-          ) : (
-            <RefreshCw size={14} />
-          )}{" "}
-          {checking ? "Checking…" : "Check again"}
-        </button>
-        {!configured && !checking && !error && (
-          <button onClick={onExisting} disabled={resetting}>
-            Use existing App
-          </button>
         )}
-        <button
-          aria-label={
-            setup.github_reset
-              ? "Undo reset GitHub setup"
-              : "Reset GitHub setup"
-          }
-          disabled={resetting || !!connecting}
-          onClick={reset}
-          title={
-            setup.github_reset
-              ? "Restore the previous GitHub App connection."
-              : "Restart GitHub setup. Your workspace settings are kept. You can undo this."
-          }
-        >
-          {resetting
-            ? "Updating…"
-            : setup.github_reset
-              ? "Undo reset"
-              : "Reset"}
-        </button>
-      </div>
-      {setup.github_reset && (
-        <p className="notice" role="status">
-          GitHub setup reset. Your agents and workspace settings are saved. The
-          App remains on GitHub. Connect again or choose Undo reset.
-        </p>
-      )}
-      {resetError && (
-        <p className="error" role="alert">
-          {resetError}
-        </p>
-      )}
-      {configured && (
-        <p className="setup-help">
-          Select only the repositories you want to review on GitHub. This page
-          checks again when you return. If your organization is missing or
-          approval is pending, an organization owner needs to finish
-          installation. A private App can only be installed on the account that
-          owns it.
-        </p>
-      )}
-      {!checking &&
-        !error &&
-        !repositories.length &&
-        status?.owner_type === "User" && (
-          <div className="account-recovery">
-            <p className="setup-help">
-              This App belongs to the personal account{" "}
-              <strong>{status.owner}</strong>. If your organization is not
-              offered during installation, create an App owned by that
-              organization. An organization owner may need to complete this
-              step.
-            </p>
-            <button onClick={onCreate} disabled={resetting || !!connecting}>
-              Connect an organization instead
-            </button>
+      </header>
+      {p.setup.github_reset && (
+        <div className="setup-recovery">
+          <div>
+            <strong>GitHub setup was reset.</strong>
+            <p>Your agents and access settings are saved.</p>
           </div>
-        )}
-      {!checking &&
-        !error &&
-        status?.installations.some((i) => i.suspended) && (
-          <p role="alert" className="error">
-            Installation suspended for{" "}
-            {status.installations
-              .filter((i) => i.suspended)
-              .map((i) => i.account)
-              .join(", ")}
-            . An organization owner needs to restore it on GitHub.
-          </p>
-        )}
-      {!setup.github_reset && !checking && !error && unavailable.length > 0 && (
-        <p role="alert" className="error">
-          GitHub access is missing for{" "}
-          {unavailable.map((r) => r.name).join(", ")}. Their review settings are
-          saved. Restore repository access on GitHub before starting reviews.
-        </p>
-      )}
-      {!checking && !error && repositories.length > 0 && (
-        <div className="repository-picker">
-          <Field label="Find a repository">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search owner/repository"
-            />
-          </Field>
-          <p className="setup-help">
-            New repositories allow your existing People entries to call their
-            permitted agents there. You can narrow repository access in Access.
-          </p>
-          <ul className="repository-options">
-            {matches.map((repo) => (
-              <li key={repo.name}>
-                <span>{repo.name}</span>
-                {connectedNames.has(repo.name.toLowerCase()) ? (
-                  <span className="connected-label">
-                    <Check size={14} /> Connected
-                  </span>
-                ) : (
-                  <button
-                    disabled={!!connecting || resetting}
-                    onClick={() => connect(repo)}
-                    aria-label={`Connect ${repo.name}`}
-                  >
-                    {connecting === repo.name
-                      ? "Connecting…"
-                      : connected.some(
-                            (r) =>
-                              r.name.toLowerCase() === repo.name.toLowerCase(),
-                          )
-                        ? "Reconnect"
-                        : "Connect"}
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-          {!matches.length && (
-            <p>
-              No repositories match “{query}”. Update GitHub access if the
-              repository is missing.
-            </p>
-          )}
+          <button disabled={busy} onClick={() => run(() => p.onReset(true))}>
+            Undo reset
+          </button>
         </div>
       )}
-      {connectError && (
+      {actionError && (
         <p className="error" role="alert">
-          {connectError} You can retry Connect without creating a duplicate.
+          {actionError}
         </p>
       )}
       {notice && (
@@ -346,25 +245,412 @@ export function GitHubSetup({
           {notice}
         </p>
       )}
-      {(configured || error) && (
-        <details className="github-settings">
-          <summary>App settings and recovery</summary>
-          <p className="setup-help">
-            If this App belongs to the wrong account, have an organization owner
-            create an App in the organization that owns your repositories.
-            Replacing the App keeps model connections, agents, and access
-            settings; reconnect repositories to the new installation.
-          </p>
-          <div className="actions">
-            <button onClick={onCreate} disabled={resetting || !!connecting}>
-              Create App for another account <ArrowUpRight size={14} />
-            </button>
-            <button onClick={onExisting} disabled={resetting || !!connecting}>
-              Update App credentials
-            </button>
+      {error ? (
+        <div className="setup-recovery" role="alert">
+          <div>
+            <strong>Couldn’t verify GitHub access.</strong>
+            <p>{error}</p>
+            <p>Your saved setup is unchanged.</p>
           </div>
+          <button className="primary" onClick={() => setRefresh((v) => v + 1)}>
+            Try again
+          </button>
+        </div>
+      ) : checking && !status ? (
+        <p className="onboarding-loading" role="status">
+          <Loader2 size={16} className="spin" />
+          Checking GitHub access…
+        </p>
+      ) : null}
+      {!error &&
+        status &&
+        (!hasRepos ? (
+          <div className="repo-empty">
+            <ProviderMark type="github" />
+            <h2>
+              {mismatch
+                ? `This App belongs to ${status.owner}.`
+                : status.state === "unconfigured"
+                  ? "Connect your repositories."
+                  : "Finish choosing repositories."}
+            </h2>
+            <p>
+              {mismatch
+                ? `Private Apps can only be installed on their owning account. To connect ${organization}, use an App owned by that organization. An organization owner may need to complete this step.`
+                : status.state === "unconfigured"
+                  ? `Connect the LiteReview App${organization ? ` to ${organization}` : ""}, then choose repositories on GitHub. Your selections will appear here automatically.`
+                  : "The App is saved. Continue on GitHub to install it and select repositories. You won’t need to enter credentials again."}
+            </p>
+            {status.state === "unconfigured" || mismatch ? (
+              <button className="primary" onClick={p.onCreate}>
+                {mismatch
+                  ? `Create App for ${organization}`
+                  : organization
+                    ? `Connect ${organization}`
+                    : "Connect GitHub"}
+                <ArrowUpRight size={15} />
+              </button>
+            ) : (
+              <a
+                className="button primary"
+                href={installUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Continue on GitHub
+                <ArrowUpRight size={15} />
+              </a>
+            )}
+            <p className="repo-help">
+              A GitHub organization owner may need to approve access.{" "}
+              <button className="text-button" onClick={copyRequest}>
+                Copy setup request
+              </button>
+            </p>
+            <div className="actions">
+              <button className="text-button" onClick={p.onExisting}>
+                Use an existing App
+              </button>
+              <button
+                className="text-button"
+                onClick={() => setRefresh((v) => v + 1)}
+                disabled={checking}
+              >
+                {checking ? "Checking…" : "Check installation"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="organization-row">
+              <ProviderMark type="github" />
+              <div className="organization-name">
+                <strong>{organization || status.owner || "GitHub"}</strong>
+                <small>GitHub repositories</small>
+              </div>
+              <span className="connected-label">
+                <Check size={14} />
+                Connected
+              </span>
+              <details className="connection-menu">
+                <summary aria-label="GitHub connection options">
+                  <MoreHorizontal size={18} />
+                </summary>
+                <div>
+                  <a
+                    className="button"
+                    href={installUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Manage GitHub access
+                  </a>
+                  <button onClick={p.onSettings}>App settings</button>
+                  <button
+                    disabled={checking}
+                    onClick={() => setRefresh((v) => v + 1)}
+                  >
+                    <RefreshCw size={14} />
+                    Sync repositories
+                  </button>
+                </div>
+              </details>
+            </div>
+            {!readiness?.has_review && readiness && (
+              <section className="setup-focus">
+                <div>
+                  <h2>
+                    {
+                      {
+                        model: "Connect a model.",
+                        agent: "Choose your first reviewer.",
+                        runtime: "Finish the review runtime setup.",
+                        pending: "Checking your reviewer…",
+                        check: "Test your reviewer.",
+                        people: "Approve your first caller.",
+                        review: "Try it on a pull request.",
+                      }[needs]
+                    }
+                  </h2>
+                  <p>
+                    {
+                      {
+                        model:
+                          "Connect a provider or gateway for your reviewers to use.",
+                        agent:
+                          "Your model connection is already saved. Choose a model and check that your reviewer can run.",
+                        runtime:
+                          "Review execution needs Modal credentials, a public HTTPS URL, and a running dispatcher. Your setup is saved.",
+                        pending:
+                          "The private check is running. You can leave this page and return; progress is saved.",
+                        check:
+                          "Run a private harness check before your first review. This uses Modal and model credits.",
+                        people:
+                          "Only approved People can request reviews. Google sign-in alone does not grant access.",
+                        review:
+                          "Connect your personal GitHub identity and get a comment for a repository you can use.",
+                      }[needs]
+                    }
+                  </p>
+                </div>
+                {needs === "model" && (
+                  <button className="primary" onClick={p.onModel}>
+                    Connect a model
+                  </button>
+                )}
+                {needs === "agent" && (
+                  <button className="primary" onClick={() => p.onAgent()}>
+                    Configure reviewer
+                  </button>
+                )}
+                {needs === "runtime" && (
+                  <a className="button primary" href="/docs#runtime">
+                    View setup guide
+                  </a>
+                )}
+                {needs === "pending" && (
+                  <button
+                    onClick={() =>
+                      run(async () => {
+                        await api(
+                          `/agents/check/${pending!.check_id}/cancel`,
+                          send("POST"),
+                        );
+                        setReadiness(await api("/workspace/readiness"));
+                      })
+                    }
+                  >
+                    Stop check
+                  </button>
+                )}
+                {needs === "check" && (
+                  <button
+                    className="primary"
+                    disabled={busy}
+                    onClick={() =>
+                      run(async () => {
+                        await api("/agents/check", send("POST", p.agents[0]));
+                        setReadiness(await api("/workspace/readiness"));
+                      })
+                    }
+                  >
+                    {busy ? "Starting…" : "Check reviewer"}
+                  </button>
+                )}
+                {needs === "people" && (
+                  <button className="primary" onClick={p.onPeople}>
+                    Manage people
+                  </button>
+                )}
+                {needs === "review" && (
+                  <button className="primary" onClick={p.onStart}>
+                    Start a review
+                  </button>
+                )}
+              </section>
+            )}
+          </>
+        ))}
+      {status?.installations
+        .filter((i) => i.suspended)
+        .map((i) => (
+          <p className="error" role="alert" key={i.account}>
+            The GitHub installation for {i.account} is suspended. An
+            organization owner must restore it on GitHub.
+          </p>
+        ))}
+      {p.connected.length > 0 && (
+        <>
+          {p.connected.length > 5 && (
+            <label className="repo-search">
+              Find a repository
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search owner/repository"
+              />
+            </label>
+          )}
+          <div className="repo-list-heading" aria-hidden="true">
+            <span>Repository</span>
+            <span>Reviewer</span>
+            <span>Status</span>
+            <span />
+          </div>
+          <ul className="repo-list">
+            {repos.map((repo) => {
+              const grant = p.access.find(
+                (g) =>
+                  g.subject === "repo" &&
+                  g.name.toLowerCase() === repo.name.toLowerCase(),
+              );
+              const allowed = [...p.agents, ...p.groups].filter(
+                (a) =>
+                  grant &&
+                  (grant.scope === "all" || grant.target_ids.includes(a.id)),
+              );
+              const ready =
+                !error &&
+                available(repo) &&
+                readiness?.runtime &&
+                allowed.some((r) =>
+                  r.members
+                    ? r.members.length > 0 &&
+                      r.members.every((m: { agent_id: string }) =>
+                        checked.some((a) => a.id === m.agent_id),
+                      )
+                    : checked.some((a) => a.id === r.id),
+                );
+              return (
+                <li key={repo.id}>
+                  <button className="row-name" onClick={() => p.onEdit(repo)}>
+                    {repo.name}
+                  </button>
+                  <span className="repo-reviewers">
+                    {allowed.map((a) => a.name).join(", ") || "None permitted"}
+                  </span>
+                  <span className={ready ? "connected-label" : "muted"}>
+                    {ready && <Check size={14} />}
+                    {error
+                      ? "Unverified"
+                      : !status
+                        ? "Checking access…"
+                        : !available(repo)
+                          ? "Access missing"
+                          : ready
+                            ? "Ready to review"
+                            : "Needs reviewer"}
+                  </span>
+                  <details className="connection-menu">
+                    <summary aria-label={`Settings for ${repo.name}`}>
+                      <ChevronRight size={16} />
+                    </summary>
+                    <div>
+                      <button onClick={() => p.onEdit(repo)}>
+                        Review environment
+                      </button>
+                      <button onClick={() => p.onAccess(repo)}>
+                        Review permissions
+                      </button>
+                      <button onClick={() => p.onRemove(repo)}>
+                        Remove repository
+                      </button>
+                    </div>
+                  </details>
+                </li>
+              );
+            })}
+          </ul>
+          {!repos.length && (
+            <p className="repo-help">No repositories match “{query}”.</p>
+          )}
+        </>
+      )}
+      {!!status?.excluded?.length && (
+        <details className="duration-help">
+          <summary>Previously removed repositories</summary>
+          <p>
+            These stay excluded when GitHub syncs. Restore only the repositories
+            you want to review.
+          </p>
+          {installed
+            .filter((r) => status.excluded!.includes(r.name.toLowerCase()))
+            .map((r) => (
+              <div className="excluded-repo" key={r.name}>
+                <span>{r.name}</span>
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      await api(
+                        "/github/connect",
+                        send("POST", { name: r.name }),
+                      );
+                      setRefresh((v) => v + 1);
+                    })
+                  }
+                >
+                  Restore
+                </button>
+              </div>
+            ))}
         </details>
       )}
+      <p className="repository-policy">
+        <LockKeyhole size={14} />
+        <span>
+          Public and private repositories are supported. New selections allow
+          existing approved People to use their permitted reviewers.{" "}
+          <button className="text-button" onClick={p.onPeople}>
+            Manage people
+          </button>
+        </span>
+      </p>
+    </section>
+  );
+}
+
+export function GitHubSettings({
+  setup,
+  onCreate,
+  onExisting,
+  onReset,
+  onRepositories,
+}: {
+  setup: any;
+  onCreate: () => void;
+  onExisting: () => void;
+  onReset: (undo: boolean) => Promise<void>;
+  onRepositories: () => void;
+}) {
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  return (
+    <section className="integration-settings">
+      <h2>GitHub App</h2>
+      <p>
+        Manage App credentials and setup recovery. Choose repositories on the
+        Repositories page.
+      </p>
+      <div className="actions">
+        <button onClick={onRepositories}>Open repositories</button>
+        <button onClick={onExisting}>App credentials</button>
+        <button onClick={onCreate}>Create App for another account</button>
+      </div>
+      <div className="settings-recovery">
+        <h3>
+          {setup.github_reset ? "Restore GitHub setup" : "Reset GitHub setup"}
+        </h3>
+        <p>
+          Your agents, connections, and access settings are kept. The App
+          remains on GitHub. You can undo a reset.
+        </p>
+        <button
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              await onReset(!!setup.github_reset);
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy
+            ? "Updating…"
+            : setup.github_reset
+              ? "Undo reset"
+              : "Reset setup"}
+        </button>
+        {error && (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        )}
+      </div>
     </section>
   );
 }

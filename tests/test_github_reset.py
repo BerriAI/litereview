@@ -90,7 +90,7 @@ def test_reset_preserves_workspace_and_undo_restores_connection(owner, monkeypat
     response = owner.get(
         "/api/github/manifest/callback", params={"code": "old", "state": old_state}, follow_redirects=False
     )
-    assert response.headers["location"] == "/connections?github_error=expired"
+    assert response.headers["location"] == "/repositories?github_error=expired"
     assert github.config() == APP
     assert webhook(owner, payload()).status_code == 200
 
@@ -180,7 +180,7 @@ def test_reset_invalidates_pending_manifest_even_if_browser_cookie_survives(
     response = owner.get(
         "/api/github/manifest/callback", params={"code": "old", "state": state}, follow_redirects=False
     )
-    assert response.headers["location"] == "/connections?github_error=expired"
+    assert response.headers["location"] == "/repositories?github_error=expired"
     assert github.config() == {}
     assert conversion.await_count == int(during_conversion)
 
