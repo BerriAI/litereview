@@ -513,11 +513,13 @@ export function GitHubSetup(p: Props) {
                     {ready && <Check size={14} />}
                     {error
                       ? "Unverified"
-                      : !available(repo)
-                        ? "Access missing"
-                        : ready
-                          ? "Ready to review"
-                          : "Needs reviewer"}
+                      : !status
+                        ? "Checking access…"
+                        : !available(repo)
+                          ? "Access missing"
+                          : ready
+                            ? "Ready to review"
+                            : "Needs reviewer"}
                   </span>
                   <details className="connection-menu">
                     <summary aria-label={`Settings for ${repo.name}`}>
