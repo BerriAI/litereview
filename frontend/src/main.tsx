@@ -89,7 +89,7 @@ function App() {
   const [error, setError] = useState(() => {
     const reason = new URLSearchParams(location.search).get("github_error");
     return reason === "expired"
-      ? "GitHub setup expired or sign-in is needed. Your previous settings are saved. Sign in, then retry GitHub setup below."
+      ? "GitHub setup expired or sign-in is needed. Your settings are saved. Retry setup below; sign in if prompted."
       : reason === "conversion"
         ? "GitHub could not finish App creation. Your previous settings are saved. Retry setup, or connect the App from App settings if it already exists on GitHub."
         : "";
@@ -776,6 +776,13 @@ function App() {
                     {modelConnections.length} model connections ·{" "}
                     {store.agents.length} agents saved
                   </p>
+                  {!setup.modal && (
+                    <p role="alert">
+                      Review execution also needs Modal credentials in your
+                      deployment settings. You can finish connecting GitHub and
+                      creating agents now.
+                    </p>
+                  )}
                   {!store.repos.length && (
                     <p>
                       Your model connections and access settings are kept while
