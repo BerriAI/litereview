@@ -145,26 +145,26 @@ export function Documentation() {
               </p>
               <p>
                 If no model connection is saved, add your gateway or provider in
-                <a href="/settings"> Settings → Models</a>. Use
+                <a href="/models"> Models</a>. Use
                 <a href="/agents"> PR agents</a> to customize instructions,
                 capabilities, skills, and MCP tools or inspect a failed check.
               </p>
             </li>
             <li>
-              <h3>Approve callers</h3>
+              <h3>Invite people to sign in</h3>
               <p>
-                In <a href="/people">People</a>, add approved GitHub usernames.
-                Allow all agents and groups, including future additions, or
-                select specific ones. New repositories allow all reviewers;
-                narrow that access under Repositories → repository options →
-                Review permissions.
+                Share the workspace URL. With Google SSO enabled, people appear
+                in <a href="/people">People</a> after sign-in and link GitHub to
+                start reviews. They can use all reviewers by default. Edit a
+                person’s access to restrict it; an empty selection blocks
+                reviews. Existing restrictions stay in place.
               </p>
               <p>
-                Both the person and the repository must permit each name in a
-                command. Callers also need GitHub access to that repository and,
-                with SSO enabled, a current Google sign-in linked to their
-                GitHub identity. A People entry alone does not bypass SSO.
-                Public repositories use the same caller checks.
+                New repositories allow all reviewers; narrow access under
+                Repositories → repository options → Review permissions. Callers
+                still need current Google authorization and GitHub access to the
+                repository, including public repositories. Without SSO, add
+                approved GitHub usernames in People manually.
               </p>
             </li>
             <li>
@@ -290,10 +290,25 @@ export function Documentation() {
             attach it to agents.
           </p>
           <p>
-            Add shared MCP servers under Settings → MCP servers using a
-            Streamable HTTP URL. Test a connection to discover its tools, then
-            select which tools each agent can use. Connecting a server does not
-            enable it for every agent.
+            Open <a href="/mcp">MCP servers</a> in the left sidebar and choose
+            Add MCP server. Enter its name and Streamable HTTP URL, keep OAuth,
+            and choose Save &amp; connect. Approve access with the provider.
+            LiteReview tests the connection and displays the tools it discovers.
+            Select tools in an agent to make them available to that agent.
+          </p>
+          <p>
+            For token-based or public servers, choose Bearer token or No
+            authentication and Save &amp; test. Test connection repeats
+            discovery. If OAuth requires a registered app, Advanced OAuth
+            settings shows the redirect URI and accepts its client ID and
+            optional secret. Disconnect removes local authorization; revoke the
+            grant in the provider’s account settings if needed.
+          </p>
+          <p>
+            MCP servers, Skills, and Models stay accessible while editing an
+            agent. Your agent draft is preserved when you navigate away or
+            return from OAuth in the same tab. Choose Resume editing to continue
+            with the new resources.
           </p>
         </section>
       </main>

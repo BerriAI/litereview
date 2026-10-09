@@ -7,7 +7,7 @@ import httpx
 import litellm
 from fastapi import HTTPException
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 from .db import Resource, Session
 from .security import decrypt
@@ -20,12 +20,19 @@ def connection(resource_id):
         r = db.get(Resource, resource_id)
         if not r or r.kind != "connections":
             raise HTTPException(409, "The selected connection no longer exists.")
-        return {**r.data, "api_key": decrypt(r.secret)}
+        return {"id": r.id, **r.data, "api_key": decrypt(r.secret)}
 
 
 def snapshot_connection(snapshot):
     # Metadata is immutable; only the credential reference is resolved at call time.
-    return {**snapshot, "api_key": connection(snapshot["id"])["api_key"]}
+    current = connection(snapshot["id"])
+    if snapshot.get("type") == "mcp":
+        if current["type"] != "mcp" or current["base_url"] != snapshot["base_url"]:
+            raise HTTPException(
+                409, "The MCP endpoint changed after this review started. Start a new review."
+            )
+        return {**snapshot, "auth_type": current.get("auth_type", "bearer"), "api_key": current["api_key"]}
+    return {**snapshot, "api_key": current["api_key"]}
 
 
 async def complete(conn, model, messages, tools):
@@ -73,23 +80,54 @@ async def models(conn):
 
 @asynccontextmanager
 async def mcp_session(conn):
-    headers = {"Authorization": "Bearer " + conn["api_key"]} if conn.get("api_key") else {}
+    from .mcp_oauth import MCPAuth
+
+    oauth = conn.get("auth_type") == "oauth"
+    headers = (
+        {"Authorization": "Bearer " + conn["api_key"]}
+        if conn.get("api_key") and conn.get("auth_type", "bearer") == "bearer"
+        else {}
+    )
+    auth = MCPAuth(conn["id"], conn["base_url"]) if oauth else None
     async with asyncio.timeout(40):
-        async with streamablehttp_client(conn["base_url"], headers=headers, timeout=30) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
+        async with httpx.AsyncClient(
+            headers=headers, auth=auth, timeout=30, follow_redirects=False
+        ) as client:
+            async with streamable_http_client(conn["base_url"], http_client=client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield session
+
+
+def mcp_error(exc):
+    if isinstance(exc, HTTPException):
+        return exc
+    for child in getattr(exc, "exceptions", []):
+        found = mcp_error(child)
+        if found:
+            return found
+    return None
 
 
 async def mcp_tools(conn):
     try:
         async with mcp_session(conn) as session:
-            result = await session.list_tools()
-            return [
-                {"name": t.name, "description": t.description or "", "inputSchema": t.inputSchema}
-                for t in result.tools
-            ]
-    except Exception:
+            tools, cursor, seen = [], None, set()
+            while True:
+                result = await session.list_tools(cursor=cursor)
+                tools.extend(
+                    {"name": t.name, "description": t.description or "", "inputSchema": t.inputSchema}
+                    for t in result.tools
+                )
+                cursor = result.nextCursor
+                if not cursor:
+                    return tools
+                if cursor in seen:
+                    raise ValueError("MCP server repeated a pagination cursor")
+                seen.add(cursor)
+    except Exception as exc:
+        if error := mcp_error(exc):
+            raise error from None
         raise HTTPException(
             400, "MCP connection failed. Check the Streamable HTTP endpoint and credentials."
         ) from None
@@ -100,7 +138,9 @@ async def mcp_call(conn, name, arguments):
         async with mcp_session(conn) as session:
             result = await session.call_tool(name, arguments)
             return result.model_dump(mode="json")
-    except Exception:
+    except Exception as exc:
+        if error := mcp_error(exc):
+            raise error from None
         raise HTTPException(502, f"MCP tool {name} failed. Check the connection and server logs.") from None
 
 

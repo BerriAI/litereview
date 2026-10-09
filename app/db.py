@@ -112,6 +112,13 @@ class LoginState(Base):
     data: Mapped[dict] = mapped_column(JSON)
 
 
+class MCPOAuth(Base):
+    __tablename__ = "mcp_oauth"
+    connection_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    revision: Mapped[str] = mapped_column(String(40), default=uid)
+    secret: Mapped[str] = mapped_column(Text, default="")
+
+
 url = settings().database_url
 if url.startswith("postgres://"):
     url = url.replace("postgres://", "postgresql+psycopg://", 1)

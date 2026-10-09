@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from runner.catalog import HARNESS_VERSIONS, review_capabilities
 
 from . import github
-from .access import permits
+from .access import caller_permits, permits
 from .db import Job, Resource, Run, Session, uid
 from .limits import job_timeout, timing_limits
 from .security import digest
@@ -190,7 +190,7 @@ async def accept(payload, delivery):
             None,
         )
         group = target.data.copy() if target else None
-        allowed = target and permits(caller_access, target.id) and permits(repo_access, target.id)
+        allowed = target and caller_permits(caller_access, target.id) and permits(repo_access, target.id)
         if not allowed:
             # Generic rejection avoids exposing group membership to unauthorized readers.
             return reject_command(

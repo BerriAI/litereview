@@ -19,9 +19,9 @@ from sqlalchemy.exc import IntegrityError
 
 from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
 
-from . import github, providers, reviews
-from .access import initialize_access
-from .db import Artifact, Job, Resource, ReviewTiming, Run, Session, init_db, uid
+from . import github, mcp_oauth, providers, reviews
+from .access import initialize_access, people
+from .db import Artifact, Job, MCPOAuth, Resource, ReviewTiming, Run, Session, init_db, uid
 from .limits import count_model_call, job_timeout, model_rounds
 from .onboarding import exclude_repository, include_repository
 from .onboarding import router as onboarding_router
@@ -74,6 +74,7 @@ async def lifespan(app):
 app = FastAPI(title="LiteReview", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.include_router(sso_router)
 app.include_router(onboarding_router)
+app.include_router(mcp_oauth.router)
 
 
 @app.middleware("http")
@@ -236,6 +237,9 @@ async def oauth_callback(request: Request, code: str, state: str):
 
 def public_resource(row):
     data = {**row.data}
+    data.pop("credential_revision", None)
+    if row.kind == "connections" and data.get("type") == "mcp" and data.get("auth_type") == "oauth":
+        data["oauth"] = mcp_oauth.status(row.id)
     if row.kind == "repos":
         data["secret_names"] = list(json.loads(decrypt(row.secret))) if row.secret else []
     return {"id": row.id, **data, "has_secret": bool(row.secret), "updated_at": row.updated_at}
@@ -320,12 +324,12 @@ def list_resources(kind: str):
     if kind not in SCHEMAS:
         raise HTTPException(404)
     with Session() as db:
-        return [
-            public_resource(r)
-            for r in db.scalars(
-                select(Resource).where(Resource.kind == kind).order_by(Resource.updated_at.desc())
-            )
-        ]
+        rows = db.scalars(
+            select(Resource).where(Resource.kind == kind).order_by(Resource.updated_at.desc())
+        ).all()
+        if kind == "access" and settings().sso_required:
+            return [public_resource(r) for r in rows if r.data["subject"] == "repo"] + people(db, rows)
+        return [public_resource(r) for r in rows]
 
 
 @app.post("/api/resources/{kind}", dependencies=[Depends(require_admin)])
@@ -342,7 +346,7 @@ async def save_resource(kind: str, request: Request, resource_id: str | None = N
             422, "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
         ) from None
     with Session() as db:
-        row = db.get(Resource, resource_id) if resource_id else None
+        row = db.get(Resource, resource_id, with_for_update=True) if resource_id else None
         if resource_id and (not row or row.kind != kind):
             raise HTTPException(404)
         rid = resource_id or uid()
@@ -350,11 +354,19 @@ async def save_resource(kind: str, request: Request, resource_id: str | None = N
         secret = row.secret if row else ""
         if kind == "connections":
             key = data.pop("api_key")
+            oauth_secret = data.pop("oauth_client_secret")
+            auth_changed = mcp_oauth.update_connection(db, rid, row.data if row else None, data, oauth_secret)
+            data["credential_revision"] = (
+                uid() if auth_changed or key or not row else row.data.get("credential_revision")
+            )
+            data["last_test"] = row.data.get("last_test") if row and not auth_changed and not key else None
             data["tools"] = row.data.get("tools", []) if row else []
             if key:
                 secret = encrypt(key)
-            if row and (row.data["base_url"] != data["base_url"] or row.data["type"] != data["type"]):
+            if auth_changed or key:
                 data["tools"] = []
+            if data["type"] == "mcp" and data["auth_type"] != "bearer":
+                secret = ""
         if kind == "repos":
             keys = data.pop("test_secrets")
             if keys:
@@ -397,7 +409,7 @@ async def save_resource(kind: str, request: Request, resource_id: str | None = N
 @app.delete("/api/resources/{kind}/{resource_id}", dependencies=[Depends(require_admin)])
 def delete_resource(kind: str, resource_id: str):
     with Session() as db:
-        row = db.get(Resource, resource_id)
+        row = db.get(Resource, resource_id, with_for_update=True)
         if not row or row.kind != kind:
             raise HTTPException(404)
         for other in db.scalars(select(Resource).where(Resource.id != resource_id)):
@@ -418,6 +430,10 @@ def delete_resource(kind: str, resource_id: str):
             )
         if kind == "repos":
             exclude_repository(db, row.data["name"])
+        if kind == "connections":
+            oauth = db.get(MCPOAuth, resource_id)
+            if oauth:
+                db.delete(oauth)
         for grant in db.scalars(select(Resource).where(Resource.kind == "access")):
             if (
                 kind == "repos"
@@ -475,10 +491,34 @@ async def upload_skill(file: UploadFile = File(...)):
 async def test_connection(resource_id: str):
     conn = providers.connection(resource_id)
     if conn["type"] == "mcp":
-        tools = await providers.mcp_tools(conn)
+        try:
+            tools = await providers.mcp_tools(conn)
+        except HTTPException as exc:
+            with Session() as db:
+                row = db.get(Resource, resource_id, with_for_update=True)
+                if row and row.data.get("credential_revision") == conn.get("credential_revision"):
+                    row.data = {
+                        **row.data,
+                        "last_test": {"ok": False, "message": exc.detail, "time": time.time()},
+                    }
+                    db.commit()
+            raise
         with Session() as db:
-            row = db.get(Resource, resource_id)
-            row.data = {**row.data, "tools": tools}
+            row = db.get(Resource, resource_id, with_for_update=True)
+            if (
+                not row
+                or row.data.get("credential_revision") != conn.get("credential_revision")
+                or row.data["base_url"] != conn["base_url"]
+                or row.data.get("auth_type", "bearer") != conn.get("auth_type", "bearer")
+            ):
+                raise HTTPException(
+                    409, "The connection changed during the test. Test its current settings again."
+                )
+            row.data = {
+                **row.data,
+                "tools": tools,
+                "last_test": {"ok": True, "time": time.time(), "tool_count": len(tools)},
+            }
             db.commit()
         return {"ok": True, "tools": tools}
     return {"ok": True, "models": await providers.models(conn)}
