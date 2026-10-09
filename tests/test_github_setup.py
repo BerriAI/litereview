@@ -124,7 +124,7 @@ def test_expired_manifest_returns_to_recoverable_setup_without_overwriting_app(o
     monkeypatch.setattr(httpx.AsyncClient, "post", conversion)
     response = owner.get("/api/github/manifest/callback?code=example&state=expired", follow_redirects=False)
     assert response.status_code == 307
-    assert response.headers["location"] == "/connections?github_error=expired"
+    assert response.headers["location"] == "/repositories?github_error=expired"
     assert github.config()["app_id"] == "keep"
     conversion.assert_not_called()
 
@@ -141,7 +141,7 @@ def test_failed_manifest_exchange_preserves_saved_app(owner, monkeypatch, failur
     response = owner.get(
         "/api/github/manifest/callback", params={"code": "code", "state": state}, follow_redirects=False
     )
-    assert response.headers["location"] == "/connections?github_error=conversion"
+    assert response.headers["location"] == "/repositories?github_error=conversion"
     assert "lr_manifest" not in owner.cookies
     assert github.config()["app_id"] == "keep"
     conversion.assert_awaited_once()

@@ -1,7 +1,13 @@
 import { ArrowLeft } from "lucide-react";
+import { useEffect } from "react";
 import { Brand } from "./ui";
 
 export function Documentation() {
+  useEffect(() => {
+    document.title = "Documentation · LiteReview";
+    if (location.hash === "#runtime")
+      document.getElementById("runtime")?.scrollIntoView();
+  }, []);
   return (
     <div className="docs">
       <header className="docs-header">
@@ -24,56 +30,22 @@ export function Documentation() {
           <h2>Start a review</h2>
           <ol className="docs-steps">
             <li>
-              <h3>Connect a GitHub repository</h3>
+              <h3>Sign in and connect your identity</h3>
               <p>
-                Open <a href="/connections">Connections → GitHub</a>. LiteReview
-                checks your existing App and shows the account that owns it.
-                Continue installation on GitHub, select your repositories, then
-                return here and choose Connect beside a repository. Installation
-                details are filled in automatically.
-              </p>
-              <p>
-                A private App can only be installed on its owning account. If
-                your App belongs to a personal account and you need organization
-                repositories, choose Connect an organization instead. An
-                organization owner may need to finish this step. Your existing
-                model connections, agents, and access settings stay saved.
+                Open <a href="/start">Start a review</a>, sign in with your
+                workspace Google account, and choose Connect GitHub. Link the
+                account you use to comment on pull requests. Your workspace
+                owner handles repository setup and approves who can request
+                reviews.
               </p>
             </li>
             <li>
-              <h3>Create a PR agent</h3>
+              <h3>Copy your review comment</h3>
               <p>
-                Reuse your saved model connection, or add a gateway or provider
-                under Connections → Models. In <a href="/agents">PR agents</a>,
-                name the reviewer, choose a model, and describe what it should
-                check. New agents default to Codex. Enable tools as needed.
-                Attach skills or MCP tools if useful. Test agent runs a small
-                private check of that harness, model, and selected capabilities
-                in Modal. It uses model and Modal credits without touching a
-                GitHub repo.
-              </p>
-            </li>
-            <li>
-              <h3>Set access</h3>
-              <p>
-                In <a href="/access">Access</a>, add GitHub usernames under
-                People and manage connected repositories under Repositories.
-                Give each one All agents and groups (including future additions)
-                or select specific ones. New repositories start with All access;
-                you can narrow it here.
-              </p>
-              <p>
-                Both the person and the repository must have access to each name
-                in a command. The person must also have GitHub access to the
-                repository. Access to a group includes its members when called
-                through that group.
-              </p>
-              <p>
-                With Google SSO enabled, each caller also signs in with their
-                workspace Google account and links GitHub on{" "}
-                <a href="/account">Your LiteReview account</a>. Renew Google
-                sign-in when authorization expires. A People entry alone does
-                not bypass SSO.
+                Start a review shows repositories and checked reviewers
+                available to your account. Choose a repository and reviewer,
+                then use Copy comment. If setup or approval is missing, the page
+                explains what your workspace owner needs to finish.
               </p>
             </li>
             <li>
@@ -113,38 +85,122 @@ export function Documentation() {
               <h3>Read the results</h3>
               <p>
                 LiteReview updates a PR comment with each agent’s findings or
-                “No findings.” Open <a href="/runs">Runs</a> for details,
-                activity, and screenshots. An incomplete check means the agent
-                could not finish its configured review. Results are summary
-                comments; agents do not push fixes.
+                “No findings.” Workspace owners can open{" "}
+                <a href="/runs">Runs</a> for details, activity, and screenshots.
+                An incomplete check means the agent could not finish its
+                configured review. Results are summary comments; agents do not
+                push fixes.
               </p>
             </li>
           </ol>
         </section>
 
         <section>
-          <h2>Resume GitHub setup</h2>
+          <h2>Set up a workspace</h2>
+          <p>Workspace owners complete these steps once.</p>
+          <ol className="docs-steps">
+            <li>
+              <h3>Connect repositories</h3>
+              <p>
+                Open <a href="/repositories">Repositories</a> and connect the
+                GitHub App. Select repositories on GitHub; they appear in
+                LiteReview automatically. Use Add repositories to change that
+                selection later. Public and private repositories are supported.
+              </p>
+              <p>
+                A private App must belong to the account where it is installed.
+                To connect an organization, create an App owned by that
+                organization. An organization owner may need to create or
+                approve it. Copy setup request provides a handoff you can send
+                yourself.
+              </p>
+            </li>
+            <li>
+              <h3>Choose a reviewer</h3>
+              <p>
+                On Repositories, choose Configure reviewer. Reuse a saved model
+                connection, choose a model, and save and check the reviewer.
+                Codex is the default harness; a direct Anthropic connection uses
+                Claude Code. The private check uses model and Modal credits on a
+                sample project without touching your repositories. You can leave
+                the page and return while it runs.
+              </p>
+              <p>
+                If no model connection is saved, add your gateway or provider in
+                <a href="/settings"> Settings → Models</a>. Use
+                <a href="/agents"> PR agents</a> to customize instructions,
+                capabilities, skills, and MCP tools or inspect a failed check.
+              </p>
+            </li>
+            <li>
+              <h3>Approve callers</h3>
+              <p>
+                In <a href="/people">People</a>, add approved GitHub usernames.
+                Allow all agents and groups, including future additions, or
+                select specific ones. New repositories allow all reviewers;
+                narrow that access under Repositories → repository options →
+                Review permissions.
+              </p>
+              <p>
+                Both the person and the repository must permit each name in a
+                command. Callers also need GitHub access to that repository and,
+                with SSO enabled, a current Google sign-in linked to their
+                GitHub identity. A People entry alone does not bypass SSO.
+                Public repositories use the same caller checks.
+              </p>
+            </li>
+            <li>
+              <h3>Run your first review</h3>
+              <p>
+                Choose Start a review on Repositories, link your own GitHub
+                identity, and copy the comment to an open PR. A successful
+                private check verifies the reviewer; the findings posted on your
+                PR are the first completed review.
+              </p>
+            </li>
+          </ol>
+        </section>
+        <section>
+          <h2>Resume or repair setup</h2>
           <p>
-            To start over, choose Reset in Connections → GitHub. Reviews pause
-            while your agents, models, skills, MCP connections, repository
-            settings and secrets, access rules, and review history stay saved.
-            The App remains on GitHub. Undo reset restores the previous
+            Repositories checks GitHub when you open the page or return from
+            GitHub. If approval is pending, use Check installation after an
+            owner approves it. A failed check keeps your settings and offers a
+            retry. An expired LiteReview session asks you to sign in again and
+            returns you to the page you were using.
+          </p>
+          <p>
+            To start GitHub setup over, open Settings → GitHub App → Reset
+            setup. Reviews pause while agents, models, skills, MCP connections,
+            repository environments and secrets, permissions, and history stay
+            saved. The App remains on GitHub. Undo reset restores the previous
             connection, even after a refresh. Saving a new App replaces that
-            backup. Finish active PR reviews before resetting.
+            backup. Finish active reviews before resetting.
           </p>
           <p>
-            App saved means credentials are stored; it does not mean GitHub has
-            granted repository access. Connections → GitHub checks the App when
-            you open the page and when you return from GitHub. Use Check again
-            after an owner approves installation. A failed check keeps your
-            settings and offers a retry.
+            Restore removed GitHub access on GitHub. Repository syncing updates
+            installations while keeping saved environments and restrictions.
+            Repositories you explicitly remove in LiteReview stay excluded from
+            syncing; use Previously removed repositories → Restore to add one
+            back. Advanced credentials live in Settings → GitHub App.
+          </p>
+        </section>
+        <section id="runtime">
+          <h2>Configure the review runtime</h2>
+          <p>
+            If Repositories reports missing runtime setup, open the service’s
+            environment settings on Render. Set MODAL_TOKEN_ID and
+            MODAL_TOKEN_SECRET from a Modal token with permission to run
+            sandboxes. Set DISPATCHER_ENABLED=true and redeploy the service.
+            Keep these credentials private.
           </p>
           <p>
-            If access was removed, restore it on GitHub. If you replace the App,
-            use Reconnect beside your repositories to update their installation
-            while keeping review environments and access restrictions. App
-            settings and recovery lets you update credentials. Optional app
-            startup commands belong in the connected repository’s editor.
+            LiteReview uses Render’s HTTPS address automatically. For a custom
+            domain, set PUBLIC_URL to the full HTTPS origin that Modal can
+            reach, with no path, and register that origin’s Google and GitHub
+            callback URLs. Return to Repositories and run the private reviewer
+            check to verify execution. A missing or invalid credential can still
+            fail that check even when all environment variables are present.
           </p>
         </section>
         <section>
@@ -187,9 +243,10 @@ export function Documentation() {
             </div>
           </dl>
           <p>
-            For agents that run your app, edit its repository in Connections.
-            Set the setup command, start command, and a localhost readiness URL.
-            Add any test credentials the app needs. Each sandbox starts fresh.
+            For agents that run your app, open Repositories → repository options
+            → Review environment. Set the setup command, start command, and a
+            localhost readiness URL. Add any test credentials the app needs.
+            Each sandbox starts fresh.
           </p>
         </section>
 
@@ -201,7 +258,7 @@ export function Documentation() {
             attach it to agents.
           </p>
           <p>
-            Add shared MCP servers under Connections → MCP servers using a
+            Add shared MCP servers under Settings → MCP servers using a
             Streamable HTTP URL. Test a connection to discover its tools, then
             select which tools each agent can use. Connecting a server does not
             enable it for every agent.

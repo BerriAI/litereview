@@ -30,9 +30,12 @@ import {
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "./style.css";
+import "./onboarding.css";
 import { Documentation } from "./docs";
 import { api, send } from "./api";
-import { GitHubSetup } from "./github-setup";
+import { GitHubSetup, GitHubSettings } from "./github-setup";
+import { MemberStart } from "./member-start";
+import { StarterReviewer } from "./starter-reviewer";
 import {
   Brand,
   ProviderMark,
@@ -57,6 +60,7 @@ const empty: Store = {
   access: [],
 };
 const icons = {
+  repos: FileCode2,
   access: Users,
   agents: Bot,
   groups: Layers,
@@ -65,20 +69,22 @@ const icons = {
   runs: History,
 };
 const titles = {
-  access: "Access",
+  repos: "Repositories",
+  access: "People",
   agents: "PR agents",
   groups: "Agent groups",
-  connections: "Connections",
+  connections: "Settings",
   skills: "Skills",
   runs: "Runs",
 };
 const descriptions = {
+  repos: "Choose where LiteReview can run.",
   access:
     "Choose which agents and groups people and repositories can use. Both must have access to start a review.",
   agents: "Create reusable reviewers with their own model, tools, and skills.",
   groups: "Optional shortcuts for running several agents together.",
   connections:
-    "Connect repositories, models, and the tools your reviewers need.",
+    "Workspace model connections, MCP servers, and advanced App settings.",
   skills: "Reusable instructions and files for your agents.",
   runs: "Review progress, findings, and visual evidence from each agent.",
 };
@@ -98,7 +104,9 @@ function App() {
   const [query, setQuery] = useState("");
   const [accessSubject, setAccessSubject] = useState<"user" | "repo">("user");
   const [accessQuery, setAccessQuery] = useState("");
-  const [tab, setTab] = useState("github");
+  const [tab, setTab] = useState("models");
+  const [expired, setExpired] = useState(false);
+  const [starter, setStarter] = useState(false);
   const [agentFilter, setAgentFilter] = useState("all");
   const [mobileNav, setMobileNav] = useState(false);
   const [setup, setSetup] = useState<any>({});
@@ -130,8 +138,16 @@ function App() {
   const [appOwnerType, setAppOwnerType] = useState("organization");
   const [appOwner, setAppOwner] = useState("");
   const [githubData, setGithubData] = useState<Record<string, string>>({});
-  const section = (path.split("/")[1] || "agents") as keyof typeof titles;
-  const active = section in titles ? section : "agents";
+  const route = path.split("/")[1] || "repositories";
+  const section =
+    (
+      {
+        repositories: "repos",
+        settings: "connections",
+        people: "access",
+      } as Record<string, string>
+    )[route] || (route === "connections" ? "repos" : route);
+  const active = (section in titles ? section : "repos") as keyof typeof titles;
   const modelConnection =
     editor?.kind === "agents" ? editor.data.connection_id : "";
   useEffect(() => {
@@ -184,6 +200,7 @@ function App() {
     setQuery("");
     setError("");
     setNotice("");
+    if (next === "/people") setAccessSubject("user");
   };
   useEffect(() => {
     const fn = () => setPath(location.pathname);
@@ -213,11 +230,44 @@ function App() {
       .then(setSession)
       .catch((e) => setError(e.message));
   }, []);
+  useEffect(() => {
+    const expiredSession = () => {
+      setExpired(true);
+      setEditor(null);
+      setGithubCreate(false);
+      setGithubForm(false);
+      setStarter(false);
+      setWorkspaceLoaded(false);
+      setStore(empty);
+      setSession((current: any) =>
+        current ? { ...current, user: null } : current,
+      );
+    };
+    window.addEventListener("litereview:unauthorized", expiredSession);
+    return () =>
+      window.removeEventListener("litereview:unauthorized", expiredSession);
+  }, []);
+  useEffect(() => {
+    if (!session?.user?.admin || !workspaceLoaded || path !== "/") return;
+    navigate(
+      store.repos.length && store.agents.length ? "/runs" : "/repositories",
+    );
+  }, [session?.user?.admin, workspaceLoaded]);
+  useEffect(() => {
+    if (!session?.user?.admin) return;
+    document.title = titles[active] + " · LiteReview";
+    if (!editor)
+      document
+        .querySelector<HTMLElement>("main h1")
+        ?.focus({ preventScroll: true });
+  }, [path, session?.user?.admin, editor]);
   const load = async () => {
     const kinds = Object.keys(empty) as Kind[];
     const values = await Promise.all(kinds.map((k) => api("/resources/" + k)));
     setStore(Object.fromEntries(kinds.map((k, i) => [k, values[i]])) as Store);
-    setSetup(await api("/setup"));
+    const nextSetup = await api("/setup");
+    setSetup(nextSetup);
+    setAppOwner((current) => current || nextSetup.github_organization || "");
     setWorkspaceLoaded(true);
   };
   const resetGithub = async (undo: boolean) => {
@@ -231,7 +281,7 @@ function App() {
       github_app_url: "",
       github_reset: result.github_reset,
     }));
-    setAppOwner("");
+    setAppOwner(setup.github_organization || "");
     setAppOwnerType("organization");
     setGithubData({});
     setGithubForm(false);
@@ -255,7 +305,8 @@ function App() {
     if (session?.user?.admin) load().catch((e) => setError(e.message));
   }, [session]);
   useEffect(() => {
-    if (!session?.user?.admin || active !== "connections") return;
+    if (!session?.user?.admin || !["connections", "repos"].includes(active))
+      return;
     let alive = true;
     const refreshSetup = () => {
       api("/setup")
@@ -401,6 +452,7 @@ function App() {
       await load();
       setEditor(null);
       setNotice("Saved successfully.");
+      setGithubRevision((v) => v + 1);
     } catch (e) {
       setFormError((e as Error).message);
     } finally {
@@ -448,8 +500,16 @@ function App() {
           <Brand />
         </div>
         <div className="login-card">
-          <h1>Sign in to LiteReview</h1>
-          <p>Configure your reviewers. Run them from GitHub.</p>
+          <h1>
+            {expired
+              ? "Sign in to continue."
+              : "Code reviews, right in your PR."}
+          </h1>
+          <p>
+            {expired
+              ? "Your Google session expired. Sign in again to return to your workspace. Your GitHub link and settings are saved."
+              : "Sign in with your workspace Google account to start using LiteReview."}
+          </p>
           {!session.sso_required && (
             <form
               onSubmit={(e) => {
@@ -484,7 +544,10 @@ function App() {
           )}
           {session.sso_required &&
             (session.google_login ? (
-              <a className="button primary full" href="/api/auth/google">
+              <a
+                className="button primary full"
+                href={"/api/auth/google?next=" + encodeURIComponent(path)}
+              >
                 Sign in with Google
               </a>
             ) : (
@@ -508,66 +571,23 @@ function App() {
         </div>
       </div>
     );
-  if (session.sso_required && (path === "/account" || !session.user.admin))
+  if (
+    session.sso_required &&
+    (path === "/account" || path === "/start" || !session.user.admin)
+  )
     return (
-      <div className="login">
-        <div className="login-brand">
-          <Brand />
-        </div>
-        <div className="login-card">
-          <h1>Your LiteReview account</h1>
-          <p>Signed in as {session.user.email}.</p>
-          <p>
-            {session.user.github_login
-              ? `GitHub account: @${session.user.github_login}`
-              : "Link your GitHub account to request reviews from PR comments."}
-          </p>
-          {session.github_login ? (
-            <a className="button full" href="/api/auth/github">
-              {session.user.github_login
-                ? "Change linked GitHub account"
-                : "Link GitHub account"}
-            </a>
-          ) : (
-            <p>An administrator needs to finish connecting the GitHub App.</p>
-          )}
-          <p>
-            Your Google authorization expires{" "}
-            {new Date(session.user.expires_at * 1000).toLocaleString()}. Sign in
-            again to renew it. Existing People and Repository access grants
-            still apply.
-          </p>
-          <p>
-            Example: <code>@litereview security t=10 frontend t=5</code>. Each
-            duration is a minimum number of minutes for the preceding agent or
-            group.
-          </p>
-          {error && (
-            <p role="alert" className="error">
-              {error}
-            </p>
-          )}
-          {session.user.admin && (
-            <button
-              className="primary full"
-              onClick={() => navigate("/agents")}
-            >
-              Open workspace
-            </button>
-          )}
-          <button
-            className="button full"
-            onClick={() =>
-              mutate(async () => {
-                await api("/logout", send("POST"));
-                setSession(await api("/session"));
-              })
-            }
-          >
-            Sign out
-          </button>
-        </div>
-      </div>
+      <MemberStart
+        user={session.user}
+        account={path === "/account"}
+        githubLogin={session.github_login}
+        navigate={navigate}
+        onLogout={() =>
+          mutate(async () => {
+            await api("/logout", send("POST"));
+            setSession(await api("/session"));
+          })
+        }
+      />
     );
   const rows =
     active === "runs"
@@ -641,7 +661,7 @@ function App() {
         <nav aria-label="Main navigation">
           {[
             ["Review", ["agents", "groups", "runs"]],
-            ["Workspace", ["connections", "skills", "access"]],
+            ["Workspace", ["repos", "access", "skills", "connections"]],
           ].map(([label, keys]) => (
             <div className="nav-group" key={label as string}>
               <div className="workspace-label">{label as string}</div>
@@ -653,7 +673,17 @@ function App() {
                     aria-label={titles[key as keyof typeof titles]}
                     aria-current={active === key ? "page" : undefined}
                     className={active === key ? "selected" : ""}
-                    onClick={() => navigate("/" + key)}
+                    onClick={() =>
+                      navigate(
+                        (
+                          {
+                            repos: "/repositories",
+                            connections: "/settings",
+                            access: "/people",
+                          } as Record<string, string>
+                        )[key] || "/" + key,
+                      )
+                    }
                   >
                     <Icon size={17} />
                     <span className="nav-label">
@@ -732,22 +762,27 @@ function App() {
           <span>{titles[active]}</span>
         </div>
         <div className="page">
-          <header className="page-heading">
-            <div>
-              <div className="title-line">
-                <PageIcon size={22} />
-                <h1>{isRunDetail ? "Review results" : titles[active]}</h1>
+          {active !== "repos" && (
+            <header className="page-heading">
+              <div>
+                <div className="title-line">
+                  <PageIcon size={22} />
+                  <h1 tabIndex={-1}>
+                    {isRunDetail ? "Review results" : titles[active]}
+                  </h1>
+                </div>
+                <p>{descriptions[active]}</p>
               </div>
-              <p>{descriptions[active]}</p>
-            </div>
-            {active !== "runs" &&
-              !(active === "connections" && tab === "github") && (
-                <button className="primary" onClick={() => edit(newKind)}>
-                  <Plus size={16} />
-                  {createLabel}
-                </button>
-              )}
-          </header>
+              {active !== "runs" &&
+                rows.length > 0 &&
+                !(active === "connections" && tab === "github") && (
+                  <button className="primary" onClick={() => edit(newKind)}>
+                    <Plus size={16} />
+                    {createLabel}
+                  </button>
+                )}
+            </header>
+          )}
           {error && (
             <div className="error" role="alert">
               {error}
@@ -770,9 +805,9 @@ function App() {
             <>
               <div className="tabs">
                 {[
-                  ["github", "GitHub"],
                   ["models", "Models"],
                   ["mcp", "MCP servers"],
+                  ["github", "GitHub App"],
                 ].map(([k, t]) => (
                   <button
                     key={k}
@@ -788,15 +823,12 @@ function App() {
                 ))}
               </div>
               {tab === "github" && (
-                <GitHubSetup
-                  key={githubRevision}
+                <GitHubSettings
                   setup={setup}
-                  connected={store.repos as any}
-                  revision={githubRevision}
-                  onConnected={load}
                   onCreate={() => setGithubCreate(true)}
                   onExisting={() => setGithubForm(true)}
                   onReset={resetGithub}
+                  onRepositories={() => navigate("/repositories")}
                 />
               )}
               {tab === "mcp" && (
@@ -808,86 +840,63 @@ function App() {
               )}
             </>
           )}
-          {workspaceLoaded &&
-            (active === "agents" ||
-              (active === "connections" && tab === "github")) && (
-              <section
-                className="setup-next"
-                aria-label="Review setup progress"
-              >
-                <div>
-                  <h3>
-                    {setup.github_reset
-                      ? "Next: reconnect GitHub"
-                      : !store.repos.length
-                        ? "Next: connect a repository"
-                        : !modelConnections.length
-                          ? "Next: connect a model"
-                          : !store.agents.length
-                            ? "Next: create your first PR agent"
-                            : "Check access and start a review"}
-                  </h3>
-                  <p>
-                    {store.repos.length} repositories ·{" "}
-                    {modelConnections.length} model connections ·{" "}
-                    {store.agents.length} agents saved
-                  </p>
-                  {!setup.modal && (
-                    <p role="alert">
-                      Review execution also needs Modal credentials in your
-                      deployment settings. You can finish connecting GitHub and
-                      creating agents now.
-                    </p>
-                  )}
-                  {(setup.github_reset || !store.repos.length) && (
-                    <p>
-                      Your model connections and access settings are kept while
-                      you finish GitHub setup.
-                    </p>
-                  )}
-                  {!setup.github_reset &&
-                    store.repos.length > 0 &&
-                    store.agents.length > 0 && (
-                      <p>
-                        Check People and repository permissions in Access, then
-                        post <code>@litereview {store.agents[0].name} t=5</code>{" "}
-                        on an open PR. Results appear in Runs and on GitHub.
-                      </p>
-                    )}
-                </div>
-                {setup.github_reset || !store.repos.length ? (
-                  active !== "connections" && (
-                    <button
-                      className="primary"
-                      onClick={() => {
-                        navigate("/connections");
-                        setTab("github");
-                      }}
-                    >
-                      Continue GitHub setup
-                    </button>
-                  )
-                ) : !modelConnections.length ? (
-                  <button
-                    className="primary"
-                    onClick={() => {
-                      navigate("/connections");
-                      setTab("models");
-                    }}
-                  >
-                    Connect a model
-                  </button>
-                ) : !store.agents.length ? (
-                  <button className="primary" onClick={() => edit("agents")}>
-                    Create your first agent
-                  </button>
-                ) : (
-                  <button onClick={() => navigate("/access")}>
-                    Review access
-                  </button>
-                )}
-              </section>
-            )}
+          {active === "repos" && !workspaceLoaded && !error && (
+            <p role="status" className="onboarding-loading">
+              <Loader2 size={16} className="spin" />
+              Loading your workspace…
+            </p>
+          )}
+          {active === "repos" && workspaceLoaded && (
+            <GitHubSetup
+              key={githubRevision}
+              setup={setup}
+              connected={store.repos}
+              agents={store.agents}
+              groups={store.groups}
+              connections={store.connections}
+              access={store.access}
+              revision={githubRevision}
+              onConnected={load}
+              onCreate={() => setGithubCreate(true)}
+              onExisting={() => setGithubForm(true)}
+              onReset={resetGithub}
+              onSettings={() => {
+                navigate("/settings");
+                setTab("github");
+              }}
+              onModel={() => {
+                navigate("/settings");
+                setTab("models");
+              }}
+              onAgent={(agent) =>
+                agent ? edit("agents", agent) : setStarter(true)
+              }
+              onEdit={(repo) => edit("repos", repo)}
+              onAccess={(repo) => {
+                setAccessSubject("repo");
+                const grant = store.access.find(
+                  (g) =>
+                    g.subject === "repo" &&
+                    g.name.toLowerCase() === repo.name.toLowerCase(),
+                );
+                setEditor({
+                  kind: "access",
+                  id: grant?.id,
+                  data: grant || {
+                    name: repo.name.toLowerCase(),
+                    subject: "repo",
+                    scope: "selected",
+                    target_ids: [],
+                  },
+                });
+              }}
+              onRemove={(repo) => remove("repos", repo)}
+              onPeople={() => navigate("/people")}
+              onStart={() =>
+                navigate(session.sso_required ? "/start" : "/agents")
+              }
+            />
+          )}
           {active === "runs" && path.split("/")[2] ? (
             <>
               <button className="back" onClick={() => navigate("/runs")}>
@@ -1089,31 +1098,10 @@ function App() {
                 <p>Loading run…</p>
               )}
             </>
-          ) : (
+          ) : active === "repos" ||
+            (active === "connections" && tab === "github") ? null : (
             <>
-              {active === "access" && (
-                <div className="tabs" aria-label="Access settings">
-                  {(
-                    [
-                      ["user", "People"],
-                      ["repo", "Repositories"],
-                    ] as const
-                  ).map(([subject, label]) => (
-                    <button
-                      key={subject}
-                      className={accessSubject === subject ? "active" : ""}
-                      aria-pressed={accessSubject === subject}
-                      onClick={() => {
-                        setAccessSubject(subject);
-                        setQuery("");
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {active === "agents" && (
+              {active === "agents" && store.agents.length > 0 && (
                 <div className="tabs agent-tabs" aria-label="Filter agents">
                   {[
                     ["all", "All agents"],
@@ -1135,7 +1123,10 @@ function App() {
                   ))}
                 </div>
               )}
-              <div className="table-toolbar" hidden={hideRepoTable}>
+              <div
+                className="table-toolbar"
+                hidden={hideRepoTable || rows.length === 0}
+              >
                 <div className="search">
                   <Search size={16} />
                   <input
@@ -1216,7 +1207,7 @@ function App() {
                     <button
                       onClick={() =>
                         active === "agents" && !modelConnections.length
-                          ? (navigate("/connections"), setTab("models"))
+                          ? (navigate("/settings"), setTab("models"))
                           : edit(newKind)
                       }
                     >
@@ -1476,6 +1467,17 @@ function App() {
           )}
         </div>
       </main>
+      {starter && (
+        <StarterReviewer
+          connections={modelConnections}
+          close={() => {
+            setStarter(false);
+            void load();
+            setGithubRevision((v) => v + 1);
+          }}
+          onSaved={load}
+        />
+      )}
       {editor && (
         <Modal
           page={["agents", "groups", "skills", "repos"].includes(editor.kind)}
@@ -1954,8 +1956,8 @@ function App() {
                   >
                     {!mcpConnections.length ? (
                       <p>
-                        Add and test an MCP server under Connections to select
-                        its tools here.
+                        Add and test an MCP server under Settings to select its
+                        tools here.
                       </p>
                     ) : (
                       mcpConnections.map((c) => (

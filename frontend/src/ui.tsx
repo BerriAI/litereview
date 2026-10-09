@@ -17,8 +17,8 @@ export function Brand() {
     <span className="brand-lockup">
       <img src="/brand/litellm-train.webp" alt="" />
       <span>
-        <strong>LiteLLM</strong>
-        <small>LiteReview</small>
+        <strong>LiteReview</strong>
+        <small>by LiteLLM</small>
       </span>
     </span>
   );

@@ -13,14 +13,18 @@ The train, favicon, and OpenAI/Anthropic/GitHub SVGs in `frontend/public/brand/`
 
 ## Layout and behavior
 
-- PR agents, groups, and runs sit together under Review. Shared connections and skills sit under Workspace.
+- PR agents, groups, and runs sit together under Review. Repositories, People, Skills, and Settings sit under Workspace. Models, MCP servers, and advanced GitHub App recovery live in Settings.
 - Agent tables show the model connection, enabled capabilities, and clickable group memberships. Filters separate code-only, browser, and computer agents; search includes model IDs.
 - Agents, groups, skills, and repository environments have full-page editors. Their labeled sections share one content grid and a persistent save bar. Native dialogs provide focus containment, Escape behavior, and focus restoration.
-- Group editing shows the saved agent identity, instance count, and a Copy PR comment action. Access has People and Repositories views, each with All or specific agent/group selections. Keep permission controls out of agent/group editors.
+- Group editing shows the saved agent identity, instance count, and a Copy PR comment action. People manages callers; each repository exposes Review permissions with All or specific agent/group selections. Keep permission controls out of agent/group editors.
 - Review results show attribution, findings, evidence, links to the reviewed source, and screenshots. Model-call counts and sandbox identifiers live in expandable execution details.
 - Mobile navigation opens a drawer, supports Escape, and makes the underlying page inert. Tables scroll within their own region; editors use a single column. The interface is light-only, regardless of the system appearance setting. Do not add dark mode without an explicit request.
 
 Use flat surfaces, hairline separators, restrained 400/500 type weights, and violet for primary actions and selections. Status colors convey outcomes. Avoid decorative metrics, gradients, icon tiles, and badges around every label. Use actual API data and retain the distinction between no findings and an incomplete review.
+
+## Onboarding
+
+Google sign-in routes teammates to `/start` and owners into the workspace. Members link a GitHub identity once; App creation and repository selection remain owner tasks. Repositories has one next action based on verified state. Sync must preserve exclusions and grants. A private harness check establishes model/runtime readiness; a real PR review establishes the first useful result. Expired sessions lead to Google sign-in with a validated return path. Never show sample reviewer names as usable production commands.
 
 ## Validation
 
