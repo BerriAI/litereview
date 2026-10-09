@@ -27,12 +27,12 @@ The code supports this rollout, but Google sign-in must not be described as live
 
 Render's existing GitHub installation now has access to `BerriAI/litereview`. That allows deployment; review comments need a separate LiteReview GitHub App.
 
-The production service reports a configured GitHub App at https://github.com/apps/litereview-72beb5. As of October 8, 2026, it has no connected repositories or saved agents. If the existing App cannot access the intended BerriAI repositories, an organization owner must finish installation or provide an organization-owned App. A private App can only be installed on its owning account.
+The production service reports a configured GitHub App at https://github.com/apps/litereview-72beb5. As of October 8, 2026, it has no connected repositories or saved agents. The existing App belongs to the personal account `moe-berri`: its GitHub installation page only offers that account. GitHub currently returns zero available repositories. `moe-berri` is a BerriAI member and cannot open the organization’s App settings. An organization owner must create/install a BerriAI-owned App (or allow App registration). A private App can only be installed on its owning account.
 
 An organization owner can finish either way:
 
-1. Enable the appropriate App registration permission for the workspace owner, who can retry **Connections → GitHub → Create GitHub App → BerriAI**. Or the organization owner can use the same guided flow themselves with authorized access to the LiteReview workspace. It registers the App, stores credentials encrypted, and opens installation automatically.
-2. Alternatively, register a private App under [BerriAI's App settings](https://github.com/organizations/BerriAI/settings/apps) and provide its credentials through **Connections → GitHub → Use existing App**. Use the following settings:
+1. Enable the appropriate App registration permission for the workspace owner, who can retry **Connections → GitHub → Connect an organization instead → BerriAI**. Or the organization owner can use the same guided flow themselves with authorized access to the LiteReview workspace. It registers the App, stores credentials encrypted, and opens installation automatically.
+2. Alternatively, register a private App under [BerriAI's App settings](https://github.com/organizations/BerriAI/settings/apps) and provide its credentials through **Connections → GitHub → App settings and recovery → Update App credentials**. Use the following settings:
 
 | Setting | Value |
 | --- | --- |
@@ -46,6 +46,6 @@ An organization owner can finish either way:
 
 For manual registration, generate a webhook secret, client secret, and private key. Enter the App ID, PEM private key, webhook secret, client ID, client secret, and App URL into LiteReview's existing-App form. Share credentials through a private channel; never commit them.
 
-Install the App on **only `BerriAI/litereview`** for the first test. Refresh repositories in LiteReview, add the repository, create an agent, and use **Access** to grant `moe-berri` and the repository access to it. Then trigger it on the authorized [draft test PR](https://github.com/BerriAI/litereview/pull/1). Do not merge that test PR.
+Install the App on **only `BerriAI/litereview`** for the first test. Return to LiteReview, where repository access is checked automatically. Choose **Connect** beside the repository, create an agent, and use **Access** to grant `moe-berri` and the repository access to it. Then trigger it on the authorized [draft test PR](https://github.com/BerriAI/litereview/pull/1). Do not merge that test PR.
 
 The web app, gateway, and Modal connectivity are verified. The first production GitHub-triggered review and GitHub sign-in still need verification after App installation. Full evidence is in [VALIDATION.md](VALIDATION.md).

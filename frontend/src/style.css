@@ -712,6 +712,78 @@ td small {
   margin-left: auto;
   font-size: 10px;
 }
+.setup-help {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 12px 0;
+}
+.github-setup .error,
+.github-setup .notice {
+  margin-top: 16px;
+}
+.repository-picker,
+.github-settings {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding-top: 20px;
+}
+.repository-options {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.repository-options li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.repository-options li > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.repository-options button,
+.connected-label {
+  flex-shrink: 0;
+}
+.connected-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.github-settings summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.setup-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 24px;
+}
+.setup-next h3 {
+  font-size: 14px;
+}
+.setup-next p {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+  max-width: 620px;
+}
+.setup-next code {
+  overflow-wrap: anywhere;
+}
 .info {
   display: flex;
   align-items: flex-start;
@@ -1822,4 +1894,9 @@ summary:hover {
   margin: 14px 0 8px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.table-toolbar[hidden],
+.empty[hidden] {
+  display: none;
 }

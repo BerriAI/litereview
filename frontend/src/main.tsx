@@ -31,6 +31,8 @@ import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "./style.css";
 import { Documentation } from "./docs";
+import { api, send } from "./api";
+import { GitHubSetup } from "./github-setup";
 import {
   Brand,
   ProviderMark,
@@ -80,34 +82,18 @@ const descriptions = {
   skills: "Reusable instructions and files for your agents.",
   runs: "Review progress, findings, and visual evidence from each agent.",
 };
-async function api(path: string, options: RequestInit = {}) {
-  const response = await fetch("/api" + path, {
-    ...options,
-    headers: {
-      ...(options.body instanceof FormData
-        ? {}
-        : { "Content-Type": "application/json" }),
-      ...options.headers,
-    },
-  });
-  const data = await response.json();
-  if (!response.ok)
-    throw new Error(
-      typeof data.detail === "string"
-        ? data.detail
-        : `Request failed (${response.status}).`,
-    );
-  return data;
-}
-const send = (method: string, body?: unknown) => ({
-  method,
-  ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-});
 function App() {
   const [session, setSession] = useState<any>(undefined);
   const [store, setStore] = useState<Store>(empty);
   const [path, setPath] = useState(location.pathname);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() => {
+    const reason = new URLSearchParams(location.search).get("github_error");
+    return reason === "expired"
+      ? "GitHub setup expired or sign-in is needed. Your previous settings are saved. Sign in, then retry GitHub setup below."
+      : reason === "conversion"
+        ? "GitHub could not finish App creation. Your previous settings are saved. Retry setup, or connect the App from App settings if it already exists on GitHub."
+        : "";
+  });
   const [notice, setNotice] = useState("");
   const [query, setQuery] = useState("");
   const [accessSubject, setAccessSubject] = useState<"user" | "repo">("user");
@@ -116,6 +102,8 @@ function App() {
   const [agentFilter, setAgentFilter] = useState("all");
   const [mobileNav, setMobileNav] = useState(false);
   const [setup, setSetup] = useState<any>({});
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
+  const [githubRevision, setGithubRevision] = useState(0);
   const [runs, setRuns] = useState<Row[]>([]);
   const [run, setRun] = useState<any>(null);
   const [editor, setEditor] = useState<{
@@ -137,7 +125,6 @@ function App() {
     error: boolean;
     text: string;
   } | null>(null);
-  const [availableRepos, setAvailableRepos] = useState<any[]>([]);
   const [githubForm, setGithubForm] = useState(false);
   const [githubCreate, setGithubCreate] = useState(false);
   const [appOwnerType, setAppOwnerType] = useState("organization");
@@ -231,6 +218,7 @@ function App() {
     const values = await Promise.all(kinds.map((k) => api("/resources/" + k)));
     setStore(Object.fromEntries(kinds.map((k, i) => [k, values[i]])) as Store);
     setSetup(await api("/setup"));
+    setWorkspaceLoaded(true);
   };
   useEffect(() => {
     if (session?.user?.admin) load().catch((e) => setError(e.message));
@@ -569,6 +557,8 @@ function App() {
             : tab === "github"
               ? "Add repository"
               : "Add connection";
+  const hideRepoTable =
+    active === "connections" && tab === "github" && !store.repos.length;
   const PageIcon = icons[active];
   const isRunDetail = active === "runs" && Boolean(path.split("/")[2]);
   const newKind: Kind =
@@ -698,12 +688,13 @@ function App() {
               </div>
               <p>{descriptions[active]}</p>
             </div>
-            {active !== "runs" && (
-              <button className="primary" onClick={() => edit(newKind)}>
-                <Plus size={16} />
-                {createLabel}
-              </button>
-            )}
+            {active !== "runs" &&
+              !(active === "connections" && tab === "github") && (
+                <button className="primary" onClick={() => edit(newKind)}>
+                  <Plus size={16} />
+                  {createLabel}
+                </button>
+              )}
           </header>
           {error && (
             <div className="error" role="alert">
@@ -745,66 +736,14 @@ function App() {
                 ))}
               </div>
               {tab === "github" && (
-                <div className="setup-panel">
-                  <div className="setup-title">
-                    <ProviderMark type="github" />
-                    <div>
-                      <h3>
-                        {setup.github
-                          ? "GitHub App connected"
-                          : "Connect your GitHub App"}
-                      </h3>
-                      <p>
-                        Install on selected repositories, then add them below.
-                        Your organization may require owner approval.
-                      </p>
-                    </div>
-                    <Badge tone={setup.github ? "green" : ""}>
-                      {setup.github ? "Connected" : "Setup needed"}
-                    </Badge>
-                  </div>
-                  <div className="actions">
-                    <button
-                      disabled={busy}
-                      onClick={() => setGithubCreate(true)}
-                    >
-                      Create GitHub App <ArrowUpRight size={14} />
-                    </button>
-                    <button onClick={() => setGithubForm(true)}>
-                      Use existing App
-                    </button>
-                    {setup.github_app_url && (
-                      <a
-                        className="button"
-                        href={setup.github_app_url + "/installations/new"}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Manage installation <ArrowUpRight size={14} />
-                      </a>
-                    )}
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        mutate(async () => {
-                          setAvailableRepos(await api("/github/repositories"));
-                          setNotice(
-                            "Repository list refreshed. Choose Add repository to connect one.",
-                          );
-                        })
-                      }
-                    >
-                      Refresh repositories
-                    </button>
-                  </div>
-                  <div className="setup-note">
-                    <span className={"dot " + (setup.modal ? "ok" : "")} />
-                    {setup.modal
-                      ? "Modal credentials configured"
-                      : "Set Modal credentials in your deployment environment"}
-                    <code>{setup.webhook_url}</code>
-                  </div>
-                </div>
+                <GitHubSetup
+                  setup={setup}
+                  connected={store.repos as any}
+                  revision={githubRevision}
+                  onConnected={load}
+                  onCreate={() => setGithubCreate(true)}
+                  onExisting={() => setGithubForm(true)}
+                />
               )}
               {tab === "mcp" && (
                 <div className="info">
@@ -815,6 +754,75 @@ function App() {
               )}
             </>
           )}
+          {workspaceLoaded &&
+            (active === "agents" ||
+              (active === "connections" && tab === "github")) && (
+              <section
+                className="setup-next"
+                aria-label="Review setup progress"
+              >
+                <div>
+                  <h3>
+                    {!store.repos.length
+                      ? "Next: connect a repository"
+                      : !modelConnections.length
+                        ? "Next: connect a model"
+                        : !store.agents.length
+                          ? "Next: create your first PR agent"
+                          : "Check access and start a review"}
+                  </h3>
+                  <p>
+                    {store.repos.length} repositories ·{" "}
+                    {modelConnections.length} model connections ·{" "}
+                    {store.agents.length} agents saved
+                  </p>
+                  {!store.repos.length && (
+                    <p>
+                      Your model connections and access settings are kept while
+                      you finish GitHub setup.
+                    </p>
+                  )}
+                  {store.repos.length > 0 && store.agents.length > 0 && (
+                    <p>
+                      Check People and repository permissions in Access, then
+                      post <code>@litereview {store.agents[0].name} t=5</code>{" "}
+                      on an open PR. Results appear in Runs and on GitHub.
+                    </p>
+                  )}
+                </div>
+                {!store.repos.length ? (
+                  active !== "connections" && (
+                    <button
+                      className="primary"
+                      onClick={() => {
+                        navigate("/connections");
+                        setTab("github");
+                      }}
+                    >
+                      Continue GitHub setup
+                    </button>
+                  )
+                ) : !modelConnections.length ? (
+                  <button
+                    className="primary"
+                    onClick={() => {
+                      navigate("/connections");
+                      setTab("models");
+                    }}
+                  >
+                    Connect a model
+                  </button>
+                ) : !store.agents.length ? (
+                  <button className="primary" onClick={() => edit("agents")}>
+                    Create your first agent
+                  </button>
+                ) : (
+                  <button onClick={() => navigate("/access")}>
+                    Review access
+                  </button>
+                )}
+              </section>
+            )}
           {active === "runs" && path.split("/")[2] ? (
             <>
               <button className="back" onClick={() => navigate("/runs")}>
@@ -1062,7 +1070,7 @@ function App() {
                   ))}
                 </div>
               )}
-              <div className="table-toolbar">
+              <div className="table-toolbar" hidden={hideRepoTable}>
                 <div className="search">
                   <Search size={16} />
                   <input
@@ -1103,7 +1111,7 @@ function App() {
                 </span>
               </div>
               {filtered.length === 0 ? (
-                <div className="empty">
+                <div className="empty" hidden={hideRepoTable}>
                   <div className="empty-icon">
                     {React.createElement(icons[active], { size: 24 })}
                   </div>
@@ -1468,27 +1476,13 @@ function App() {
                 ) : editor.kind === "repos" ? (
                   <Field
                     label="Repository"
-                    hint="Select a repository from the GitHub App installation, or enter owner/repo."
+                    hint="Connected through the GitHub App installation."
                   >
                     <input
-                      list="repo-list"
                       value={editor.data.name}
-                      onChange={(e) => {
-                        update("name", e.target.value);
-                        const match = availableRepos.find(
-                          (r) => r.name === e.target.value,
-                        );
-                        if (match)
-                          update("installation_id", match.installation_id);
-                      }}
-                      placeholder="BerriAI/my-repo"
+                      onChange={(e) => update("name", e.target.value)}
                       required
                     />
-                    <datalist id="repo-list">
-                      {availableRepos.map((r) => (
-                        <option key={r.name} value={r.name} />
-                      ))}
-                    </datalist>
                   </Field>
                 ) : (
                   <Field
@@ -2247,19 +2241,6 @@ function App() {
                   title="Review environment"
                   description="Prepare and launch the app inside each sandbox for terminal, browser, or computer reviews."
                 >
-                  <Field
-                    label="Installation ID"
-                    hint="Filled automatically when you select a discovered repository."
-                  >
-                    <input
-                      type="number"
-                      min="0"
-                      value={editor.data.installation_id}
-                      onChange={(e) =>
-                        update("installation_id", Number(e.target.value))
-                      }
-                    />
-                  </Field>
                   <div className="info">
                     Optional app setup runs inside each agent’s sandbox when it
                     has Terminal, Browser, or Computer use enabled.
@@ -2385,19 +2366,35 @@ function App() {
       )}
       {githubCreate && (
         <Modal
-          title="Create a private GitHub App"
+          title="Connect your GitHub account or organization"
           close={() => setGithubCreate(false)}
         >
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              mutate(async () => {
-                const r = await api(
-                  "/github/manifest",
-                  send("POST", { owner_type: appOwnerType, owner: appOwner }),
+              const target = "litereview-github-" + crypto.randomUUID();
+              const githubWindow = window.open("", target);
+              if (!githubWindow) {
+                setError(
+                  "Allow this site to open a GitHub tab, then try again. Your setup is saved.",
                 );
+                return;
+              }
+              githubWindow.opener = null;
+              mutate(async () => {
+                let r;
+                try {
+                  r = await api(
+                    "/github/manifest",
+                    send("POST", { owner_type: appOwnerType, owner: appOwner }),
+                  );
+                } catch (error) {
+                  githubWindow.close();
+                  throw error;
+                }
                 const form = document.createElement("form");
                 form.method = "POST";
+                form.target = target;
                 form.action = r.url;
                 const input = document.createElement("input");
                 input.type = "hidden";
@@ -2406,6 +2403,11 @@ function App() {
                 form.append(input);
                 document.body.append(form);
                 form.submit();
+                form.remove();
+                setGithubCreate(false);
+                setNotice(
+                  "Continue in the GitHub tab. Your setup is saved here; check again when you return.",
+                );
               });
             }}
           >
@@ -2427,7 +2429,7 @@ function App() {
               {appOwnerType === "organization" && (
                 <Field
                   label="Organization name"
-                  hint="An organization owner may need to create or install the App. You can also ask them to create it and use “Use existing App”."
+                  hint="An organization owner must allow App creation here. If GitHub denies access, ask an owner to open this workspace and finish this step. Your other settings stay saved."
                 >
                   <input
                     value={appOwner}
@@ -2462,7 +2464,8 @@ function App() {
                 await api("/github/config", send("POST", githubData));
                 await load();
                 setGithubForm(false);
-                setNotice("GitHub App configuration saved.");
+                setGithubRevision((v) => v + 1);
+                setNotice("App credentials saved. Checking repository access…");
               });
             }}
           >

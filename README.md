@@ -25,10 +25,19 @@ The private workspace is deployed at [litereview.onrender.com](https://literevie
 1. Create a **Blueprint** in Render from this repository. `render.yaml` provisions one Docker web service and Postgres. If Render cannot see the BerriAI repo, an organization owner may need to approve Render’s GitHub access.
 2. Set `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`. The app automatically uses Render’s assigned HTTPS URL; set `PUBLIC_URL` explicitly if using a custom domain. Keep the generated `SECRET_KEY` stable across deploys. Configure Google sign-in as described below, with at least one administrator email.
 3. Open the app, choose **Sign in with Google**, then **Open workspace**.
-4. Under **Connections → GitHub**, choose **Create GitHub App**. Choose the account or organization that owns the target repositories. GitHub registers a private App there, returns its credentials to LiteReview, and opens installation. A private App can only be installed on its owning account. For BerriAI repositories, an organization owner may need to create/install the App; they can also create it manually and provide the App credentials. You can instead use an existing App or environment variables; see below.
-5. Refresh repositories and add your selected repositories. For browser/desktop reviews, configure the setup command, start command, and local readiness URL.
+4. Under **Connections → GitHub**, reuse the App if it already belongs to the right account. Otherwise choose **Connect GitHub organization** (or **Connect an organization instead** for an existing personal App). Choose the account or organization that owns the target repositories. GitHub registers a private App there, returns its credentials to LiteReview, and opens installation. A private App can only be installed on its owning account. For BerriAI repositories, an organization owner may need to create/install the App; they can also create it manually and provide the App credentials. You can instead use an existing App or environment variables; see below.
+5. Return to **Connections → GitHub**. Access is checked automatically; choose **Connect** beside a discovered repository. No installation ID is needed. Use **Check again** if installation is still awaiting approval. For browser/desktop reviews, configure the setup command, start command, and local readiness URL.
 6. Under **Connections → Models**, add your gateway or a direct OpenAI/Anthropic key. Gateway base URLs normally end in `/v1`. Test the connection to discover models. No LiteLLM Gateway is required. For an environment-only first setup, optionally provide `GATEWAY_URL` and `GATEWAY_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) before the first start. These seed an encrypted connection; manage subsequent model connection changes in the UI.
 7. Create a PR agent, select a harness and model, and use **Test agent** to check them in a disposable Modal sandbox. The editor defaults new agents to Codex. In **Access**, add the GitHub accounts allowed to call it and choose which agents/groups each person and repository can use. Each caller signs in with Google and chooses **Link GitHub account** on **Your LiteReview account**, then comments `@litereview your-agent t=5` on an open PR. Optionally bundle agents into groups, as reusable shortcuts. Mix agent and group names in the same command.
+
+
+## Resume GitHub setup
+
+**Connections → GitHub** verifies the saved App, shows its owning account, and lists the repositories it can currently access. “Setup needed” means the App has no connected repositories; saving App credentials alone is not a working integration. Returning from GitHub refreshes the check automatically, and **Check again** retries without discarding saved work.
+
+A private App owned by a personal account cannot be installed in BerriAI. Choose **Connect an organization instead** and have an organization owner complete App creation/installation if your account lacks permission. GitHub opens in a separate tab, so an unsuccessful attempt leaves your workspace available. Failed or expired callbacks return to setup with recovery instructions.
+
+Choose **Connect** beside an available repository. LiteReview verifies access and fills in its installation ID. If you replace the App, **Reconnect** updates the installation while retaining repository commands, secrets, and access restrictions. Connecting a new repository grants its existing default All access; narrow it in **Access** when needed. Connection retries never restore revoked grants.
 
 ## Google Workspace SSO
 
@@ -96,7 +105,7 @@ For the full LiteReview app check, run `uv run python -m scripts.modal_app_smoke
 
 ## Existing GitHub App
 
-Configure **Connections → GitHub → Use existing App**, or set:
+Configure **Connections → GitHub → Use existing App** (or **App settings and recovery → Update App credentials** if an App is saved), or set:
 
 - `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY` (PEM, escaped newlines supported), and `GITHUB_WEBHOOK_SECRET`.
 - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` for GitHub sign-in.
