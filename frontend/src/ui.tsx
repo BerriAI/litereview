@@ -344,6 +344,12 @@ export function Modal({
       className={page ? "page-editor" : "compact-editor"}
       ref={ref}
       inert={page && navigationOpen}
+      onKeyDown={(e) => {
+        if (navigable && e.key === "Escape" && !e.defaultPrevented) {
+          e.preventDefault();
+          close();
+        }
+      }}
       onCancel={(e) => {
         e.preventDefault();
         close();

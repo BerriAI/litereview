@@ -35,8 +35,7 @@ export function Documentation() {
                 Open <a href="/start">Start a review</a>, sign in with your
                 workspace Google account, and choose Connect GitHub. Link the
                 account you use to comment on pull requests. Your workspace
-                owner handles repository setup and approves who can request
-                reviews.
+                owner handles repository setup and optional access restrictions.
               </p>
             </li>
             <li>
@@ -44,8 +43,9 @@ export function Documentation() {
               <p>
                 Start a review shows repositories and checked reviewers
                 available to your account. Choose a repository and reviewer,
-                then use Copy comment. If setup or approval is missing, the page
-                explains what your workspace owner needs to finish.
+                then use Copy comment. If repository or reviewer setup is
+                missing, the page explains what your workspace owner needs to
+                finish.
               </p>
             </li>
             <li>

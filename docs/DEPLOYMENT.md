@@ -16,7 +16,7 @@ Google sign-in was enabled and verified on October 9, 2026. The shared Internal 
 
 Keep `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_DOMAINS=berri.ai`, `GOOGLE_ADMIN_EMAILS=moe@berri.ai`, and `GOOGLE_SSO_REQUIRED=true`. The Google consent screen uses the shared client’s “Moyai Devin” name. A dedicated LiteReview client can improve that branding later; do not rename the shared client in place.
 
-Teammates sign in with Google and connect their GitHub identity once. People and repository grants remain required. A 12-hour session expiry requires Google sign-in again and preserves the GitHub link. The start page checks access and shows only permitted, verified reviewer commands.
+Teammates sign in with Google and connect their GitHub identity once. People lists Google sign-ins automatically. Linked users can use all reviewers unless a person restriction or repository permission disallows it; a second People allowlist is unnecessary. A 12-hour session expiry requires Google sign-in again and preserves the GitHub link. The start page checks access and shows only permitted, verified reviewer commands.
 
 ## GitHub setup
 
@@ -43,6 +43,6 @@ For manual registration, generate a webhook secret, client secret, and private k
 
 To let `moe-berri` install the App and add repositories without repeated owner approval, an organization owner can enable **Settings → Member privileges → GitHub Apps → Allow repository admins to install GitHub Apps for their repositories**. This policy applies to all repository admins. `moe-berri` already has Admin access on `BerriAI/litereview`; grant Admin only on other repositories they should manage. The App requests no organization or repository-administration permissions. See [GitHub’s installation policy](https://docs.github.com/en/organizations/managing-programmatic-access-to-your-organization/limiting-oauth-app-and-github-app-access-requests-and-installations).
 
-Install the App on **only `BerriAI/litereview`** for the first test. Return to **Repositories**, where the selection syncs automatically. Use **Add repositories** for later selections on the same installation. Configure and check a reviewer, then verify `moe-berri` in **People** and the repository’s **Review permissions**. New imports use the existing approved-caller policy; restricted and removed grants are preserved. Then trigger it on the authorized [draft test PR](https://github.com/BerriAI/litereview/pull/1). Do not merge that test PR.
+Install the App on **only `BerriAI/litereview`** for the first test. Return to **Repositories**, where the selection syncs automatically. Use **Add repositories** for later selections on the same installation. Configure and check a reviewer, then verify `moe-berri` in **People** and the repository’s **Review permissions**. New imports require approved Google sign-in and linked GitHub; explicit person restrictions and repository permissions are preserved. Then trigger it on the authorized [draft test PR](https://github.com/BerriAI/litereview/pull/1). Do not merge that test PR.
 
 The web app, gateway, and Modal connectivity are verified. Production shows the linked GitHub identity, but the first production review through a BerriAI-owned App still needs verification after installation. Full evidence is in [VALIDATION.md](VALIDATION.md).
