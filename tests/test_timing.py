@@ -48,6 +48,8 @@ def test_saved_times_apply_independently_to_direct_agents_and_group_instances(ow
         assert sorted(j.config["minimum_review_seconds"] for j in jobs) == [300, 600, 600, 600]
         assert all(j.config["skills"] and "mcp_definitions" in j.config for j in jobs)
         assert all(j.config["timeout_seconds"] is None and j.config["max_rounds"] is None for j in jobs)
+        for job in jobs:
+            job.status = "completed"
         assert "Requested minimum: 10 minutes." in reviews.render_comment(
             db.get(Run, response.json()["run_id"]), jobs
         )
