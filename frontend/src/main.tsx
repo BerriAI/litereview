@@ -35,6 +35,7 @@ import "./style.css";
 import "./onboarding.css";
 import { Documentation } from "./docs";
 import { MCPAuthFields, MCPServers, People } from "./resources";
+import { MCPToolSelector } from "./mcp-tool-selector";
 import { ReviewResult } from "./review-result";
 import { api, send } from "./api";
 import { GitHubSetup, GitHubSettings } from "./github-setup";
@@ -2172,57 +2173,33 @@ function App() {
                   </FormSection>
                   <FormSection
                     title="MCP tools"
-                    description="Select tools from your shared connections. Only selected tools are available to this agent."
+                    description="Select a server to enable all its current tools. Expand it to choose individual tools."
                   >
                     {!mcpConnections.length ? (
                       <p>Connect an MCP server to select its tools here.</p>
                     ) : (
                       mcpConnections.map((c) => (
-                        <div className="mcp-selector" key={c.id}>
-                          <strong>{c.name}</strong>
-                          {!c.tools?.length && (
-                            <small>
-                              Test this connection to discover available tools.
-                            </small>
-                          )}
-                          {c.tools?.map((t: any) => {
-                            const selected = editor.data.mcps.find(
+                        <MCPToolSelector
+                          key={c.id}
+                          name={c.name}
+                          tools={c.tools}
+                          selected={
+                            editor.data.mcps.find(
                               (m: any) => m.connection_id === c.id,
+                            )?.tools || []
+                          }
+                          onChange={(tools) => {
+                            const updated = editor.data.mcps.filter(
+                              (m: any) => m.connection_id !== c.id,
                             );
-                            return (
-                              <Toggle
-                                key={t.name}
-                                checked={
-                                  selected?.tools.includes(t.name) || false
-                                }
-                                onChange={(on) => {
-                                  const updated = editor.data.mcps.filter(
-                                    (m: any) => m.connection_id !== c.id,
-                                  );
-                                  const tools = on
-                                    ? [...(selected?.tools || []), t.name]
-                                    : selected.tools.filter(
-                                        (n: string) => n !== t.name,
-                                      );
-                                  update(
-                                    "mcps",
-                                    tools.length
-                                      ? [
-                                          ...updated,
-                                          { connection_id: c.id, tools },
-                                        ]
-                                      : updated,
-                                  );
-                                }}
-                              >
-                                <span>
-                                  {t.name}
-                                  <small>{t.description?.slice(0, 130)}</small>
-                                </span>
-                              </Toggle>
+                            update(
+                              "mcps",
+                              tools.length
+                                ? [...updated, { connection_id: c.id, tools }]
+                                : updated,
                             );
-                          })}
-                        </div>
+                          }}
+                        />
                       ))
                     )}
                     <button
