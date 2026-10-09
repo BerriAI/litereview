@@ -36,7 +36,7 @@ import { api, send } from "./api";
 import { GitHubSetup, GitHubSettings } from "./github-setup";
 import { MemberStart } from "./member-start";
 import { StarterReviewer } from "./starter-reviewer";
-import { MinimumReviewTime } from "./review-time";
+import { MinimumReviewTime, OptionalReviewLimits } from "./review-time";
 import {
   Brand,
   ProviderMark,
@@ -381,6 +381,8 @@ function App() {
         name: "",
         harness: "codex",
         minimum_minutes: 0,
+        maximum_minutes: null,
+        max_model_calls: null,
         instructions:
           "Review this PR for actionable defects. Explain a concrete failure scenario and cite the affected code. Report no findings when appropriate.",
         connection_id:
@@ -1864,6 +1866,12 @@ function App() {
                       value={editor.data.minimum_minutes || 0}
                       max={setup.max_review_minutes || 120}
                       onChange={(value) => update("minimum_minutes", value)}
+                    />
+                    <OptionalReviewLimits
+                      maximumMinutes={editor.data.maximum_minutes}
+                      maxModelCalls={editor.data.max_model_calls}
+                      minimumMinutes={editor.data.minimum_minutes || 0}
+                      onChange={update}
                     />
                   </FormSection>
                   <FormSection

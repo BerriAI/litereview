@@ -154,6 +154,11 @@ def test_native_relay_is_scoped_streaming_and_counts_calls(client, monkeypatch):
         assert db.get(Job, "test-job").model_calls == 2
         db.get(Job, "test-job").model_calls = 60
         db.commit()
+    assert client.post(path + "responses", headers=headers, json={}).status_code == 200
+    with Session() as db:
+        job = db.get(Job, "test-job")
+        job.config = {**job.config, "max_rounds": 61}
+        db.commit()
     assert client.post(path + "responses", headers=headers, json={}).status_code == 429
 
 

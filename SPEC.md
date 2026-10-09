@@ -148,14 +148,14 @@ The [agent control plane](https://github.com/LiteLLM-Labs/litellm-agent-control-
 3. Post the running comment and dispatch from the durable job queue. A stored pending run must be recoverable if dispatch is interrupted.
 4. For every job, create a fresh sandbox, stage the repository and diff, mount attached skills, and initialize enabled tools. Run configured setup only when the job needs the runnable application environment.
 5. Run the selected harness: request a model response, execute permitted tool calls, return tool results, and continue until it returns a structured review or reaches its limits.
-6. Persist results and artifacts. Terminate the sandbox in cleanup, with a hard sandbox timeout as a backstop.
+6. Persist results and artifacts. Terminate the sandbox in cleanup, with Modal’s required sandbox lifetime as a backstop.
 7. When all jobs reach a terminal state, update the existing GitHub comment. One failed agent does not discard other agents’ results.
 
 Jobs run concurrently subject to Modal capacity and a deployment concurrency limit. Show queued work honestly. Use atomic job claims and idempotent publication so retries do not duplicate reviews. Do not automatically rerun completed agents.
 
-Keep long-lived model and remote MCP credentials in the API service. Workers receive expiring, job-scoped access to small internal model/MCP relay endpoints, restricted to their configured model/tools and active-run limits. These are internal application endpoints, not a separately deployed gateway. Do not leave GitHub credentials in the staged checkout or worker environment.
+Keep long-lived model and remote MCP credentials in the API service. Workers receive active-job-scoped access to small internal model/MCP relay endpoints, restricted to their configured model/tools and active-run limits. These are internal application endpoints, not a separately deployed gateway. Do not leave GitHub credentials in the staged checkout or worker environment.
 
-Start with deployment-level limits: 10 minutes per job and 60 model/tool rounds, with bounded tool output and artifact sizes. A cap produces an incomplete result. Keep these out of the initial agent editor. Screenshot storage is capped at 20 PNGs of up to 2 MB per job.
+Do not impose default time or model-call budgets. Owners may select a maximum run time and/or maximum model calls per agent, independently of its minimum review time. Blank fields mean no LiteReview limit; reaching a selected cap produces an incomplete result. Modal still requires a sandbox lifetime of at most 24 hours. Keep tool output and artifact sizes bounded. Screenshot storage is capped at 20 PNGs of up to 2 MB per job.
 
 ## 9. Results and basic failure behavior
 

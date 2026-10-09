@@ -38,10 +38,6 @@ services:
         value: litereview
       - key: CONCURRENCY
         value: "0"
-      - key: JOB_TIMEOUT
-        value: "600"
-      - key: MAX_ROUNDS
-        value: "60"
       - key: MAX_REVIEW_MINUTES
         value: "120"
 databases:
