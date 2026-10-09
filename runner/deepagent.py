@@ -85,9 +85,25 @@ async def main():
             backend=LocalShellBackend(root_dir="/workspace/repo"),
             middleware=[ReviewTools()],
         )
-        await agent.ainvoke(
+        result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": data["prompt"]}]}, {"recursion_limit": 120}
         )
+        while (
+            cfg.get("minimum_review_seconds") and not (await client.get(url + "/status")).json()["finished"]
+        ):
+            result = await agent.ainvoke(
+                {
+                    "messages": [
+                        *result["messages"],
+                        {
+                            "role": "user",
+                            "content": "Continue reviewing. Check lr_review_clock, investigate and verify "
+                            "until the minimum time elapses, then call lr_finish_review. Do not sleep or busy-wait.",
+                        },
+                    ]
+                },
+                {"recursion_limit": 120},
+            )
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ from runner.catalog import HARNESS_VERSIONS, NPM_PACKAGES, validate_connection
 
 from . import providers
 from .db import Job, Session
+from .limits import job_timeout
 from .settings import settings
 
 
@@ -54,7 +55,7 @@ def _app(name, token_id, token_secret):
     return modal.App.lookup(name, create_if_missing=True, client=c)
 
 
-def create_sandbox(job_id, token, harness="builtin"):
+def create_sandbox(job_id, token, harness="builtin", timeout=None):
     s = settings()
     c = client()
     with _app_lock:
@@ -67,7 +68,7 @@ def create_sandbox(job_id, token, harness="builtin"):
         image=sandbox_image(harness),
         client=c,
         name="lr-" + job_id,
-        timeout=s.job_timeout + 60,
+        timeout=(timeout if timeout is not None else s.job_timeout) + 60,
         cpu=2,
         memory=4096,
         workdir="/opt/litereview",
@@ -109,7 +110,7 @@ async def launch(job_id, token):
             raise RuntimeError(
                 "Modal requires a publicly reachable HTTPS PUBLIC_URL. Deploy to Render or use a development tunnel."
             )
-        sandbox = await asyncio.to_thread(create_sandbox, job_id, token, harness)
+        sandbox = await asyncio.to_thread(create_sandbox, job_id, token, harness, job_timeout(cfg))
         with Session() as db:
             job = db.get(Job, job_id)
             job.sandbox_id = sandbox.object_id

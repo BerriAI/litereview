@@ -10,11 +10,24 @@ The private workspace is live at **https://litereview.onrender.com**.
 
 Both paid services stay running when idle; there is no free-tier wake-up delay. This does not imply zero downtime during maintenance or deployments. Sandboxes are created on demand in Modal, with 2 CPU cores and 4 GiB requested per agent. `CONCURRENCY=0` removes the app-level queue cap; a positive value sets an optional workspace-wide limit. Modal quotas and provider rate limits still apply.
 
-## Remaining GitHub setup
+## Google SSO rollout
+
+Checked October 8, 2026: LiteReview has no Google OAuth environment variables. Render's `moyai-private` service already has an Internal Google OAuth client restricted to `berri.ai`. That client currently returns `redirect_uri_mismatch` for LiteReview. The signed-in `moe@berri.ai` account cannot access its Google Cloud project (`protean-chassis-510202-k5`).
+
+A Google Cloud administrator can reuse that client:
+
+1. Open **Google Auth Platform → Clients** in the existing project and add `https://litereview.onrender.com/api/auth/google/callback` to the client's **Authorized redirect URIs**. Retain Moyai's existing callback. A dedicated Internal web client is also supported.
+2. Copy the matching `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` privately into [LiteReview's Render environment](https://dashboard.render.com/web/srv-datfmkk9v7es738hgv90/env). Set `GOOGLE_ALLOWED_DOMAINS=berri.ai`, `GOOGLE_ADMIN_EMAILS=moe@berri.ai`, and `GOOGLE_SSO_REQUIRED=true`. Keep `SECRET_KEY` and the existing database/model/Modal settings.
+3. Deploy and verify **Sign in with Google** using a real workspace account. Check that an outside account and the old owner key cannot access the APIs. Existing owner/GitHub sessions are invalid once Google SSO is configured. Missing Google settings fail closed when SSO is required.
+4. Each caller opens **Your LiteReview account → Link GitHub account**. Existing People and Repository grants remain required; Google sign-in alone does not grant permission to call agents. Sign in again when the 12-hour authorization expires.
+
+The code supports this rollout, but Google sign-in must not be described as live until the callback is registered and a real account has completed it. Do not enable SSO on the running service while the callback still fails.
+
+## GitHub setup
 
 Render's existing GitHub installation now has access to `BerriAI/litereview`. That allows deployment; review comments need a separate LiteReview GitHub App.
 
-The guided registration flow was tested against GitHub and its manifest was accepted, but GitHub denied `moe-berri` permission to create an App for BerriAI. A private App for BerriAI repositories must be owned by BerriAI. Do not accept GitHub's offer to create a personal private App for these repositories.
+The production service reports a configured GitHub App at https://github.com/apps/litereview-72beb5. As of October 8, 2026, it has no connected repositories or saved agents. If the existing App cannot access the intended BerriAI repositories, an organization owner must finish installation or provide an organization-owned App. A private App can only be installed on its owning account.
 
 An organization owner can finish either way:
 

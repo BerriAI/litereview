@@ -55,6 +55,8 @@ class Bridge:
             jsonschema.validate(arguments, schema["parameters"])
             await self.relay.event("Using " + name)
             if name == "lr_finish_review":
+                if self.cfg.get("minimum_review_seconds"):
+                    self.tools.clock.require_elapsed()
                 if {"browser", "computer"} & set(self.cfg["capabilities"]) and self.tools.visual_calls == 0:
                     raise ValueError("Inspect a screenshot before completing this visual review.")
                 self.result = {**arguments, "status": "completed"}
@@ -71,6 +73,9 @@ class Bridge:
                 for name, item in self.definitions.items()
             ]
         )
+
+    async def status_http(self, request):
+        return JSONResponse({"finished": self.finished.is_set(), **self.tools.clock.status()})
 
     async def call_http(self, request):
         body = await request.json()
@@ -145,6 +150,7 @@ class Bridge:
         app = Starlette(
             routes=[
                 Route("/tools", self.list_http),
+                Route("/status", self.status_http),
                 Route("/call", self.call_http, methods=["POST"]),
                 Route("/v1/{path:path}", self.model_http, methods=["POST", "GET"]),
                 Route("/mcp", MCPApp(), methods=["POST", "GET", "DELETE"]),

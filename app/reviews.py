@@ -12,6 +12,7 @@ from runner.catalog import HARNESS_VERSIONS
 from . import github
 from .access import permits
 from .db import Job, Resource, Run, Session, uid
+from .limits import job_timeout, timing_limits
 from .security import digest
 from .settings import settings
 
@@ -19,10 +20,39 @@ TERMINAL = {"completed", "failed", "timed_out"}
 
 
 def command(body):
-    match = re.fullmatch(r"\s*@litereview\s+([A-Za-z0-9_\-\s]+)\s*", body or "", re.IGNORECASE)
+    try:
+        return [item["name"] for item in command_requests(body)]
+    except ValueError:
+        return []
+
+
+def command_requests(body):
+    match = re.fullmatch(r"\s*(?:@litereview|light\s+review)\s+(.+?)\s*", body or "", re.I | re.S)
     if not match:
         return []
-    return list(dict.fromkeys(match[1].lower().split()))[:20]
+    selected = []
+    for token in match[1].lower().split():
+        if token.startswith("t="):
+            duration = re.fullmatch(r"t=([0-9]{1,4})m?", token)
+            if not selected or selected[-1]["minutes"] is not None or not duration:
+                raise ValueError("Place t=MINUTES immediately after each agent or group name.")
+            minutes = int(duration[1])
+            if not 1 <= minutes <= settings().max_review_minutes:
+                raise ValueError(f"Review time must be 1–{settings().max_review_minutes} whole minutes.")
+            selected[-1]["minutes"] = minutes
+        elif re.fullmatch(r"[a-z0-9_-]+", token):
+            selected.append({"name": token, "minutes": None})
+        else:
+            raise ValueError("Use @litereview AGENT t=MINUTES; names may contain letters, digits, _ and -.")
+    unique = {}
+    for item in selected:
+        previous = unique.get(item["name"])
+        if previous and previous != item:
+            raise ValueError("Repeated agent or group names must use the same duration.")
+        unique[item["name"]] = item
+    if len(unique) > 20:
+        raise ValueError("A review can select at most 20 agents or groups.")
+    return list(unique.values())
 
 
 def expand(groups, resources):
@@ -35,6 +65,8 @@ def expand(groups, resources):
             data = agent.data.copy()
             data.setdefault("harness", "builtin")
             data["harness_version"] = HARNESS_VERSIONS[data["harness"]]
+            if group.get("minimum_minutes"):
+                data.update(timing_limits(group["minimum_minutes"]))
             conn = resources.get(data["connection_id"])
             if not conn or conn.kind != "connections" or conn.data["type"] == "mcp":
                 raise HTTPException(409, "An agent needs a model connection.")
@@ -102,8 +134,12 @@ async def accept(payload, delivery):
     comment_data = payload.get("comment", {})
     if comment_data.get("user", {}).get("type") == "Bot":
         return None
-    names = command(comment_data.get("body", ""))
-    if not names:
+    parse_error = None
+    try:
+        requests = command_requests(comment_data.get("body", ""))
+    except ValueError as exc:
+        requests, parse_error = [], str(exc)
+    if not requests and not parse_error:
         return None
     repo = payload["repository"]["full_name"]
     actor = comment_data["user"]["login"]
@@ -120,11 +156,27 @@ async def accept(payload, delivery):
     perm = await github.permission(repo, installation, actor)
     if perm not in ("read", "triage", "write", "maintain", "admin"):
         return None
+    if settings().sso_required:
+        from .sso import eligible_caller
+
+        if not eligible_caller(comment_data.get("user", {})):
+            return reject_command(
+                delivery,
+                repo,
+                pr,
+                actor,
+                installation,
+                "Sign in to LiteReview with your workspace Google account and link your GitHub account "
+                "before requesting a review. Google authorization must be renewed when it expires.",
+            )
+    if parse_error:
+        return reject_command(delivery, repo, pr, actor, installation, parse_error)
     grants = {(r.data["subject"], r.data["name"]): r for r in resources.values() if r.kind == "access"}
     caller_access = grants.get(("user", actor.lower()))
     repo_access = grants.get(("repo", repo.lower()))
     selected = []
-    for name in names:
+    for selection in requests:
+        name = selection["name"]
         target = next(
             (
                 r
@@ -146,6 +198,8 @@ async def accept(payload, delivery):
                 "This review command is unavailable for this repository or caller. Check the agent or group names and the People and Repositories settings in Access.",
             )
         group["target_kind"] = "agent" if target.kind == "agents" else "group"
+        if selection["minutes"] is not None:
+            group["minimum_minutes"] = selection["minutes"]
         if target.kind == "agents":
             group["members"] = [{"agent_id": target.id, "count": 1}]
         selected.append(group)
@@ -229,6 +283,10 @@ def render_comment(run, jobs, newer=False):
         c = job.config
         label = md(c["name"]) if c.get("target_kind") == "agent" else f"{md(c['group'])} / {md(c['name'])}"
         lines += [f"### {label} · {c['instance']}", ""]
+        if c.get("minimum_review_seconds"):
+            lines += [f"Requested minimum: {c['minimum_review_seconds'] // 60} minutes.", ""]
+            if job.result.get("review_seconds") is not None:
+                lines += [f"Recorded review time: {job.result['review_seconds']:g} seconds.", ""]
         if job.status not in TERMINAL:
             lines += [f"{job.status.capitalize()}…", ""]
             continue
@@ -352,7 +410,7 @@ async def dispatcher():
             with Session() as db:
                 active = db.scalars(select(Job).where(Job.status.in_(["starting", "running"]))).all()
                 for job in active:
-                    if job.started_at and now - job.started_at > settings().job_timeout + 300:
+                    if job.started_at and now - job.started_at > job_timeout(job.config) + 300:
                         job.status = "timed_out"
                         job.finished_at = now
                         job.result = {

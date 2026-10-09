@@ -148,7 +148,7 @@ function App() {
   const modelConnection =
     editor?.kind === "agents" ? editor.data.connection_id : "";
   useEffect(() => {
-    if (session?.user)
+    if (session?.user?.admin)
       api("/harnesses")
         .then(setHarnesses)
         .catch(() => {});
@@ -233,10 +233,10 @@ function App() {
     setSetup(await api("/setup"));
   };
   useEffect(() => {
-    if (session?.user) load().catch((e) => setError(e.message));
+    if (session?.user?.admin) load().catch((e) => setError(e.message));
   }, [session]);
   useEffect(() => {
-    if (!session?.user || active !== "runs") return;
+    if (!session?.user?.admin || active !== "runs") return;
     let alive = true;
     const refresh = async () => {
       try {
@@ -287,7 +287,7 @@ function App() {
       },
       agents: {
         name: "",
-        harness: "builtin",
+        harness: "codex",
         instructions:
           "Review this PR for actionable defects. Explain a concrete failure scenario and cite the affected code. Report no findings when appropriate.",
         connection_id:
@@ -410,46 +410,122 @@ function App() {
         <div className="login-card">
           <h1>Sign in to LiteReview</h1>
           <p>Configure your reviewers. Run them from GitHub.</p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const f = new FormData(e.currentTarget);
-              mutate(async () => {
-                await api("/login", send("POST", { token: f.get("token") }));
-                setSession(await api("/session"));
-              });
-            }}
-          >
-            <Field
-              label="Workspace access key"
-              hint="Use the ADMIN_TOKEN from your deployment settings."
+          {!session.sso_required && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const f = new FormData(e.currentTarget);
+                mutate(async () => {
+                  await api("/login", send("POST", { token: f.get("token") }));
+                  setSession(await api("/session"));
+                });
+              }}
             >
-              <input
-                name="token"
-                type="password"
-                required
-                autoComplete="current-password"
-              />
-            </Field>
-            {error && (
-              <div role="alert" className="error">
-                {error}
-              </div>
-            )}
-            <button className="primary full" disabled={busy}>
-              {busy ? "Signing in…" : "Sign in"}
-            </button>
-          </form>
-          {session.github_login && (
+              <Field
+                label="Workspace access key"
+                hint="Use the ADMIN_TOKEN from your deployment settings."
+              >
+                <input
+                  name="token"
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                />
+              </Field>
+              {error && (
+                <div role="alert" className="error">
+                  {error}
+                </div>
+              )}
+              <button className="primary full" disabled={busy}>
+                {busy ? "Signing in…" : "Sign in"}
+              </button>
+            </form>
+          )}
+          {session.sso_required &&
+            (session.google_login ? (
+              <a className="button primary full" href="/api/auth/google">
+                Sign in with Google
+              </a>
+            ) : (
+              <p role="alert">
+                Google sign-in is being configured. Contact your workspace
+                administrator.
+              </p>
+            ))}
+          {!session.sso_required && session.github_login && (
             <a className="button full" href="/api/auth/github">
               <ProviderMark type="github" />
               Sign in with GitHub
             </a>
           )}
           <small className="login-note">
-            <LockKeyhole size={13} /> Access is restricted to workspace
-            administrators.
+            <LockKeyhole size={13} />
+            {session.sso_required
+              ? "Access is restricted to your Google Workspace."
+              : "Access is restricted to workspace administrators."}
           </small>
+        </div>
+      </div>
+    );
+  if (session.sso_required && (path === "/account" || !session.user.admin))
+    return (
+      <div className="login">
+        <div className="login-brand">
+          <Brand />
+        </div>
+        <div className="login-card">
+          <h1>Your LiteReview account</h1>
+          <p>Signed in as {session.user.email}.</p>
+          <p>
+            {session.user.github_login
+              ? `GitHub account: @${session.user.github_login}`
+              : "Link your GitHub account to request reviews from PR comments."}
+          </p>
+          {session.github_login ? (
+            <a className="button full" href="/api/auth/github">
+              {session.user.github_login
+                ? "Change linked GitHub account"
+                : "Link GitHub account"}
+            </a>
+          ) : (
+            <p>An administrator needs to finish connecting the GitHub App.</p>
+          )}
+          <p>
+            Your Google authorization expires{" "}
+            {new Date(session.user.expires_at * 1000).toLocaleString()}. Sign in
+            again to renew it. Existing People and Repository access grants
+            still apply.
+          </p>
+          <p>
+            Example: <code>@litereview security t=10 frontend t=5</code>. Each
+            duration is a minimum number of minutes for the preceding agent or
+            group.
+          </p>
+          {error && (
+            <p role="alert" className="error">
+              {error}
+            </p>
+          )}
+          {session.user.admin && (
+            <button
+              className="primary full"
+              onClick={() => navigate("/agents")}
+            >
+              Open workspace
+            </button>
+          )}
+          <button
+            className="button full"
+            onClick={() =>
+              mutate(async () => {
+                await api("/logout", send("POST"));
+                setSession(await api("/session"));
+              })
+            }
+          >
+            Sign out
+          </button>
         </div>
       </div>
     );
@@ -567,6 +643,15 @@ function App() {
             </strong>
             <small>Administrator</small>
           </div>
+          {session.sso_required && (
+            <button
+              className="icon-button"
+              title="Google and GitHub account"
+              onClick={() => navigate("/account")}
+            >
+              <Users size={16} />
+            </button>
+          )}
           <button
             className="icon"
             title="Sign out"

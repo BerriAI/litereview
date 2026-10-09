@@ -8,17 +8,39 @@ A private workspace for reusable PR reviewers. Configure each agent’s harness,
 
 Every instance runs in a separate Modal sandbox. Results appear in one GitHub comment, with findings, **No findings**, or an explicit incomplete result for each agent. LiteReview never pushes fixes.
 
+Add a minimum review duration after each agent or group name:
+
+```text
+@litereview frontend t=5 security t=10
+```
+
+`t=5` means at least five minutes of review after repository/tool setup. For a group, every instance gets its own five-minute minimum. `t=5m` and `light review frontend t=5` are also accepted. Names without `t=` keep the usual behavior. Durations must be whole minutes from 1 to `MAX_REVIEW_MINUTES` (120 by default); conflicting durations for a repeated name reject the command.
+
+The harness checks a monotonic clock, asks the agent to keep investigating and verifying, and rejects early completion. The API independently checks elapsed time. Codex continues the same thread if it returns without submitting; the other harnesses retain their sessions too. This does not invoke the interactive `/goal` slash command. Time and model-call limits still apply: provider failures, cancellation, and exhausted limits produce an incomplete review, never a successful early completion. Timed jobs add the requested minimum to `JOB_TIMEOUT` and add one `MAX_ROUNDS` budget per started ten minutes. Existing MCP selections, skills, capabilities, models, and instructions are preserved.
+
 The private workspace is deployed at [litereview.onrender.com](https://litereview.onrender.com). See [deployment status and GitHub setup](docs/DEPLOYMENT.md) for the remaining organization setup.
 
 ## Deploy to Render
 
 1. Create a **Blueprint** in Render from this repository. `render.yaml` provisions one Docker web service and Postgres. If Render cannot see the BerriAI repo, an organization owner may need to approve Render’s GitHub access.
-2. Set your GitHub username in `ADMIN_USERS`, and `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`. The app automatically uses Render’s assigned HTTPS URL; set `PUBLIC_URL` explicitly if using a custom domain. Render generates `SECRET_KEY` and `ADMIN_TOKEN`; keep these stable across deploys.
-3. Open the app and sign in using `ADMIN_TOKEN` from Render’s environment settings.
+2. Set `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`. The app automatically uses Render’s assigned HTTPS URL; set `PUBLIC_URL` explicitly if using a custom domain. Keep the generated `SECRET_KEY` stable across deploys. Configure Google sign-in as described below, with at least one administrator email.
+3. Open the app, choose **Sign in with Google**, then **Open workspace**.
 4. Under **Connections → GitHub**, choose **Create GitHub App**. Choose the account or organization that owns the target repositories. GitHub registers a private App there, returns its credentials to LiteReview, and opens installation. A private App can only be installed on its owning account. For BerriAI repositories, an organization owner may need to create/install the App; they can also create it manually and provide the App credentials. You can instead use an existing App or environment variables; see below.
 5. Refresh repositories and add your selected repositories. For browser/desktop reviews, configure the setup command, start command, and local readiness URL.
 6. Under **Connections → Models**, add your gateway or a direct OpenAI/Anthropic key. Gateway base URLs normally end in `/v1`. Test the connection to discover models. No LiteLLM Gateway is required. For an environment-only first setup, optionally provide `GATEWAY_URL` and `GATEWAY_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) before the first start. These seed an encrypted connection; manage subsequent model connection changes in the UI.
-7. Create a PR agent, select a harness and model, and use **Test agent** to check them in a disposable Modal sandbox. In **Access**, add the GitHub accounts allowed to call it and choose which agents/groups each person and repository can use, then comment `@litereview your-agent` on an open PR. Optionally bundle agents into groups, as reusable shortcuts. Mix agent and group names in the same command.
+7. Create a PR agent, select a harness and model, and use **Test agent** to check them in a disposable Modal sandbox. The editor defaults new agents to Codex. In **Access**, add the GitHub accounts allowed to call it and choose which agents/groups each person and repository can use. Each caller signs in with Google and chooses **Link GitHub account** on **Your LiteReview account**, then comments `@litereview your-agent t=5` on an open PR. Optionally bundle agents into groups, as reusable shortcuts. Mix agent and group names in the same command.
+
+## Google Workspace SSO
+
+Use an **Internal** Google OAuth web client for your organization. You can reuse an existing client by adding `https://litereview.onrender.com/api/auth/google/callback` to its authorized redirect URIs; keep its other redirect URIs. A new client uses the same exact URI. For another deployment, replace the origin with `PUBLIC_URL`.
+
+In Render’s LiteReview environment settings, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_DOMAINS=berri.ai`, `GOOGLE_ADMIN_EMAILS` to the comma-separated administrator emails, and `GOOGLE_SSO_REQUIRED=true`, then deploy. Register the callback before enabling SSO on an existing workspace: `redirect_uri_mismatch` means the URI is missing from that Google client. Never commit the client secret.
+
+Verify that a workspace account can sign in, an outside account is denied, and the old workspace access key no longer works. Enabling SSO also invalidates existing access-key/GitHub-only sessions. Members can link their own GitHub account; administrators can manage configuration. Verified linked GitHub administrators in `ADMIN_USERS` also retain management access. Google sign-in does not add or broaden existing People/Repository grants.
+
+The server verifies the Google token signature, issuer, audience, expiry, nonce, verified email, and hosted-domain claim. PKCE and single-use, browser-bound state protect login. Linking verifies GitHub’s stable user ID through OAuth; a typed GitHub username cannot establish membership. GitHub comments require a linked identity with current Google authorization in addition to the existing grants and repository permission. Sessions expire after `SSO_SESSION_SECONDS` (12 hours by default); sign in again to renew commenting authorization. Signing out revokes it immediately. Google account suspension is recognized at the next sign-in or session expiry; there is no Directory sync. Signed GitHub webhooks and expiring per-job worker tokens remain the machine entry points.
+
+Local development can use `ADMIN_TOKEN` only when no Google client is configured and `GOOGLE_SSO_REQUIRED=false`. A required but incomplete SSO configuration denies access rather than falling back to a workspace key.
 
 Modal images and sandboxes are created on demand using your credentials. The first review builds the image and can take several minutes; subsequent reviews reuse it. No separate Modal app deployment, workflow service, Redis, or storage bucket is required.
 
@@ -82,7 +104,7 @@ Configure **Connections → GitHub → Use existing App**, or set:
 - Webhook URL: `PUBLIC_URL/api/webhook/github`; subscribe to **Issue comment** events.
 - Repository permissions: **Contents read**, **Metadata read**, **Pull requests write**, **Issues write**. Issues write permits top-level PR conversation comments.
 
-Only `ADMIN_USERS` can sign in with GitHub. The deployment owner can also use `ADMIN_TOKEN`. The owner key is the initial setup and recovery mechanism; keep it private.
+With Google SSO enabled, GitHub OAuth links a caller’s account after Google sign-in and cannot sign in on its own. In local access-key mode, only `ADMIN_USERS` can sign in with GitHub, and `ADMIN_TOKEN` remains available.
 
 ## Runtime and boundaries
 
