@@ -542,7 +542,10 @@ def test_manifest_callback_requires_same_browser_and_clears_state(owner, monkeyp
     monkeypatch.setattr(httpx.AsyncClient, "post", exchange)
     owner.cookies.delete("lr_manifest")
     params = {"code": "temporary-code", "state": state}
-    assert owner.get("/api/github/manifest/callback", params=params).status_code == 403
+    assert (
+        owner.get("/api/github/manifest/callback", params=params, follow_redirects=False).headers["location"]
+        == "/connections?github_error=expired"
+    )
     exchange.assert_not_awaited()
     owner.cookies.set("lr_manifest", state, domain="testserver.local", path="/")
     response = owner.get("/api/github/manifest/callback", params=params, follow_redirects=False)
@@ -550,7 +553,10 @@ def test_manifest_callback_requires_same_browser_and_clears_state(owner, monkeyp
     assert response.headers["location"] == "https://github.com/apps/test-litereview/installations/new"
     assert "lr_manifest" not in owner.cookies
     assert github.config()["app_id"] == "123"
-    assert owner.get("/api/github/manifest/callback", params=params).status_code == 403
+    assert (
+        owner.get("/api/github/manifest/callback", params=params, follow_redirects=False).headers["location"]
+        == "/connections?github_error=expired"
+    )
     exchange.assert_awaited_once()
 
 

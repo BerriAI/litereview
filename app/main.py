@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlencode
 
 import httpx
+import jwt
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
@@ -584,6 +585,73 @@ async def repos():
     return await github.installed_repositories()
 
 
+@app.get("/api/github/status", dependencies=[Depends(require_admin)])
+async def github_status():
+    try:
+        return await asyncio.wait_for(github.connection_status(), timeout=25)
+    except (TimeoutError, httpx.RequestError):
+        raise HTTPException(502, "Could not reach GitHub. Your setup is saved. Try checking again.") from None
+    except (ValueError, jwt.InvalidKeyError):
+        raise HTTPException(
+            400, "The saved App credentials are invalid. Update them in App settings."
+        ) from None
+
+
+@app.post("/api/github/connect", dependencies=[Depends(require_admin)])
+async def connect_repository(request: Request):
+    name = str((await request.json()).get("name", "")).strip().lower()
+    try:
+        available = await asyncio.wait_for(github.installed_repositories(), timeout=25)
+    except (TimeoutError, httpx.RequestError):
+        raise HTTPException(
+            502, "Could not verify repository access. Try again; your setup is saved."
+        ) from None
+    selected = next((r for r in available if r["name"].lower() == name), None)
+    if not selected:
+        raise HTTPException(
+            400,
+            "This repository is not available to the App. Update its GitHub installation, then check again.",
+        )
+    with Session() as db:
+        existing = db.scalar(
+            select(Resource).where(
+                Resource.kind == "repos", func.lower(Resource.data["name"].as_string()) == name
+            )
+        )
+        if existing:
+            # A retry must not reset environment settings or restore revoked access.
+            existing.data = {**existing.data, "installation_id": selected["installation_id"]}
+            db.commit()
+            return public_resource(existing)
+        from .schemas import Repository
+
+        row = Resource(kind="repos", data=Repository(**selected).model_dump(exclude={"test_secrets"}))
+        grant = db.scalar(
+            select(Resource).where(
+                Resource.kind == "access", func.lower(Resource.data["name"].as_string()) == name
+            )
+        )
+        if not grant:
+            db.add(
+                Resource(
+                    kind="access",
+                    data={
+                        "subject": "repo",
+                        "name": name,
+                        "scope": "all",
+                        "target_ids": [],
+                    },
+                )
+            )
+        db.add(row)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(409, "Repository setup changed. Refresh and try again.") from None
+        return public_resource(row)
+
+
 @app.post("/api/github/manifest", dependencies=[Depends(require_admin)])
 async def manifest(request: Request):
     body = await request.json()
@@ -627,20 +695,32 @@ async def manifest(request: Request):
     return response
 
 
-@app.get("/api/github/manifest/callback", dependencies=[Depends(require_admin)])
+@app.get("/api/github/manifest/callback")
 async def manifest_callback(request: Request, code: str, state: str):
-    if (
-        not secrets.compare_digest(state, request.cookies.get("lr_manifest", ""))
-        or unsign(state, 900).get("purpose") != "manifest"
-    ):
-        raise HTTPException(403)
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(
-            github.API + f"/app-manifests/{code}/conversions",
-            headers={"Accept": "application/vnd.github+json"},
-        )
+    def failed(reason):
+        result = RedirectResponse("/connections?" + urlencode({"github_error": reason}))
+        result.delete_cookie("lr_manifest")
+        return result
+
+    try:
+        require_admin(request)
+        if (
+            not secrets.compare_digest(state, request.cookies.get("lr_manifest", ""))
+            or unsign(state, 900).get("purpose") != "manifest"
+        ):
+            return failed("expired")
+    except HTTPException:
+        return failed("expired")
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                github.API + f"/app-manifests/{code}/conversions",
+                headers={"Accept": "application/vnd.github+json"},
+            )
+    except httpx.RequestError:
+        return failed("conversion")
     if not response.is_success:
-        raise HTTPException(400, "GitHub App creation failed. Start again from Connections.")
+        return failed("conversion")
     data = response.json()
     conf = {
         "app_id": str(data["id"]),

@@ -91,13 +91,25 @@ async def archive(repo, installation, sha):
         return b"".join(chunks)
 
 
-async def installed_repositories():
+async def installations():
+    rows, page = [], 1
+    while True:
+        batch = (await request("GET", f"/app/installations?per_page=100&page={page}")).json()
+        rows.extend(batch)
+        if len(batch) < 100:
+            return rows
+        page += 1
+
+
+async def installed_repositories(installs=None):
     if settings().github_token and not config().get("app_id"):
         r = await request("GET", "/user/repos?per_page=100&sort=updated", settings().github_token)
         return [{"name": x["full_name"], "installation_id": 0} for x in r.json()]
-    installations = (await request("GET", "/app/installations?per_page=100")).json()
+    installs = await installations() if installs is None else installs
     repos = []
-    for install in installations:
+    for install in installs:
+        if install.get("suspended_at"):
+            continue
         auth = await token(install["id"])
         page = 1
         while True:
@@ -109,3 +121,24 @@ async def installed_repositories():
                 break
             page += 1
     return repos
+
+
+async def connection_status():
+    """Verify the App separately from its installation and repository access."""
+    conf = config()
+    if not (conf.get("app_id") and conf.get("private_key")):
+        return {"state": "unconfigured", "repositories": [], "installations": []}
+    app = (await request("GET", "/app")).json()
+    installs = await installations()
+    repos = await installed_repositories(installs)
+    return {
+        "state": "available" if repos else "needs_installation",
+        "app_name": app["name"],
+        "app_url": app["html_url"],
+        "owner": app.get("owner", {}).get("login", ""),
+        "owner_type": app.get("owner", {}).get("type", ""),
+        "repositories": sorted(repos, key=lambda r: r["name"].lower()),
+        "installations": [
+            {"account": i["account"]["login"], "suspended": bool(i.get("suspended_at"))} for i in installs
+        ],
+    }

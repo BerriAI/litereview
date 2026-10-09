@@ -24,51 +24,33 @@ export function Documentation() {
           <h2>Start a review</h2>
           <ol className="docs-steps">
             <li>
-              <h3>Connect GitHub and a model</h3>
+              <h3>Connect a GitHub repository</h3>
               <p>
-                In <a href="/connections">Connections</a>, create or connect a
-                GitHub App, install it on the repositories you want to review,
-                then add those repositories. Your organization may require an
-                owner to approve the App.
+                Open <a href="/connections">Connections → GitHub</a>. LiteReview
+                checks your existing App and shows the account that owns it.
+                Continue installation on GitHub, select your repositories, then
+                return here and choose Connect beside a repository. Installation
+                details are filled in automatically.
               </p>
               <p>
-                Under Models, add your gateway URL and key, or connect OpenAI or
-                Anthropic directly. Test the connection to discover available
-                models.
+                A private App can only be installed on its owning account. If
+                your App belongs to a personal account and you need organization
+                repositories, choose Connect an organization instead. An
+                organization owner may need to finish this step. Your existing
+                model connections, agents, and access settings stay saved.
               </p>
             </li>
             <li>
               <h3>Create a PR agent</h3>
               <p>
-                In <a href="/agents">PR agents</a>, choose a harness and model,
-                describe what it should check, and enable the tools it needs.
+                Reuse your saved model connection, or add a gateway or provider
+                under Connections → Models. In <a href="/agents">PR agents</a>,
+                name the reviewer, choose a model, and describe what it should
+                check. New agents default to Codex. Enable tools as needed.
                 Attach skills or MCP tools if useful. Test agent runs a small
                 private check of that harness, model, and selected capabilities
                 in Modal. It uses model and Modal credits without touching a
                 GitHub repo.
-              </p>
-            </li>
-            <li>
-              <h3>Choose how the agent runs</h3>
-              <p>
-                Built-in, Pi, OpenCode V1, OpenCode V2, Codex, Claude Code, and
-                Deep Agents are separate harness choices. Each sandbox starts
-                only the selected harness. Tools, skills, and MCP selections
-                belong to the agent and work through that harness.
-              </p>
-              <p>
-                Codex requires a Responses-compatible endpoint; Claude Code
-                requires a Messages-compatible endpoint. Your gateway can
-                translate these formats for compatible models. Browser and
-                computer use need a model that understands images.
-              </p>
-            </li>
-            <li>
-              <h3>Optionally, bundle agents into a group</h3>
-              <p>
-                In <a href="/groups">Agent groups</a>, name a group, add agents,
-                and choose how many copies of each should run. You can reuse the
-                same agent in several groups.
               </p>
             </li>
             <li>
@@ -138,6 +120,39 @@ export function Documentation() {
               </p>
             </li>
           </ol>
+        </section>
+
+        <section>
+          <h2>Resume GitHub setup</h2>
+          <p>
+            App saved means credentials are stored; it does not mean GitHub has
+            granted repository access. Connections → GitHub checks the App when
+            you open the page and when you return from GitHub. Use Check again
+            after an owner approves installation. A failed check keeps your
+            settings and offers a retry.
+          </p>
+          <p>
+            If access was removed, restore it on GitHub. If you replace the App,
+            use Reconnect beside your repositories to update their installation
+            while keeping review environments and access restrictions. App
+            settings and recovery lets you update credentials. Optional app
+            startup commands belong in the connected repository’s editor.
+          </p>
+        </section>
+        <section>
+          <h2>Optional harnesses and groups</h2>
+          <p>
+            Agents can use Built-in, Pi, OpenCode V1, OpenCode V2, Codex, Claude
+            Code, or Deep Agents. Codex needs a Responses-compatible endpoint;
+            Claude Code needs a Messages-compatible endpoint. A gateway can
+            translate these protocols. Test agent checks your selected harness
+            and capabilities. Skills and MCP selections stay with the agent.
+          </p>
+          <p>
+            In <a href="/groups">Agent groups</a>, bundle existing agents and
+            choose how many instances to run. Groups are optional; you can call
+            one agent directly for your first review.
+          </p>
         </section>
 
         <section>
