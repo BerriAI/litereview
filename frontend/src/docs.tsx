@@ -93,12 +93,13 @@ export function Documentation() {
             <li>
               <h3>Read the results</h3>
               <p>
-                LiteReview updates a PR comment with each agent’s findings or
-                “No findings.” Workspace owners can open{" "}
-                <a href="/runs">Runs</a> for details, activity, and screenshots.
-                An incomplete check means the agent could not finish its
-                configured review. Results are summary comments; agents do not
-                push fixes.
+                LiteReview reacts with 👀 when it accepts your request. When all
+                agents finish, it posts one comment with findings or “No issues
+                found.” Expand Review notes for the summary. Workspace owners
+                can open <a href="/runs">Runs</a> for details, activity, and
+                screenshots. An incomplete check means the agent could not
+                finish its configured review. Results are summary comments;
+                agents do not push fixes.
               </p>
             </li>
           </ol>

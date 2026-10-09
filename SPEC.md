@@ -4,7 +4,7 @@ Status: implemented v1 · 28 September 2026. See README.md for deployment and do
 
 ## 1. What we are building
 
-A small web app for configuring reusable PR review agents and calling them directly or in optional groups from GitHub comments. Each agent instance reviews the same PR commit in its own Modal sandbox. LiteReview posts one comment with each agent’s findings, “No findings,” or a clear failure status.
+A small web app for configuring reusable PR review agents and calling them directly or in optional groups from GitHub comments. Each agent instance reviews the same PR commit in its own Modal sandbox. LiteReview acknowledges accepted requests with 👀 and posts one final comment with each agent’s findings, “No issues found,” or a clear failure status.
 
 The purpose of v1 is to run real reviews and judge whether the experience is useful. Ship the complete loop before adding more orchestration.
 
@@ -34,7 +34,7 @@ GitHub commands accept **agents and groups** together. Their command names share
    @litereview frontend pentest security
    ```
 
-6. LiteReview posts a running summary, launches the selected instances, and updates that same comment when the review finishes. The web app shows progress and results.
+6. LiteReview adds a 👀 reaction to the request, launches the selected instances, and posts a comment when every instance finishes. The web app shows progress and results.
 
 If `frontend` and `pentest` are individual agents and `security` contains five instances, this runs seven independent jobs.
 
@@ -145,11 +145,11 @@ The [agent control plane](https://github.com/LiteLLM-Labs/litellm-agent-control-
 
 1. Validate the GitHub webhook signature; deduplicate delivery; parse the command and check access.
 2. Resolve the PR’s current base/head SHAs and snapshot selected group memberships, agents, models, capabilities, and skills. Create the run and jobs in Postgres.
-3. Post the running comment and dispatch from the durable job queue. A stored pending run must be recoverable if dispatch is interrupted.
+3. Acknowledge the request comment with 👀 and dispatch from the durable job queue. Reaction retries are idempotent. A stored pending run must be recoverable if dispatch is interrupted.
 4. For every job, create a fresh sandbox, stage the repository and diff, mount attached skills, and initialize enabled tools. Run configured setup only when the job needs the runnable application environment.
 5. Run the selected harness: request a model response, execute permitted tool calls, return tool results, and continue until it returns a structured review or reaches its limits.
 6. Persist results and artifacts. Terminate the sandbox in cleanup, with Modal’s required sandbox lifetime as a backstop.
-7. When all jobs reach a terminal state, update the existing GitHub comment. One failed agent does not discard other agents’ results.
+7. When all jobs reach a terminal state, post one final GitHub comment. Recover an existing marked comment after a lost publication response. One failed agent does not discard other agents’ results.
 
 Jobs run concurrently subject to Modal capacity and a deployment concurrency limit. Show queued work honestly. Use atomic job claims and idempotent publication so retries do not duplicate reviews. Do not automatically rerun completed agents.
 
@@ -168,9 +168,9 @@ summary: short description of what was reviewed
 limitations: missing access, setup failures, or unfinished checks
 ```
 
-Only a completed review with an empty findings list and no material coverage failure displays **No findings**. Preserve useful partial findings from failed or timed-out jobs and label them incomplete.
+Only a completed review with an empty findings list and no material coverage failure displays **No issues found**. Preserve useful partial findings from failed or timed-out jobs and label them incomplete.
 
-Post one GitHub summary with the reviewed commit and a section for each group/agent/instance. Include concise actionable findings, relevant code references, and evidence. Put detailed logs and screenshots in the authenticated run page. Use deterministic formatting; no judge agent or automatic fusion stage.
+Post one GitHub summary with a section for each reviewer. Include a group label when called through a group and instance numbers only when multiple instances need distinguishing. Show actionable findings and incomplete coverage directly; collapse successful-review summaries and timing metadata under Review notes. Put the reviewed commit and full-run link in a compact footer. Put detailed logs and screenshots in the authenticated run page. Use deterministic formatting; no judge agent or automatic fusion stage.
 
 If the PR advances during a review, label the result with the reviewed SHA and indicate that newer commits exist. Never imply it covers the new head. Users rerun by posting another command.
 

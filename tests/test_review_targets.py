@@ -30,7 +30,8 @@ def test_direct_agent_needs_no_group(owner, monkeypatch):
         assert jobs[0].config["instance"] == 1
         assert run.head == "a" * 40
         comment = reviews.render_comment(run, jobs)
-        assert "### reviewer · 1" in comment
+        assert "### reviewer\n" in comment
+        assert "· 1" not in comment
         assert "reviewer / reviewer" not in comment
 
 

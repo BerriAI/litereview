@@ -2,7 +2,9 @@ import asyncio
 import re
 import secrets
 import time
+from collections import Counter
 
+import httpx
 from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -237,6 +239,7 @@ async def accept(payload, delivery):
         head=head,
         base=base,
         snapshot={
+            "trigger_comment_id": comment_data.get("id"),
             "groups": selected,
             "repository": repository,
             "diff": diff,
@@ -268,63 +271,70 @@ def md(value):
 
 def render_comment(run, jobs, newer=False):
     if run.status == "rejected":
-        return f"<!-- litereview:{run.id} -->\n### LiteReview · Review not started\n\n{md(run.snapshot['rejection'])}"
-    done = all(j.status in TERMINAL for j in jobs)
-    title = "Review complete" if done else "Review in progress"
-    if done and any(j.status != "completed" or j.result.get("limitations") for j in jobs):
-        title = "Review finished with incomplete checks"
-    lines = [
-        f"<!-- litereview:{run.id} -->",
-        f"## LiteReview · {title}",
-        f"Reviewed commit `{run.head[:12]}` · {len(jobs)} agents",
-        "",
-    ]
+        return f"<!-- litereview:{run.id} -->\n### Review not started\n\n{md(run.snapshot['rejection'])}"
+    lines = [f"<!-- litereview:{run.id} -->", ""]
     if newer:
-        lines += ["**Newer commits exist. These results apply to the commit above.**", ""]
+        lines += [f"> New commits were pushed. This review covers `{run.head[:12]}`.", ""]
+    counts = Counter((j.config.get("group"), j.config["name"]) for j in jobs)
     for job in jobs:
-        section_start = len(lines)
         c = job.config
-        label = md(c["name"]) if c.get("target_kind") == "agent" else f"{md(c['group'])} / {md(c['name'])}"
-        lines += [f"### {label} · {c['instance']}", ""]
-        if c.get("minimum_review_seconds"):
-            lines += [f"Requested minimum: {c['minimum_review_seconds'] // 60} minutes.", ""]
-            if job.result.get("review_seconds") is not None:
-                lines += [f"Recorded review time: {job.result['review_seconds']:g} seconds.", ""]
+        label = md(c["name"])
+        if c.get("target_kind") != "agent":
+            label += f" · {md(c['group'])}"
+        if counts[(c.get("group"), c["name"])] > 1:
+            label += f" · Run {c['instance']}"
+        lines += [f"### {label}", ""]
         if job.status not in TERMINAL:
-            lines += [f"{job.status.capitalize()}…", ""]
+            lines += ["Review in progress.", ""]
             continue
         result = job.result
-        if job.status != "completed" or result.get("limitations"):
-            lines += ["**Incomplete review**", ""]
-        if result.get("summary"):
-            lines += [md(result["summary"]), ""]
-        if not result.get("findings") and job.status == "completed" and not result.get("limitations"):
-            lines += ["**No findings.**", ""]
+        incomplete = job.status != "completed" or result.get("limitations")
+        visible, notes = [], []
+        if incomplete:
+            visible += ["**Review incomplete.**", ""]
+            if result.get("summary"):
+                visible += [md(result["summary"]), ""]
+        elif not result.get("findings"):
+            visible += ["**No issues found.**", ""]
         for finding in result.get("findings", []):
-            lines += [
-                f"- **{md(finding['severity'].upper())}: {md(finding['title'])}** — {md(finding['explanation'])}"
-            ]
+            location = ""
             if finding.get("file"):
                 from urllib.parse import quote
 
                 path = finding["file"].lstrip("/")
                 suffix = f"#L{finding['line']}" if finding.get("line") else ""
-                lines += [
-                    f"  [{md(path)}{':' + str(finding['line']) if finding.get('line') else ''}](https://github.com/{run.repo}/blob/{run.head}/{quote(path)}{suffix})"
-                ]
-        for limit in result.get("limitations", []):
-            lines += [f"- Limitation: {md(limit)}"]
-        lines += [""]
-        section = "\n".join(lines[section_start:])
-        budget = max(1200, 50000 // max(1, len(jobs)))
-        if len(section) > budget:
-            lines[section_start:] = [
-                section[:budget],
+                location = f" · [{md(path)}{':' + str(finding['line']) if finding.get('line') else ''}](https://github.com/{run.repo}/blob/{run.head}/{quote(path)}{suffix})"
+            visible += [
+                f"**{md(finding['severity'].capitalize())} · {md(finding['title'])}**{location}",
                 "",
-                "Additional details are available in the full run below.",
+                md(finding["explanation"]),
                 "",
             ]
-    lines += [f"[View run and screenshots]({settings().public_url}/runs/{run.id})"]
+        for limit in result.get("limitations", []):
+            visible += [f"- {md(limit)}"]
+        if result.get("summary") and not incomplete:
+            notes += [md(result["summary"]), ""]
+        if c.get("minimum_review_seconds"):
+            notes += [f"Requested minimum: {c['minimum_review_seconds'] // 60} minutes."]
+            if result.get("review_seconds") is not None:
+                notes += [f"Recorded review time: {result['review_seconds']:g} seconds."]
+        budget = max(1200, 50000 // max(1, len(jobs)))
+        note_text = "\n".join(notes).strip()
+        if len(note_text) > budget // 3:
+            note_text = note_text[: budget // 3].rstrip() + "… See the full review."
+        section = "\n".join(visible).strip()
+        available = budget - len(note_text) - 200
+        if len(section) > available:
+            section = (
+                section[:available].rstrip() + "…\n\nAdditional findings and details are in the full review."
+            )
+        lines += [section, ""]
+        if note_text:
+            lines += ["<details>", "<summary>Review notes</summary>", "", note_text, "", "</details>", ""]
+    lines += [
+        "---",
+        f"[View review]({settings().public_url}/runs/{run.id}) · Reviewed [`{run.head[:12]}`](https://github.com/{run.repo}/commit/{run.head})",
+    ]
     return "\n".join(lines)[:60000]
 
 
@@ -346,6 +356,30 @@ async def publish(run_id):
             run.published = 2 if done else 1
             db.commit()
             return
+    if run.published == 0 and run.status != "rejected":
+        comment_id = run.snapshot.get("trigger_comment_id")
+        if comment_id:
+            try:
+                # GitHub returns the existing reaction on retries, including after a lost response.
+                await github.repo_request(
+                    run.repo,
+                    run.installation,
+                    "POST",
+                    f"issues/comments/{comment_id}/reactions",
+                    json={"content": "eyes"},
+                )
+            except (HTTPException, httpx.HTTPError):
+                if not done:
+                    raise
+                # A deleted request comment must not prevent publication of finished findings.
+        with Session() as db:
+            saved = db.get(Run, run_id)
+            saved.published = 1
+            saved.status = "running"
+            saved.error = ""
+            db.commit()
+    if not done:
+        return
     newer = False
     if done and run.status != "rejected":
         info = (await github.repo_request(run.repo, run.installation, "GET", f"pulls/{run.pr}")).json()

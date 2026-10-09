@@ -107,7 +107,7 @@ def payload(actor="trusted", body="@litereview general"):
         "repository": {"full_name": "owner/repo"},
         "issue": {"number": 1, "pull_request": {}},
         "installation": {"id": 42},
-        "comment": {"user": {"login": actor, "type": "User"}, "body": body},
+        "comment": {"id": 12345, "user": {"login": actor, "type": "User"}, "body": body},
     }
 
 
@@ -353,21 +353,28 @@ def test_no_findings_never_used_for_incomplete_reviews():
         result={"findings": [], "summary": "Failed", "limitations": ["Model failed"]},
     )
     text = reviews.render_comment(run, [job])
-    assert "**No findings.**" not in text
-    assert "**Incomplete review**" in text
+    assert "**No issues found.**" not in text
+    assert "**Review incomplete.**" in text
     job.status = "completed"
     job.result = {"findings": [], "summary": "Checked", "limitations": []}
-    assert "**No findings.**" in reviews.render_comment(run, [job])
+    assert "**No issues found.**" in reviews.render_comment(run, [job])
 
 
 def test_duplicate_comment_publication_recovers_existing_comment(owner, monkeypatch):
     setup(owner)
     mock_github(monkeypatch)
     run_id = webhook(owner, payload()).json()["run_id"]
+    with Session() as db:
+        db.get(Run, run_id).published = 1
+        for job in db.scalars(select(Job)).all():
+            job.status = "completed"
+        db.commit()
     calls = []
 
     async def request(repo, installation, method, suffix, **kwargs):
         calls.append(method)
+        if suffix.startswith("pulls/"):
+            return httpx.Response(200, json={"head": {"sha": "a" * 40}})
         if method == "GET":
             return httpx.Response(
                 200,
@@ -380,7 +387,7 @@ def test_duplicate_comment_publication_recovers_existing_comment(owner, monkeypa
 
     asyncio.run(reviews.publish(run_id))
     assert "POST" not in calls
-    assert calls == ["GET", "PATCH"]
+    assert calls == ["GET", "GET", "PATCH"]
 
 
 def test_model_connection_snapshot_is_immutable(owner, monkeypatch):
@@ -493,7 +500,8 @@ def test_large_reviews_keep_every_agent_section():
     text = reviews.render_comment(run, jobs)
     assert len(text) < 60000
     for i in range(30):
-        assert f"### general / Agent {i} ·" in text
+        assert f"### Agent {i} · general\n" in text
+    assert text.count("<details>") == text.count("</details>") == 30
 
 
 def test_private_app_manifest_targets_repository_owner(owner, monkeypatch):

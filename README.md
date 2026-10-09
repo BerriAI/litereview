@@ -6,7 +6,7 @@ A private workspace for reusable PR reviewers. Configure each agent’s harness,
 @litereview frontend pentest security
 ```
 
-Every instance runs in a separate Modal sandbox. Results appear in one GitHub comment, with findings, **No findings**, or an explicit incomplete result for each agent. LiteReview never pushes fixes.
+LiteReview acknowledges an accepted command with a 👀 reaction. Every instance runs in a separate Modal sandbox. When all agents finish, it posts one comment with findings, **No issues found**, or an explicit incomplete result for each agent. Review notes are collapsed and the footer links to the full run and reviewed commit. LiteReview never pushes fixes.
 
 Set **Minimum review time (minutes)** when creating a reviewer or under **PR agents → reviewer → Review instructions**. For example, save `5` for `frontend` and `10` for `security`, then comment:
 
@@ -132,6 +132,6 @@ Long-lived model and MCP keys are encrypted in the database using `SECRET_KEY`. 
 
 For a small v1, screenshots are private, bounded Postgres artifacts rather than a separate storage service. Each job stores at most 20 PNGs, 2 MB each. Logs are bounded to 200 events. Repository archives are limited to 50 MB compressed / 250 MB expanded; PRs to 300 changed files / a 2 MB diff. Sandboxes launch on demand across reviews by default. Set `CONCURRENCY` to a positive number for an optional workspace-wide cap; `0` leaves concurrency to Modal account quotas and provider rate limits. Each sandbox requests 2 CPU cores and 4 GiB of memory. Time and model-call budgets are optional per-agent settings. Legacy `JOB_TIMEOUT` and `MAX_ROUNDS` environment values no longer impose defaults. Existing reviewers have no minimum by default. Keep Postgres backups enabled; deleting the database loses settings and run history.
 
-GitHub retries are deduplicated by delivery ID. Pending jobs survive API restarts; completed jobs are never rerun automatically. Sandboxes are terminated on completion. The dispatcher reattaches to recorded active sandboxes after API restarts and reports an incomplete result if a sandbox exits without a result. Modal’s 24-hour lifetime still applies. Publication retries update the original marked comment. Results always name the reviewed SHA; later pushes are called out.
+GitHub retries are deduplicated by delivery ID. Pending jobs survive API restarts; completed jobs are never rerun automatically. Sandboxes are terminated on completion. The dispatcher reattaches to recorded active sandboxes after API restarts and reports an incomplete result if a sandbox exits without a result. Modal’s 24-hour lifetime still applies. Acknowledgment retries reuse the same eyes reaction, and final-publication retries recover the marked result comment. Existing progress comments from older versions are updated when their runs finish. Results always name the reviewed SHA; later pushes are called out.
 
 This v1 posts summary comments, not resolvable inline review threads. It has no automatic fixes, push triggers, fusion/judge agent, persistent chat, local stdio MCP servers, or plugin marketplace. See [SPEC.md](SPEC.md) for the product decisions and [docs/VALIDATION.md](docs/VALIDATION.md) for actual test evidence and external setup boundaries.
