@@ -163,5 +163,8 @@ def test_findings_and_incomplete_coverage_stay_visible():
     assert "**High · Token exposed** · [app/auth.py:42]" in body
     assert "#L42" in body and "Browser unavailable." in body
     assert "Review incomplete." in body and "No issues found" not in body
-    assert "<details>" not in body
+    visible, notes = body.split("<details>", 1)
+    assert "Browser unavailable." in visible and "Token exposed" in visible
+    assert "Could not finish browser checks." not in visible
+    assert "Could not finish browser checks." in notes
     assert "@all" not in body and "<script>" not in body

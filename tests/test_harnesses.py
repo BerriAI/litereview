@@ -13,6 +13,40 @@ from runner.catalog import HARNESS_VERSIONS, NPM_PACKAGES
 from runner.tools import Toolset
 
 
+def test_saved_and_legacy_reviewers_include_terminal(owner):
+    from test_reviews import setup
+
+    from app.db import Resource
+    from app.schemas import AgentModel
+
+    assert AgentModel(connection_id="provider", model="model").capabilities == ["terminal"]
+    assert AgentModel(connection_id="provider", model="model", capabilities=["browser"]).capabilities == [
+        "terminal",
+        "browser",
+    ]
+    _, _, agent, _, group = setup(owner)
+    with Session() as db:
+        legacy = db.get(Resource, agent["id"])
+        legacy.data = {**legacy.data, "capabilities": []}
+        db.commit()
+        resources = {r.id: r for r in db.query(Resource).all()}
+        expanded = reviews.expand([group], resources)
+    assert all(job["capabilities"] == ["terminal"] for job in expanded)
+
+
+def test_codex_tools_allow_verification_and_delegation(tmp_path, monkeypatch):
+    from app.schemas import AgentModel
+    from runner import harness
+
+    monkeypatch.setattr(harness, "STATE", tmp_path)
+    cfg = AgentModel(harness="codex", connection_id="provider", model="model").model_dump()
+    args = harness.command(cfg, "http://127.0.0.1:8000", "Review", "PR", {})
+    settings = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "-c"]
+    assert "features.shell_tool=true" in settings
+    assert "features.multi_agent=true" in settings
+    assert not any(s.startswith("features.apply_patch_freeform=") for s in settings)
+
+
 @pytest.mark.parametrize("selected", HARNESS_VERSIONS)
 def test_image_installs_only_selected_harness(monkeypatch, selected):
     installed = []

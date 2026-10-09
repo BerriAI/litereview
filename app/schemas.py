@@ -41,7 +41,16 @@ class AgentModel(BaseModel):
     )
     connection_id: str
     model: str = Field(min_length=1, max_length=250)
-    capabilities: list[Literal["terminal", "browser", "computer"]] = Field(default_factory=list)
+    capabilities: list[Literal["terminal", "browser", "computer"]] = Field(
+        default_factory=lambda: ["terminal"]
+    )
+
+    @field_validator("capabilities")
+    @classmethod
+    def included_tools(cls, values):
+        from runner.catalog import review_capabilities
+
+        return review_capabilities(values)
 
 
 class Agent(ReviewTarget, AgentModel):

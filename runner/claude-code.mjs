@@ -14,6 +14,10 @@ const builtin = [
   "Read",
   "Glob",
   "Grep",
+  "Write",
+  "Edit",
+  "Agent",
+  "Task",
   ...(cfg.capabilities.includes("terminal") ? ["Bash"] : []),
 ];
 try {
@@ -33,14 +37,7 @@ try {
         },
         tools: builtin,
         allowedTools: [...builtin, "mcp__litereview__*"],
-        disallowedTools: [
-          "Write",
-          "Edit",
-          "NotebookEdit",
-          "Agent",
-          "Task",
-          "AskUserQuestion",
-        ],
+        disallowedTools: ["AskUserQuestion"],
         permissionMode: "dontAsk",
         settingSources: [],
         strictMcpConfig: true,

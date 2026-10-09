@@ -1,0 +1,166 @@
+.review-markdown {
+  font-size: 13px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.review-markdown > :first-child {
+  margin-top: 0;
+}
+.review-markdown > :last-child {
+  margin-bottom: 0;
+}
+.review-markdown p {
+  margin: 0 0 12px;
+  white-space: normal;
+}
+.review-markdown :is(h4, h5, h6) {
+  font-size: 13px;
+  margin: 20px 0 8px;
+}
+.review-markdown :is(ul, ol) {
+  padding-left: 22px;
+  margin: 10px 0 14px;
+}
+.review-markdown li + li {
+  margin-top: 6px;
+}
+.review-markdown li > p {
+  margin-bottom: 6px;
+}
+.review-markdown code {
+  font-size: 0.9em;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.review-markdown pre {
+  padding: 14px 16px;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.review-markdown pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.review-markdown blockquote {
+  border-left: 2px solid var(--line);
+  padding-left: 14px;
+  margin: 12px 0;
+  color: var(--muted);
+}
+.review-markdown a {
+  text-underline-offset: 3px;
+}
+.review-table {
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.review-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.review-table :is(th, td) {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.review-table th {
+  background: var(--subtle);
+  font-weight: 500;
+}
+.review-clean,
+.review-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 8px 0;
+}
+.review-clean {
+  color: var(--green);
+}
+.review-progress {
+  color: var(--muted);
+}
+.review-finding {
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+}
+.review-finding > h4 {
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.review-finding > h4 .badge {
+  flex-shrink: 0;
+  text-transform: capitalize;
+}
+.review-finding > .source-link {
+  margin-bottom: 12px;
+}
+.review-finding > .source-link code {
+  overflow-wrap: anywhere;
+}
+.review-finding > .source-link svg {
+  flex-shrink: 0;
+}
+.review-incomplete {
+  border-left: 2px solid var(--amber);
+  padding: 2px 0 2px 16px;
+  margin: 10px 0 20px;
+}
+.review-incomplete > h4 {
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+.review-incomplete > ul,
+.review-evidence > ul {
+  padding-left: 18px;
+  margin: 0;
+}
+.review-incomplete > ul > li + li {
+  margin-top: 12px;
+}
+.review-notes > .review-markdown,
+.review-evidence > ul {
+  margin-top: 16px;
+}
+.job .meta {
+  margin: 6px 0 22px;
+}
+.job .meta code {
+  font-size: 11px;
+}
+.job-title h3 {
+  font-size: 16px;
+}
+.job-title > .badge {
+  text-transform: capitalize;
+}
+.job .logs > div > span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+@media (max-width: 767px) {
+  .job {
+    padding: 18px;
+  }
+  .review-finding > h4 {
+    flex-wrap: wrap;
+  }
+  .job .logs > div {
+    flex-direction: column;
+    gap: 2px;
+  }
+}

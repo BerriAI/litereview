@@ -17,4 +17,4 @@ COPY --from=web /web/dist ./frontend/dist/
 RUN useradd --create-home app && mkdir -p /app/data && chown -R app:app /app
 USER app
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --no-access-log"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --no-access-log"]

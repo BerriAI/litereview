@@ -32,6 +32,7 @@ import "@fontsource-variable/geist-mono";
 import "./style.css";
 import "./onboarding.css";
 import { Documentation } from "./docs";
+import { ReviewResult } from "./review-result";
 import { api, send } from "./api";
 import { GitHubSetup, GitHubSettings } from "./github-setup";
 import { MemberStart } from "./member-start";
@@ -407,7 +408,7 @@ function App() {
         connection_id:
           store.connections.find((c) => c.type !== "mcp")?.id || "",
         model: "",
-        capabilities: [],
+        capabilities: ["terminal"],
         skill_ids: [],
         mcps: [],
       },
@@ -641,7 +642,9 @@ function App() {
       (active !== "agents" ||
         agentFilter === "all" ||
         (agentFilter === "code"
-          ? !row.capabilities.length
+          ? !row.capabilities.some((cap: string) =>
+              ["browser", "computer"].includes(cap),
+            )
           : row.capabilities.includes(agentFilter)))
     );
   });
@@ -1027,19 +1030,18 @@ function App() {
                     </div>
                   </dl>
                   {run.error && <div className="error">{run.error}</div>}
-                  {run.jobs.map((job: any, index: number) => (
+                  {run.jobs.map((job: any) => (
                     <article className="job" key={job.id}>
                       <div className="job-title">
-                        <span className="job-number">
-                          {String(index + 1).padStart(2, "0")}
-                        </span>
                         <h3>{job.config.name}</h3>
-                        <span>
-                          {job.config.target_kind === "agent"
-                            ? "Direct call"
-                            : job.config.group}{" "}
-                          · Instance {job.config.instance}
-                        </span>
+                        {job.config.target_kind !== "agent" && (
+                          <span>{job.config.group}</span>
+                        )}
+                        {run.jobs.filter(
+                          (other: any) =>
+                            other.config.name === job.config.name &&
+                            other.config.group === job.config.group,
+                        ).length > 1 && <span>Run {job.config.instance}</span>}
                         <Badge
                           tone={
                             job.result.limitations?.length
@@ -1060,62 +1062,7 @@ function App() {
                       <p className="meta">
                         <code>{job.config.model}</code>
                       </p>
-                      {job.result.summary && <p>{job.result.summary}</p>}
-                      {job.status === "completed" &&
-                        !job.result.findings?.length &&
-                        !job.result.limitations?.length && (
-                          <div className="clean">
-                            <Check size={17} />
-                            No findings
-                          </div>
-                        )}
-                      {job.result.limitations?.map((l: string, i: number) => (
-                        <div className="warning" key={i}>
-                          Incomplete check: {l}
-                        </div>
-                      ))}
-                      {job.result.findings?.map((f: any, i: number) => (
-                        <div className="finding" key={i}>
-                          <h4>
-                            <Badge
-                              tone={
-                                f.severity === "high" ||
-                                f.severity === "critical"
-                                  ? "red"
-                                  : "amber"
-                              }
-                            >
-                              {f.severity}
-                            </Badge>
-                            {f.title}
-                          </h4>
-                          <p>{f.explanation}</p>
-                          {f.evidence?.length > 0 && (
-                            <ul className="finding-evidence">
-                              {f.evidence.map(
-                                (evidence: string, idx: number) => (
-                                  <li key={idx}>{evidence}</li>
-                                ),
-                              )}
-                            </ul>
-                          )}
-                          {f.file && (
-                            <a
-                              className="source-link"
-                              href={`https://github.com/${run.repo}/blob/${run.head}/${f.file.split("/").map(encodeURIComponent).join("/")}${f.line ? "#L" + f.line : ""}`}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <FileCode2 size={13} />
-                              <code>
-                                {f.file}
-                                {f.line ? ":" + f.line : ""}
-                              </code>
-                              <ArrowUpRight size={12} />
-                            </a>
-                          )}
-                        </div>
-                      ))}
+                      <ReviewResult job={job} repo={run.repo} head={run.head} />
                       {job.artifacts.length > 0 && (
                         <details>
                           <summary>{job.artifacts.length} screenshots</summary>
@@ -1140,7 +1087,8 @@ function App() {
                       )}
                       <details>
                         <summary>
-                          Activity & execution · {job.logs.length} events
+                          Activity · {job.logs.length}{" "}
+                          {job.logs.length === 1 ? "event" : "events"}
                         </summary>
                         <div className="execution-meta">
                           <span>{job.model_calls} model calls</span>
@@ -1156,7 +1104,7 @@ function App() {
                               <time>
                                 {new Date(l.time * 1000).toLocaleTimeString()}
                               </time>
-                              {l.message}
+                              <span>{l.message}</span>
                             </div>
                           ))}
                           {!job.logs.length && (
@@ -1178,7 +1126,7 @@ function App() {
                 <div className="tabs agent-tabs" aria-label="Filter agents">
                   {[
                     ["all", "All agents"],
-                    ["code", "Code only"],
+                    ["code", "Code & tests"],
                     ["browser", "Browser"],
                     ["computer", "Computer use"],
                   ].map(([value, label]) => (
@@ -1945,14 +1893,15 @@ function App() {
                   </FormSection>
                   <FormSection
                     title="Tools & environment"
-                    description="Each instance runs in its own Modal sandbox. Enable the tools this reviewer needs."
+                    description="Each reviewer can inspect code, run tests, and use its harness’s subagents when requested by your instructions or skills. Add visual tools if needed."
                   >
                     <div className="included-capability">
                       <FileCode2 size={18} />
                       <span>
-                        <strong>Repository access</strong>
+                        <strong>Code & terminal</strong>
                         <small>
-                          Read files, search code, and inspect the PR diff.
+                          Read and search code, inspect the diff, and run tests
+                          or commands.
                         </small>
                       </span>
                       <span className="included-label">
@@ -1961,12 +1910,6 @@ function App() {
                     </div>
                     <div className="capabilities">
                       {[
-                        [
-                          "terminal",
-                          "Terminal",
-                          "Run tests and commands",
-                          Terminal,
-                        ],
                         [
                           "browser",
                           "Browser",
@@ -2398,7 +2341,7 @@ function App() {
                 >
                   <div className="info">
                     Optional app setup runs inside each agent’s sandbox when it
-                    has Terminal, Browser, or Computer use enabled.
+                    runs a review.
                   </div>
                   <Field
                     label="Setup command"

@@ -46,7 +46,16 @@ async def main():
                     coroutine=make_call(item["name"]),
                 )
             )
-        allowed = {item["name"] for item in definitions}
+        allowed = {item["name"] for item in definitions} | {
+            "task",
+            "ls",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "glob",
+            "grep",
+            "write_todos",
+        }
         if "terminal" in cfg["capabilities"]:
             allowed.add("execute")
 
