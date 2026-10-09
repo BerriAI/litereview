@@ -20,15 +20,17 @@ from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
 
 from . import github, providers, reviews
 from .access import initialize_access
-from .db import Artifact, Job, Resource, Run, Session, init_db, uid
+from .db import Artifact, Job, Resource, ReviewTiming, Run, Session, init_db, uid
+from .limits import job_timeout, model_rounds
 from .schemas import SCHEMAS, AgentModel, ReviewResult
-from .security import decrypt, digest, encrypt, require_admin, signed, unsign, verify_signature
+from .security import decrypt, digest, encrypt, require_admin, require_user, signed, unsign, verify_signature
 from .settings import settings
+from .sso import router as sso_router
 
 
 @asynccontextmanager
 async def lifespan(app):
-    if len(settings().secret_key) < 32 or len(settings().admin_token) < 20:
+    if len(settings().secret_key) < 32 or (not settings().sso_required and len(settings().admin_token) < 20):
         raise RuntimeError(
             "Set SECRET_KEY (32+ characters) and ADMIN_TOKEN (20+ characters). See .env.example."
         )
@@ -67,6 +69,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="LiteReview", lifespan=lifespan, docs_url=None, redoc_url=None)
+app.include_router(sso_router)
 
 
 @app.middleware("http")
@@ -98,10 +101,17 @@ def health():
 @app.get("/api/session")
 def session(request: Request):
     try:
-        user = require_admin(request)
+        user = require_user(request)
     except HTTPException:
         user = None
-    return {"user": user, "github_login": bool(github.config().get("client_id"))}
+    from .sso import configured
+
+    return {
+        "user": user,
+        "github_login": bool(github.config().get("client_id")),
+        "google_login": configured(),
+        "sso_required": settings().sso_required,
+    }
 
 
 login_attempts = {}
@@ -109,6 +119,8 @@ login_attempts = {}
 
 @app.post("/api/login")
 async def login(request: Request):
+    if settings().sso_required:
+        raise HTTPException(403, "Workspace access keys are disabled. Sign in with Google.")
     host = request.client.host
     recent = [t for t in login_attempts.get(host, []) if t > time.time() - 900]
     if len(recent) >= 20:
@@ -131,14 +143,29 @@ async def login(request: Request):
 
 
 @app.post("/api/logout")
-def logout():
+def logout(request: Request):
+    if settings().sso_required:
+        from .db import SSOIdentity
+
+        try:
+            user = require_user(request)
+            with Session() as db:
+                identity = db.get(SSOIdentity, user["sub"])
+                identity.expires_at = 0
+                db.commit()
+        except HTTPException:
+            pass
     response = JSONResponse({"ok": True})
     response.delete_cookie("lr_session")
     return response
 
 
 @app.get("/api/auth/github")
-def oauth_start():
+def oauth_start(request: Request):
+    if settings().sso_required:
+        from .sso import github_start
+
+        return github_start(request)
     conf = github.config()
     if not conf.get("client_id"):
         raise HTTPException(400, "Connect a GitHub App first.")
@@ -166,6 +193,10 @@ def oauth_start():
 
 @app.get("/api/auth/github/callback")
 async def oauth_callback(request: Request, code: str, state: str):
+    if settings().sso_required:
+        from .sso import github_callback
+
+        return await github_callback(request, code, state)
     if (
         not secrets.compare_digest(state, request.cookies.get("lr_oauth", ""))
         or unsign(state, 600).get("purpose") != "oauth"
@@ -731,7 +762,7 @@ def worker(request: Request, job_id: str):
             not job
             or not secrets.compare_digest(digest(token), job.token_hash)
             or job.status not in ("starting", "running")
-            or time.time() - (job.started_at or 0) > settings().job_timeout + 300
+            or time.time() - (job.started_at or 0) > job_timeout(job.config) + 300
         ):
             raise HTTPException(401, "Job token is invalid or expired.")
         return job
@@ -767,8 +798,8 @@ def bootstrap(job_id: str, request: Request):
             },
             "repository": repo,
             "test_secrets": test_secrets,
-            "max_rounds": settings().max_rounds,
-            "timeout": settings().job_timeout,
+            "max_rounds": model_rounds(job.config),
+            "timeout": job_timeout(job.config),
         }
 
 
@@ -784,13 +815,29 @@ async def job_archive(job_id: str, request: Request):
     return Response(await github.archive(run.repo, run.installation, run.head), media_type="application/gzip")
 
 
+@app.post("/api/internal/jobs/{job_id}/start-review")
+def start_review(job_id: str, request: Request):
+    worker(request, job_id)
+    with Session() as db:
+        row = db.get(ReviewTiming, job_id)
+        if not row:
+            row = ReviewTiming(job_id=job_id)
+            db.add(row)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                row = db.get(ReviewTiming, job_id)
+        return {"started_at": row.started_at}
+
+
 @app.post("/api/internal/jobs/{job_id}/model")
 async def model_relay(job_id: str, request: Request):
     job = worker(request, job_id)
     with Session() as db:
         changed = db.execute(
             update(Job)
-            .where(Job.id == job.id, Job.model_calls < settings().max_rounds)
+            .where(Job.id == job.id, Job.model_calls < model_rounds(job.config))
             .values(model_calls=Job.model_calls + 1)
         ).rowcount
         db.commit()
@@ -883,6 +930,13 @@ async def finish(job_id: str, request: Request):
     with Session() as db:
         job = db.get(Job, job_id)
         run = db.get(Run, job.run_id)
+        minimum = job.config.get("minimum_review_seconds", 0)
+        clock = db.get(ReviewTiming, job_id) if minimum else None
+        if clock:
+            result["review_seconds"] = round(max(0, time.time() - clock.started_at), 1)
+        if result["status"] == "completed" and minimum:
+            if not clock or time.time() - clock.started_at < minimum:
+                raise HTTPException(409, "Minimum review time has not elapsed. Continue reviewing.")
         if run.snapshot.get("harness_check") and result["status"] == "completed":
             missing = []
             if run.snapshot["check_word"] not in result["summary"]:

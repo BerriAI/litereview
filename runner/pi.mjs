@@ -92,4 +92,11 @@ session.subscribe((e) => {
     console.log(JSON.stringify({ lr_event: "Using " + e.toolName }));
 });
 await session.prompt(prompt);
+if (cfg.minimum_review_seconds) {
+  while (!(await (await fetch(url + "/status")).json()).finished) {
+    await session.prompt(
+      "Continue reviewing in the same session. Check lr_review_clock, investigate and verify until the minimum duration elapses, then call lr_finish_review. Do not sleep or busy-wait.",
+    );
+  }
+}
 session.dispose();

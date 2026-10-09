@@ -86,6 +86,32 @@ class Artifact(Base):
     mime: Mapped[str] = mapped_column(String(80), default="image/png")
 
 
+class ReviewTiming(Base):
+    __tablename__ = "review_timing"
+    job_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    started_at: Mapped[float] = mapped_column(Float, default=time.time)
+
+
+class SSOIdentity(Base):
+    __tablename__ = "sso_identities"
+    sub: Mapped[str] = mapped_column(String(255), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320))
+    domain: Mapped[str] = mapped_column(String(255))
+    audience: Mapped[str] = mapped_column(String(255))
+    expires_at: Mapped[float] = mapped_column(Float)
+    session_id: Mapped[str] = mapped_column(String(64))
+    github_id: Mapped[str | None] = mapped_column(String(40), unique=True, nullable=True)
+    github_login: Mapped[str] = mapped_column(String(100), default="")
+
+
+class LoginState(Base):
+    __tablename__ = "login_states"
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    browser_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[float] = mapped_column(Float)
+    data: Mapped[dict] = mapped_column(JSON)
+
+
 url = settings().database_url
 if url.startswith("postgres://"):
     url = url.replace("postgres://", "postgresql+psycopg://", 1)

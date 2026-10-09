@@ -5,6 +5,8 @@ import signal
 import subprocess
 from pathlib import Path
 
+from .timing import ReviewClock
+
 REPO = Path("/workspace/repo")
 SKILLS = Path("/workspace/skills")
 
@@ -68,6 +70,8 @@ def definitions(cfg):
         ),
     ]
     caps = cfg["capabilities"]
+    if cfg.get("minimum_review_seconds"):
+        tools.append(function("review_clock", "Check the review start, current time, and time remaining.", {}))
     if "terminal" in caps:
         tools.append(
             function(
@@ -156,6 +160,7 @@ class Toolset:
         self.processes = []
         self.artifacts = 0
         self.visual_calls = 0
+        self.clock = ReviewClock(data["config"].get("minimum_review_seconds", 0))
 
     async def init(self):
         if {"computer", "browser"} & set(self.caps):
@@ -289,6 +294,8 @@ class Toolset:
     async def execute(self, name, args):
         if name not in self.allowed:
             raise ValueError("This tool is not enabled for this agent.")
+        if name == "review_clock":
+            return self.clock.status()
         if name == "read_file":
             path = self.path(args["path"])
             if path.stat().st_size > 2_000_000:

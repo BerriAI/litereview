@@ -36,12 +36,23 @@ def unsign(value, age=86400):
         raise HTTPException(401, "Please sign in again.")
 
 
-def require_admin(request: Request):
+def require_user(request: Request):
+    if settings().sso_required:
+        from .sso import current_user
+
+        return current_user(request)
     token = request.cookies.get("lr_session", "")
     if not token:
         raise HTTPException(401, "Sign in to LiteReview.")
     user = unsign(token)
     if user.get("login") != "owner" and user.get("login", "").lower() not in settings().admins:
+        raise HTTPException(403, "This account is not a workspace administrator.")
+    return {**user, "admin": True}
+
+
+def require_admin(request: Request):
+    user = require_user(request)
+    if not user.get("admin"):
         raise HTTPException(403, "This account is not a workspace administrator.")
     return user
 

@@ -64,7 +64,7 @@ def opencode_config(cfg, url, instructions):
     }
 
 
-def command(cfg, url, instructions, prompt, env):
+def command(cfg, url, instructions, prompt, env, resume_id=None):
     harness = cfg["harness"]
     executable = ROOT / "harness/node_modules/.bin"
     terminal = "terminal" in cfg["capabilities"]
@@ -92,6 +92,7 @@ def command(cfg, url, instructions, prompt, env):
         return [
             str(executable / "opencode"),
             "run",
+            *(["--continue"] if resume_id else []),
             "--format",
             "json",
             "--agent",
@@ -143,7 +144,7 @@ def command(cfg, url, instructions, prompt, env):
 
         for key, value in config.items():
             args += ["-c", key + "=" + toml(value)]
-        return args + [instructions + "\n\n" + prompt]
+        return args + (["resume", resume_id, prompt] if resume_id else [instructions + "\n\n" + prompt])
     raise ValueError("Unknown harness.")
 
 
@@ -169,70 +170,94 @@ async def run_external(tools, relay, data, system, prompt):
     async with bridge.serve() as url:
         env = tools.child_env()
         env["PYTHONPATH"] = str(ROOT)
-        args = command(cfg, url, instructions, prompt, env)
-        process = await asyncio.create_subprocess_exec(
-            *args,
-            cwd=STATE,
-            env=env,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
-            limit=16_000_000,
-        )
+        thread_id = None
+        while not bridge.finished.is_set():
+            args = command(cfg, url, instructions, prompt, env, resume_id=thread_id)
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                cwd=STATE,
+                env=env,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+                limit=16_000_000,
+            )
 
-        diagnostic = bytearray()
+            diagnostic = bytearray()
 
-        async def drain():
-            with open(STATE / "harness.log", "wb") as log:
-                total = 0
-                async for line in process.stdout:
-                    diagnostic.extend(line[-8000:])
-                    del diagnostic[:-8000]
-                    if total < 2_000_000:
-                        log.write(line)
-                        log.flush()
-                        total += len(line)
-                    try:
-                        event = json.loads(line)
-                        if event.get("lr_event"):
-                            await relay.event(str(event["lr_event"])[:200])
-                        item = event.get("item", {})
-                        if item.get("type") == "command_execution" and event.get("type") == "item.completed":
-                            await relay.event("Using shell")
-                        if event.get("type") == "tool_use":
-                            await relay.event(
-                                "Using " + str(event.get("part", {}).get("tool", "harness tool"))
-                            )
-                    except (ValueError, TypeError):
-                        pass
-            return await process.wait()
+            async def drain():
+                nonlocal thread_id
+                with open(STATE / "harness.log", "wb") as log:
+                    total = 0
+                    async for line in process.stdout:
+                        diagnostic.extend(line[-8000:])
+                        del diagnostic[:-8000]
+                        if total < 2_000_000:
+                            log.write(line)
+                            log.flush()
+                            total += len(line)
+                        try:
+                            event = json.loads(line)
+                            if event.get("type") == "thread.started":
+                                thread_id = event.get("thread_id")
+                            if event.get("lr_event"):
+                                await relay.event(str(event["lr_event"])[:200])
+                            item = event.get("item", {})
+                            if (
+                                item.get("type") == "command_execution"
+                                and event.get("type") == "item.completed"
+                            ):
+                                await relay.event("Using shell")
+                            if event.get("type") == "tool_use":
+                                await relay.event(
+                                    "Using " + str(event.get("part", {}).get("tool", "harness tool"))
+                                )
+                        except (ValueError, TypeError):
+                            pass
+                return await process.wait()
 
-        output = asyncio.create_task(drain())
-        finished = asyncio.create_task(bridge.finished.wait())
-        try:
-            await asyncio.wait({output, finished}, return_when=asyncio.FIRST_COMPLETED)
-            if not bridge.finished.is_set():
-                await output
-                print(
-                    "Harness diagnostic:\n" + diagnostic.decode(errors="replace"),
-                    flush=True,
-                )
-                raise RuntimeError(
-                    bridge.model_error
-                    or f"{HARNESS_LABELS[harness]} exited without submitting a review (exit {process.returncode}). Check the harness/model combination and run logs."
-                )
-        finally:
-            if process.returncode is None:
-                with suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    await asyncio.wait_for(asyncio.shield(output), 5)
-                except TimeoutError:
-                    with suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
+            output = asyncio.create_task(drain())
+            finished = asyncio.create_task(bridge.finished.wait())
+            try:
+                await asyncio.wait({output, finished}, return_when=asyncio.FIRST_COMPLETED)
+                if not bridge.finished.is_set():
                     await output
-            finished.cancel()
-            with suppress(asyncio.CancelledError):
-                await finished
+                    if (
+                        (harness == "codex" and thread_id or harness.startswith("opencode-"))
+                        and process.returncode == 0
+                        and cfg.get("minimum_review_seconds")
+                        and not bridge.model_error
+                    ):
+                        thread_id = thread_id or "continue"
+                        prompt = (
+                            "Continue this review in the same thread. Your structured review has not been "
+                            "accepted. Check lr_review_clock, investigate remaining edge cases and verify "
+                            "evidence until the minimum time elapses, then call lr_finish_review. "
+                            "Do not sleep or busy-wait. Retain your instructions, skills and tool scope."
+                        )
+                        await relay.event("Continuing review in the same harness session")
+                        continue
+                    print(
+                        "Harness diagnostic:\n" + diagnostic.decode(errors="replace"),
+                        flush=True,
+                    )
+                    raise RuntimeError(
+                        bridge.model_error
+                        or f"{HARNESS_LABELS[harness]} exited without submitting a review (exit {process.returncode}). Check the harness/model combination and run logs."
+                    )
+            finally:
+                if process.returncode is None:
+                    with suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        await asyncio.wait_for(asyncio.shield(output), 5)
+                    except TimeoutError:
+                        with suppress(ProcessLookupError):
+                            os.killpg(process.pid, signal.SIGKILL)
+                        await output
+                finished.cancel()
+                with suppress(asyncio.CancelledError):
+                    await finished
+        await relay.event("Review clock at finish: " + json.dumps(tools.clock.status()))
         await relay("finish", bridge.result)

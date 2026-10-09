@@ -86,6 +86,13 @@ export function Documentation() {
                 repository. Access to a group includes its members when called
                 through that group.
               </p>
+              <p>
+                With Google SSO enabled, each caller also signs in with their
+                workspace Google account and links GitHub on{" "}
+                <a href="/account">Your LiteReview account</a>. Renew Google
+                sign-in when authorization expires. A People entry alone does
+                not bypass SSO.
+              </p>
             </li>
             <li>
               <h3>Comment on an open PR</h3>
@@ -106,6 +113,18 @@ export function Documentation() {
                 Agent and group names must be unique, ignoring capitalization.
                 Repeating a name in one comment runs it once. An agent selected
                 directly and through a group runs separately for each selection.
+              </p>
+              <pre>
+                <code>@litereview frontend t=5 security t=10</code>
+              </pre>
+              <p>
+                Add t=MINUTES after a name to request a minimum review duration
+                for that agent or every instance in that group. The clock starts
+                after setup. Agents continue investigating and cannot finish
+                successfully before their time elapses. Failures and exhausted
+                limits are reported as incomplete. Omit t= to keep the usual
+                behavior. Use whole minutes, up to 120 by default. Tools,
+                skills, and model selections stay the same.
               </p>
             </li>
             <li>

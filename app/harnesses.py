@@ -7,7 +7,7 @@ from sqlalchemy import update
 
 from . import providers
 from .db import Job, Session
-from .settings import settings
+from .limits import model_rounds
 
 PROTOCOLS = {"chat/completions", "responses", "messages", "messages/count_tokens"}
 
@@ -26,7 +26,7 @@ async def relay_model(job, request, path):
         with Session() as db:
             changed = db.execute(
                 update(Job)
-                .where(Job.id == job.id, Job.model_calls < settings().max_rounds)
+                .where(Job.id == job.id, Job.model_calls < model_rounds(cfg))
                 .values(model_calls=Job.model_calls + 1)
             ).rowcount
             db.commit()

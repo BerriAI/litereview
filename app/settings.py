@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     secret_key: str = ""
     admin_token: str = ""
     admin_users: str = ""
+    google_sso_required: bool = False
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_allowed_domains: str = ""
+    google_admin_emails: str = ""
+    sso_session_seconds: int = Field(default=43200, ge=300, le=86400)
     public_url: str = ""
     gateway_url: str = ""
     gateway_api_key: str = ""
@@ -28,6 +34,7 @@ class Settings(BaseSettings):
     concurrency: int = Field(default=0, ge=0)  # 0 launches on demand without an app-level cap.
     job_timeout: int = 600
     max_rounds: int = 60
+    max_review_minutes: int = Field(default=120, ge=1, le=1440)
     dispatcher_enabled: bool = True
 
     @model_validator(mode="after")
@@ -40,6 +47,18 @@ class Settings(BaseSettings):
     @property
     def admins(self):
         return {u.strip().lower() for u in self.admin_users.split(",") if u.strip()}
+
+    @property
+    def sso_required(self):
+        return self.google_sso_required or bool(self.google_client_id)
+
+    @property
+    def google_domains(self):
+        return {v.strip().lower() for v in self.google_allowed_domains.split(",") if v.strip()}
+
+    @property
+    def google_admins(self):
+        return {v.strip().lower() for v in self.google_admin_emails.split(",") if v.strip()}
 
 
 @lru_cache

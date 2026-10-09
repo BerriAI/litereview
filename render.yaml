@@ -18,6 +18,16 @@ services:
         generateValue: true
       - key: ADMIN_USERS
         sync: false
+      - key: GOOGLE_SSO_REQUIRED
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_ALLOWED_DOMAINS
+        value: berri.ai
+      - key: GOOGLE_ADMIN_EMAILS
+        sync: false
       - key: MODAL_TOKEN_ID
         sync: false
       - key: MODAL_TOKEN_SECRET
@@ -30,6 +40,8 @@ services:
         value: "600"
       - key: MAX_ROUNDS
         value: "60"
+      - key: MAX_REVIEW_MINUTES
+        value: "120"
 databases:
   - name: litereview-db
     plan: basic-256mb
