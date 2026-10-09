@@ -16,6 +16,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from . import github
+from .access import bind_linked_person
 from .db import LoginState, Session, SSOIdentity
 from .security import digest, signed, unsign
 from .settings import settings
@@ -93,13 +94,21 @@ def current_user(request):
     }
 
 
-def eligible_caller(user):
+def caller_identity(user):
     if not configured() or not user.get("id"):
-        return False
+        return None
     with Session() as db:
         identity = db.scalar(select(SSOIdentity).where(SSOIdentity.github_id == str(user["id"])))
     # Both stable ID and login must match: a renamed/recycled GitHub login must relink.
-    return eligible(identity) and identity.github_login.lower() == user.get("login", "").lower()
+    return (
+        identity
+        if eligible(identity) and identity.github_login.lower() == user.get("login", "").lower()
+        else None
+    )
+
+
+def eligible_caller(user):
+    return caller_identity(user) is not None
 
 
 def start_state(purpose, extra=None):
@@ -326,6 +335,7 @@ async def github_callback(request, code, state):
         identity = db.get(SSOIdentity, user["sub"])
         identity.github_id, identity.github_login = str(account["id"]), account["login"]
         try:
+            bind_linked_person(db, identity)
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -342,6 +352,7 @@ def unlink_github(request: Request):
     user = current_user(request)
     with Session() as db:
         identity = db.get(SSOIdentity, user["sub"])
+        bind_linked_person(db, identity)
         identity.github_id, identity.github_login = None, ""
         db.commit()
     return {"ok": True}

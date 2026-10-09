@@ -17,16 +17,52 @@ def caller_permits(grant, target_id):
     return permits(grant, target_id) if grant else settings().sso_required
 
 
+def caller_grant(resources, login, identity_sub=None):
+    grants = [r for r in resources if r.kind == "access" and r.data["subject"] == "user"]
+    if settings().sso_required and identity_sub:
+        bound = next((r for r in grants if r.data.get("identity_sub") == identity_sub), None)
+        if bound:
+            return bound
+        grants = [r for r in grants if not r.data.get("identity_sub")]
+    return next((r for r in grants if r.data["name"].lower() == login.lower()), None)
+
+
+def bind_existing_people():
+    """Preserve legacy restrictions across future GitHub relinks or renames."""
+    if not settings().sso_required:
+        return
+    with Session() as db:
+        identities = db.scalars(select(SSOIdentity)).all()
+        bound = {
+            r.data.get("identity_sub") for r in db.scalars(select(Resource).where(Resource.kind == "access"))
+        }
+        for row in db.scalars(select(Resource).where(Resource.kind == "access")):
+            if row.data["subject"] != "user" or row.data.get("identity_sub"):
+                continue
+            matches = [i for i in identities if i.github_id and i.github_login.lower() == row.data["name"]]
+            if len(matches) == 1 and matches[0].sub not in bound:
+                row.data = {**row.data, "identity_sub": matches[0].sub}
+                bound.add(matches[0].sub)
+        db.commit()
+
+
+def bind_linked_person(db, identity):
+    resources = db.scalars(select(Resource).where(Resource.kind == "access")).all()
+    grant = caller_grant(resources, identity.github_login, identity.sub)
+    if grant and not grant.data.get("identity_sub") and identity.github_id:
+        grant.data = {**grant.data, "identity_sub": identity.sub}
+
+
 def people(db, grants):
     """Derive membership from verified sign-ins; grants are optional overrides."""
     from .sso import eligible
 
-    overrides = {r.data["name"].lower(): r for r in grants if r.data["subject"] == "user"}
-    rows, linked = [], set()
+    rows, used = [], set()
     for identity in db.scalars(select(SSOIdentity).order_by(SSOIdentity.email)):
         login = identity.github_login.lower() if identity.github_id else ""
-        override = overrides.get(login)
-        linked.add(login)
+        override = caller_grant(grants, login, identity.sub)
+        if override:
+            used.add(override.id)
         rows.append(
             {
                 "id": override.id if override else "sso-" + identity.sub,
@@ -34,6 +70,7 @@ def people(db, grants):
                 "name": login or identity.email,
                 "email": identity.email,
                 "github_login": login,
+                "identity_sub": identity.sub,
                 "scope": override.data["scope"] if override else "all",
                 "target_ids": override.data["target_ids"] if override else [],
                 "inherited": override is None,
@@ -49,8 +86,8 @@ def people(db, grants):
     # all-access allowlist entries confer no membership and need no separate row.
     rows.extend(
         {"id": row.id, **row.data, "sso": True, "status": "not_signed_in", "inherited": False}
-        for name, row in overrides.items()
-        if name not in linked and row.data["scope"] == "selected"
+        for row in grants
+        if row.data["subject"] == "user" and row.id not in used and row.data["scope"] == "selected"
     )
     return rows
 

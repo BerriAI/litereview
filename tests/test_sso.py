@@ -192,8 +192,19 @@ def test_signed_webhook_requires_current_google_and_linked_github_id(owner, monk
 
 
 def test_github_link_requires_both_proven_identities(client, monkeypatch):
+    from app.db import Resource
+
     enable(monkeypatch)
     identity(client, github_id=None, github_login="")
+    with Session() as db:
+        db.add(
+            Resource(
+                id="pending-person",
+                kind="access",
+                data={"subject": "user", "name": "trusted", "scope": "selected", "target_ids": []},
+            )
+        )
+        db.commit()
     monkeypatch.setattr(
         github, "config", lambda: {"client_id": "github-client", "client_secret": "github-secret"}
     )
@@ -219,6 +230,8 @@ def test_github_link_requires_both_proven_identities(client, monkeypatch):
     assert client.get(callback, follow_redirects=False).status_code == 403
     assert client.delete("/api/auth/github/link").status_code == 200
     assert not sso.eligible_caller({"id": 42, "login": "trusted"})
+    with Session() as db:
+        assert db.get(Resource, "pending-person").data["identity_sub"] == "google-sub"
 
 
 def test_sso_members_can_review_without_manual_people_entry(owner, monkeypatch):
@@ -297,3 +310,61 @@ def test_people_comes_from_sso_and_preserves_existing_restrictions(owner, monkey
     assert next(r for r in owner.get("/api/resources/access").json() if r["name"] == "new-person")[
         "inherited"
     ]
+
+
+@pytest.mark.parametrize("new_id", ["42", "99"])
+def test_person_restrictions_follow_google_identity_after_github_changes(owner, monkeypatch, new_id):
+    from app.access import bind_existing_people
+    from app.db import Resource
+
+    setup(owner)
+    enable(monkeypatch)
+    identity(owner, email="admin@berri.ai")
+    person = next(
+        r
+        for r in owner.get("/api/resources/access").json()
+        if r["subject"] == "user" and r["name"] == "trusted"
+    )
+    # Existing overrides migrate once and remain attached across relinks.
+    with Session() as db:
+        row = db.get(Resource, person["id"])
+        row.data = {**row.data, "scope": "selected", "target_ids": []}
+        db.commit()
+    bind_existing_people()
+    with Session() as db:
+        row = db.get(SSOIdentity, "google-sub")
+        row.github_id, row.github_login = new_id, "renamed-person"
+        db.commit()
+    person = next(r for r in owner.get("/api/resources/access").json() if r["subject"] == "user")
+    assert person["name"] == "renamed-person" and person["scope"] == "selected" and not person["target_ids"]
+    mock_github(monkeypatch)
+    data = payload(actor="renamed-person")
+    data["comment"]["user"]["id"] = int(new_id)
+    rid = webhook(owner, data, "renamed").json()["run_id"]
+    with Session() as db:
+        assert db.get(Run, rid).status == "rejected"
+    owner.put("/api/resources/access/" + person["id"], json={**person, "scope": "all"}).raise_for_status()
+    rid = webhook(owner, data, "allowed").json()["run_id"]
+    with Session() as db:
+        assert db.get(Run, rid).status == "queued"
+
+
+def test_new_override_binds_person_and_cannot_duplicate_after_relink(owner, monkeypatch):
+    setup(owner)
+    enable(monkeypatch)
+    identity(owner, email="admin@berri.ai")
+    identity(sub="new-person", email="new@berri.ai", github_id="50", github_login="new-login")
+    person = next(r for r in owner.get("/api/resources/access").json() if r["name"] == "new-login")
+    saved = owner.post("/api/resources/access", json={**person, "scope": "selected"}).json()
+    assert saved["identity_sub"] == "new-person"
+    with Session() as db:
+        db.get(SSOIdentity, "new-person").github_login = "changed-login"
+        db.commit()
+    person = next(r for r in owner.get("/api/resources/access").json() if r["name"] == "changed-login")
+    assert person["id"] == saved["id"] and not person["inherited"]
+    assert owner.post("/api/resources/access", json=person).status_code == 409
+    # A different approved Google person linking the recycled name does not take
+    # ownership of the old person's override.
+    identity(sub="other-person", email="other@berri.ai", github_id="51", github_login="new-login")
+    other = next(r for r in owner.get("/api/resources/access").json() if r["name"] == "new-login")
+    assert other["inherited"] and other["scope"] == "all"

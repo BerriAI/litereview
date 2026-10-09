@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from runner.catalog import HARNESS_VERSIONS, review_capabilities
 
 from . import github
-from .access import caller_permits, permits
+from .access import caller_grant, caller_permits, permits
 from .db import Job, Resource, Run, Session, uid
 from .limits import job_timeout, timing_limits
 from .security import digest
@@ -160,10 +160,12 @@ async def accept(payload, delivery):
     perm = await github.permission(repo, installation, actor)
     if perm not in ("read", "triage", "write", "maintain", "admin"):
         return None
+    identity = None
     if settings().sso_required:
-        from .sso import eligible_caller
+        from .sso import caller_identity
 
-        if not eligible_caller(comment_data.get("user", {})):
+        identity = caller_identity(comment_data.get("user", {}))
+        if not identity:
             return reject_command(
                 delivery,
                 repo,
@@ -176,7 +178,7 @@ async def accept(payload, delivery):
     if parse_error:
         return reject_command(delivery, repo, pr, actor, installation, parse_error)
     grants = {(r.data["subject"], r.data["name"]): r for r in resources.values() if r.kind == "access"}
-    caller_access = grants.get(("user", actor.lower()))
+    caller_access = caller_grant(resources.values(), actor, identity.sub if identity else None)
     repo_access = grants.get(("repo", repo.lower()))
     selected = []
     for selection in requests:
