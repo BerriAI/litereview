@@ -61,7 +61,7 @@ def test_failed_check_is_not_reported_as_empty_installation(owner, monkeypatch, 
     assert response.json()["detail"]
 
 
-async def test_installation_and_repository_pagination_and_suspension(monkeypatch):
+async def test_installation_and_repository_pagination_and_suspension(owner, monkeypatch):
     configured(monkeypatch)
     calls = []
 

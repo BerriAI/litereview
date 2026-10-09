@@ -12,10 +12,25 @@ from .settings import settings
 API = "https://api.github.com"
 
 
+def setup_state():
+    with Session() as db:
+        saved = db.get(Resource, "github")
+        return saved.data if saved else {}
+
+
+def require_enabled():
+    if setup_state().get("disabled"):
+        raise HTTPException(409, "GitHub setup was reset. Connect an App or undo the reset in Connections.")
+
+
 def config():
     with Session() as db:
         saved = db.get(Resource, "github")
+        if saved and saved.data.get("disabled"):
+            return {}
         data = json.loads(decrypt(saved.secret)) if saved and saved.secret else {}
+        if saved and saved.data.get("overrides_environment"):
+            return data
     s = settings()
     for field in ("app_id", "private_key", "webhook_secret", "client_id", "client_secret"):
         value = getattr(s, "github_" + field)
@@ -53,6 +68,7 @@ async def request(method, path, token=None, **kwargs):
 
 
 async def token(installation):
+    require_enabled()
     if settings().github_token and not installation:
         return settings().github_token
     response = await request("POST", f"/app/installations/{installation}/access_tokens")
@@ -102,6 +118,7 @@ async def installations():
 
 
 async def installed_repositories(installs=None):
+    require_enabled()
     if settings().github_token and not config().get("app_id"):
         r = await request("GET", "/user/repos?per_page=100&sort=updated", settings().github_token)
         return [{"name": x["full_name"], "installation_id": 0} for x in r.json()]

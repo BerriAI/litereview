@@ -33,6 +33,8 @@ The private workspace is deployed at [litereview.onrender.com](https://literevie
 
 ## Resume GitHub setup
 
+To start over, open **Connections → GitHub** and choose **Reset**. GitHub reviews pause, and setup returns to the first step. Your agents, model and MCP connections, skills, repository settings and secrets, access rules, and review history stay saved. The App and its installations remain on GitHub. Choose **Undo reset** to restore the previous connection, even after refreshing the page. Saving a new App replaces that backup. Active PR reviews must finish before you reset.
+
 **Connections → GitHub** verifies the saved App, shows its owning account, and lists the repositories it can currently access. “Setup needed” means the App has no connected repositories; saving App credentials alone is not a working integration. Returning from GitHub refreshes the check automatically, and **Check again** retries without discarding saved work.
 
 A private App owned by a personal account cannot be installed in BerriAI. Choose **Connect an organization instead** and have an organization owner complete App creation/installation if your account lacks permission. GitHub opens in a separate tab, so an unsuccessful attempt leaves your workspace available. Failed or expired callbacks return to setup with recovery instructions.
