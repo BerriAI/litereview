@@ -223,3 +223,16 @@ def test_google_return_destination_is_bound_and_local(client, monkeypatch, desti
         state = db.scalars(select(LoginState)).one()
         assert state.data["next"] == expected
     assert sso.return_path(destination) == expected
+
+
+def test_member_start_uses_sso_membership_without_duplicate_allowlist(owner, monkeypatch):
+    ready_workspace(owner, monkeypatch)
+    with Session() as db:
+        for grant in db.scalars(select(Resource).where(Resource.kind == "access")):
+            if grant.data["subject"] == "user":
+                db.delete(grant)
+        db.commit()
+    enable(monkeypatch)
+    identity(owner)
+    result = owner.get("/api/start").json()
+    assert result["state"] == "ready" and result["repositories"]

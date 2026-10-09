@@ -104,7 +104,9 @@ async def test_google_verification_checks_signature_and_accepts_workspace(signin
     with pytest.raises(jwt.PyJWTError):
         await sso.verify_google(".".join(parts), "nonce")
     with pytest.raises(ValueError):
-        await sso.verify_google(jwt.encode({"sub": "forged"}, "test-hmac-secret-" * 3, algorithm="HS256"), "nonce")
+        await sso.verify_google(
+            jwt.encode({"sub": "forged"}, "test-hmac-secret-" * 3, algorithm="HS256"), "nonce"
+        )
 
 
 def test_oauth_browser_binding_pkce_and_single_use(client, signing, monkeypatch):
@@ -217,3 +219,81 @@ def test_github_link_requires_both_proven_identities(client, monkeypatch):
     assert client.get(callback, follow_redirects=False).status_code == 403
     assert client.delete("/api/auth/github/link").status_code == 200
     assert not sso.eligible_caller({"id": 42, "login": "trusted"})
+
+
+def test_sso_members_can_review_without_manual_people_entry(owner, monkeypatch):
+    from app.db import Resource
+
+    setup(owner)
+    with Session() as db:
+        for grant in db.scalars(select(Resource).where(Resource.kind == "access")):
+            if grant.data["subject"] == "user":
+                db.delete(grant)
+        db.commit()
+    mock_github(monkeypatch)
+    enable(monkeypatch)
+    identity()
+    data = payload()
+    data["comment"]["user"]["id"] = 42
+    run = webhook(owner, data, "sso-default").json()["run_id"]
+    with Session() as db:
+        assert db.get(Run, run).status == "queued"
+
+
+@pytest.mark.parametrize("subject", ["user", "repo"])
+def test_sso_default_never_overrides_explicit_restrictions(owner, monkeypatch, subject):
+    from app.db import Resource
+
+    setup(owner)
+    with Session() as db:
+        for grant in db.scalars(select(Resource).where(Resource.kind == "access")):
+            if grant.data["subject"] == subject:
+                grant.data = {**grant.data, "scope": "selected", "target_ids": []}
+        db.commit()
+    mock_github(monkeypatch)
+    enable(monkeypatch)
+    identity()
+    data = payload()
+    data["comment"]["user"]["id"] = 42
+    run = webhook(owner, data, "restricted").json()["run_id"]
+    with Session() as db:
+        assert db.get(Run, run).status == "rejected"
+        assert not db.scalars(select(Job)).all()
+
+
+def test_people_comes_from_sso_and_preserves_existing_restrictions(owner, monkeypatch):
+    from app.db import Resource
+
+    setup(owner)
+    with Session() as db:
+        db.add(
+            Resource(
+                id="not-yet-linked",
+                kind="access",
+                data={"subject": "user", "name": "limited-person", "scope": "selected", "target_ids": []},
+            )
+        )
+        db.commit()
+    enable(monkeypatch)
+    identity(owner, email="admin@berri.ai")
+    identity(sub="new", email="new@berri.ai", github_id="43", github_login="new-person")
+    identity(sub="unlinked", email="unlinked@berri.ai", github_id=None, github_login="")
+    identity(
+        sub="expired", email="expired@berri.ai", github_id="44", github_login="expired-person", expires_at=0
+    )
+    rows = [r for r in owner.get("/api/resources/access").json() if r["subject"] == "user"]
+    assert len(rows) == 5
+    fresh = next(r for r in rows if r["name"] == "new-person")
+    assert fresh["inherited"] and fresh["scope"] == "all" and fresh["status"] == "ready"
+    assert next(r for r in rows if r["email"] == "unlinked@berri.ai")["status"] == "github_required"
+    assert next(r for r in rows if r["email"] == "expired@berri.ai")["status"] == "sign_in_required"
+    assert next(r for r in rows if r["name"] == "limited-person")["status"] == "not_signed_in"
+    override = owner.post(
+        "/api/resources/access", json={**fresh, "scope": "selected", "target_ids": []}
+    ).json()
+    rows = owner.get("/api/resources/access").json()
+    assert not next(r for r in rows if r["name"] == "new-person")["inherited"]
+    owner.delete("/api/resources/access/" + override["id"]).raise_for_status()
+    assert next(r for r in owner.get("/api/resources/access").json() if r["name"] == "new-person")[
+        "inherited"
+    ]

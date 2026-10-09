@@ -41,6 +41,8 @@ def return_path(value):
             "/agents",
             "/groups",
             "/skills",
+            "/mcp",
+            "/models",
             "/settings",
             "/people",
             "/runs",

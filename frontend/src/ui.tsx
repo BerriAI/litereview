@@ -10,6 +10,7 @@ import {
   Network,
   ChevronDown,
   Check,
+  Menu,
 } from "lucide-react";
 
 export function Brand() {
@@ -318,24 +319,37 @@ export function Modal({
   children,
   page = false,
   description,
+  openNavigation,
+  navigationOpen = false,
 }: {
   title: string;
   close: () => void;
   children: React.ReactNode;
   page?: boolean;
   description?: string;
+  openNavigation?: () => void;
+  navigationOpen?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const navigable = page && !!openNavigation;
   useEffect(() => {
     const dialog = ref.current;
-    dialog?.showModal();
+    if (navigable) dialog?.show();
+    else dialog?.showModal();
     return () => dialog?.close();
-  }, []);
+  }, [navigable]);
   return (
     <dialog
       className={page ? "page-editor" : "compact-editor"}
       ref={ref}
+      inert={page && navigationOpen}
+      onKeyDown={(e) => {
+        if (navigable && e.key === "Escape" && !e.defaultPrevented) {
+          e.preventDefault();
+          close();
+        }
+      }}
       onCancel={(e) => {
         e.preventDefault();
         close();
@@ -343,6 +357,16 @@ export function Modal({
       aria-labelledby={titleId}
     >
       <div className="dialog-head">
+        {page && openNavigation && (
+          <button
+            type="button"
+            className="icon mobile-menu"
+            aria-label="Open navigation"
+            onClick={openNavigation}
+          >
+            <Menu size={18} />
+          </button>
+        )}
         {page && (
           <button
             type="button"

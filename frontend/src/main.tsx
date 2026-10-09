@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Bot,
   Layers,
   Plug,
+  Settings,
+  Network,
   BookOpen,
   History,
   Plus,
@@ -32,6 +34,7 @@ import "@fontsource-variable/geist-mono";
 import "./style.css";
 import "./onboarding.css";
 import { Documentation } from "./docs";
+import { MCPAuthFields, MCPServers, People } from "./resources";
 import { ReviewResult } from "./review-result";
 import { api, send } from "./api";
 import { GitHubSetup, GitHubSettings } from "./github-setup";
@@ -53,6 +56,7 @@ import {
 type Row = { id: string; name: string; [key: string]: any };
 type Kind = "agents" | "groups" | "connections" | "skills" | "repos" | "access";
 type Store = Record<Kind, Row[]>;
+type Editor = { kind: Kind; data: any; id?: string };
 const empty: Store = {
   agents: [],
   groups: [],
@@ -66,7 +70,9 @@ const icons = {
   access: Users,
   agents: Bot,
   groups: Layers,
-  connections: Plug,
+  connections: Settings,
+  mcp: Plug,
+  models: Network,
   skills: BookOpen,
   runs: History,
 };
@@ -76,6 +82,8 @@ const titles = {
   agents: "PR agents",
   groups: "Agent groups",
   connections: "Settings",
+  mcp: "MCP servers",
+  models: "Models",
   skills: "Skills",
   runs: "Runs",
 };
@@ -85,8 +93,9 @@ const descriptions = {
     "Choose which agents and groups people and repositories can use. Both must have access to start a review.",
   agents: "Create reusable reviewers with their own model, tools, and skills.",
   groups: "Optional shortcuts for running several agents together.",
-  connections:
-    "Workspace model connections, MCP servers, and advanced App settings.",
+  connections: "GitHub App settings for this workspace.",
+  mcp: "Connect your tools, then choose which ones each agent can use.",
+  models: "Model providers and gateways available to your agents.",
   skills: "Reusable instructions and files for your agents.",
   runs: "Review progress, findings, and visual evidence from each agent.",
 };
@@ -106,7 +115,8 @@ function App() {
   const [query, setQuery] = useState("");
   const [accessSubject, setAccessSubject] = useState<"user" | "repo">("user");
   const [accessQuery, setAccessQuery] = useState("");
-  const [tab, setTab] = useState("models");
+  const tab =
+    path === "/mcp" ? "mcp" : path === "/models" ? "models" : "github";
   const [expired, setExpired] = useState(false);
   const [starter, setStarter] = useState(false);
   const [agentFilter, setAgentFilter] = useState("all");
@@ -116,11 +126,12 @@ function App() {
   const [githubRevision, setGithubRevision] = useState(0);
   const [runs, setRuns] = useState<Row[]>([]);
   const [run, setRun] = useState<any>(null);
-  const [editor, setEditor] = useState<{
-    kind: Kind;
-    data: any;
-    id?: string;
-  } | null>(null);
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const [draft, setDraft] = useState<Editor | null>(null);
+  const oauthHandled = useRef(false);
+  const draftKey = session?.user?.admin
+    ? "litereview:agent-draft:" + (session.user.sub || session.user.login)
+    : "";
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
   const [models, setModels] = useState<Record<string, string[]>>({});
@@ -146,10 +157,51 @@ function App() {
       {
         repositories: "repos",
         settings: "connections",
+        mcp: "connections",
+        models: "connections",
         people: "access",
       } as Record<string, string>
     )[route] || (route === "connections" ? "repos" : route);
   const active = (section in titles ? section : "repos") as keyof typeof titles;
+  const navActive = active === "connections" && tab !== "github" ? tab : active;
+  const pageTitle = titles[navActive];
+  const pageDescription =
+    active === "access" && session?.sso_required
+      ? "People appear after Google sign-in. Link GitHub to start reviews. Everyone can use all agents by default; you can restrict access here."
+      : descriptions[navActive];
+  useEffect(() => {
+    if (!draftKey) {
+      setDraft(null);
+      return;
+    }
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(draftKey) || "null");
+      if (saved?.kind === "agents") setDraft(saved);
+    } catch {
+      /* Storage is optional. */
+    }
+  }, [draftKey]);
+  useEffect(() => {
+    if (editor?.kind !== "agents" || !draftKey) return;
+    setDraft(editor);
+    try {
+      sessionStorage.setItem(draftKey, JSON.stringify(editor));
+    } catch {
+      /* Keep the in-memory draft. */
+    }
+  }, [editor, draftKey]);
+  const clearDraft = () => {
+    setDraft(null);
+    try {
+      if (draftKey) sessionStorage.removeItem(draftKey);
+    } catch {
+      /* Storage is optional. */
+    }
+  };
+  const closeEditor = () => {
+    if (editor?.kind === "agents") clearDraft();
+    setEditor(null);
+  };
   const modelConnection =
     editor?.kind === "agents" ? editor.data.connection_id : "";
   useEffect(() => {
@@ -205,7 +257,10 @@ function App() {
     if (next === "/people") setAccessSubject("user");
   };
   useEffect(() => {
-    const fn = () => setPath(location.pathname);
+    const fn = () => {
+      setPath(location.pathname);
+      setEditor(null);
+    };
     addEventListener("popstate", fn);
     return () => removeEventListener("popstate", fn);
   }, []);
@@ -276,7 +331,7 @@ function App() {
   }, [session?.user?.admin, workspaceLoaded]);
   useEffect(() => {
     if (!session?.user?.admin || ["/account", "/start"].includes(path)) return;
-    document.title = titles[active] + " · LiteReview";
+    document.title = pageTitle + " · LiteReview";
     if (!editor)
       document
         .querySelector<HTMLElement>("main h1")
@@ -422,6 +477,10 @@ function App() {
         type: tab === "mcp" ? "mcp" : "gateway",
         base_url: "",
         api_key: "",
+        auth_type: tab === "mcp" ? "oauth" : "bearer",
+        oauth_client_id: "",
+        oauth_client_secret: "",
+        oauth_scope: "",
       },
       skills: {
         name: "",
@@ -440,13 +499,19 @@ function App() {
     };
     setEditor({
       kind,
-      id: item?.id,
+      id: item?.inherited ? undefined : item?.id,
       data: structuredClone(
         item
           ? {
               ...defaults[kind],
               ...item,
-              ...(kind === "connections" ? { api_key: "" } : {}),
+              ...(kind === "connections"
+                ? {
+                    api_key: "",
+                    oauth_client_secret: "",
+                    auth_type: item.auth_type || "bearer",
+                  }
+                : {}),
               ...(kind === "repos" ? { test_secrets: {} } : {}),
             }
           : defaults[kind],
@@ -463,19 +528,89 @@ function App() {
         ? [...editor!.data[key], value]
         : editor!.data[key].filter((v: string) => v !== value),
     );
+  const discoverConnection = async (item: Row) => {
+    try {
+      const r = await api(`/connections/${item.id}/test`, send("POST"));
+      if (r.models) setModels((m) => ({ ...m, [item.id]: r.models }));
+      setNotice(
+        r.models
+          ? `Connected · ${r.models.length} models available.`
+          : `Connected · ${r.tools.length} tools discovered. Choose tools in an agent to use them.`,
+      );
+    } finally {
+      await load();
+    }
+  };
+  const startOAuth = async (item: Row) => {
+    const result = await api(
+      `/connections/${item.id}/oauth/start`,
+      send("POST"),
+    );
+    location.assign(result.authorization_url);
+  };
+  const connectOAuth = (item: Row) => mutate(() => startOAuth(item));
+  const disconnectOAuth = (item: Row) =>
+    mutate(async () => {
+      await api(`/connections/${item.id}/oauth/disconnect`, send("POST"));
+      await load();
+      setNotice(
+        "Disconnected from LiteReview. To revoke the provider’s grant, use that provider’s account settings.",
+      );
+    });
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const result = params.get("oauth"),
+      cid = params.get("connection");
+    if (
+      !session?.user?.admin ||
+      !workspaceLoaded ||
+      !result ||
+      !cid ||
+      oauthHandled.current
+    )
+      return;
+    oauthHandled.current = true;
+    history.replaceState({}, "", location.pathname);
+    if (result === "connected") {
+      setNotice("Account authorized. Testing the connection…");
+      void mutate(() => discoverConnection({ id: cid, name: "" }));
+    } else
+      setError(
+        result === "denied"
+          ? "OAuth was cancelled. Your server is saved; choose Connect account to try again."
+          : "OAuth could not finish. Your server is saved; reconnect or check its OAuth settings.",
+      );
+  }, [session?.user?.admin, workspaceLoaded]);
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!editor) return;
     setBusy(true);
     setFormError("");
     try {
-      await api(
+      const saved = await api(
         "/resources/" + editor.kind + (editor.id ? "/" + editor.id : ""),
         send(editor.id ? "PUT" : "POST", editor.data),
       );
+      // Retain the saved ID if discovery fails, so Retry never creates duplicates.
+      setEditor({
+        kind: editor.kind,
+        id: saved.id,
+        data: { ...saved, api_key: "", oauth_client_secret: "" },
+      });
       await load();
+      if (editor.kind === "connections") {
+        if (
+          saved.type === "mcp" &&
+          saved.auth_type === "oauth" &&
+          !saved.oauth?.connected
+        ) {
+          await startOAuth(saved);
+          return;
+        }
+        await discoverConnection(saved);
+      } else setNotice("Saved successfully.");
+      if (editor.kind === "agents") clearDraft();
       setEditor(null);
-      setNotice("Saved successfully.");
       setGithubRevision((v) => v + 1);
     } catch (e) {
       setFormError((e as Error).message);
@@ -484,30 +619,23 @@ function App() {
     }
   };
   const remove = (kind: Kind, item: Row) => {
+    const reset = kind === "access" && item.sso;
     if (
       confirm(
-        kind === "access"
-          ? `Remove access for “${item.name}”?`
-          : `Delete “${item.name}”?`,
+        reset
+          ? `Reset access for “${item.name}” to all agents and groups? Google sign-in and linked GitHub are still required.`
+          : kind === "access"
+            ? `Remove access for “${item.name}”?`
+            : `Delete “${item.name}”?`,
       )
     )
       mutate(async () => {
         await api(`/resources/${kind}/${item.id}`, send("DELETE"));
         await load();
-        setNotice("Deleted.");
+        setNotice(reset ? "Access reset to workspace default." : "Deleted.");
       });
   };
-  const testConnection = (item: Row) =>
-    mutate(async () => {
-      const r = await api(`/connections/${item.id}/test`, send("POST"));
-      if (r.models) setModels((m) => ({ ...m, [item.id]: r.models }));
-      await load();
-      setNotice(
-        r.models
-          ? `Connected · ${r.models.length} models available.`
-          : `Connected · ${r.tools.length} tools discovered.`,
-      );
-    });
+  const testConnection = (item: Row) => mutate(() => discoverConnection(item));
   const modelConnections = store.connections.filter((c) => c.type !== "mcp");
   const mcpConnections = store.connections.filter((c) => c.type === "mcp");
   const needsRepositories =
@@ -633,7 +761,14 @@ function App() {
               )
           : store[active as Kind];
   const filtered = rows.filter((row) => {
-    const searchable = [row.name, row.model, row.description, row.repo, row.pr]
+    const searchable = [
+      row.name,
+      row.model,
+      row.description,
+      row.email,
+      row.repo,
+      row.pr,
+    ]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
@@ -661,10 +796,12 @@ function App() {
             ? "Create skill"
             : tab === "github"
               ? "Add repository"
-              : "Add connection";
+              : tab === "mcp"
+                ? "Add MCP server"
+                : "Add connection";
   const hideRepoTable =
     active === "connections" && tab === "github" && !store.repos.length;
-  const PageIcon = icons[active];
+  const PageIcon = icons[navActive];
   const isRunDetail = active === "runs" && Boolean(path.split("/")[2]);
   const newKind: Kind =
     active === "connections"
@@ -694,7 +831,8 @@ function App() {
         <nav aria-label="Main navigation">
           {[
             ["Review", ["agents", "groups", "runs"]],
-            ["Workspace", ["repos", "access", "skills", "connections"]],
+            ["Resources", ["mcp", "skills", "models"]],
+            ["Workspace", ["repos", "access", "connections"]],
           ].map(([label, keys]) => (
             <div className="nav-group" key={label as string}>
               <div className="workspace-label">{label as string}</div>
@@ -704,8 +842,8 @@ function App() {
                   <button
                     key={key}
                     aria-label={titles[key as keyof typeof titles]}
-                    aria-current={active === key ? "page" : undefined}
-                    className={active === key ? "selected" : ""}
+                    aria-current={navActive === key ? "page" : undefined}
+                    className={navActive === key ? "selected" : ""}
                     onClick={() =>
                       navigate(
                         (
@@ -780,7 +918,16 @@ function App() {
           onClick={() => setMobileNav(false)}
         />
       )}
-      <main id="main-content" inert={mobileNav}>
+      <main
+        id="main-content"
+        inert={
+          mobileNav ||
+          !!(
+            editor &&
+            ["agents", "groups", "skills", "repos"].includes(editor.kind)
+          )
+        }
+      >
         <div className="topbar">
           <button
             className="icon mobile-menu"
@@ -792,22 +939,52 @@ function App() {
           </button>
           <span className="topbar-product">LiteReview</span>
           <ChevronRight size={13} />
-          <span>{titles[active]}</span>
+          <span>{pageTitle}</span>
         </div>
         <div className="page">
+          {draft && !editor && (
+            <div className="draft-banner">
+              <span>
+                Agent draft saved · {draft.data.name || "Untitled agent"}
+              </span>
+              <div className="resource-actions">
+                <button
+                  onClick={() => {
+                    navigate("/agents");
+                    setEditor(draft);
+                    setFormError("");
+                  }}
+                >
+                  Resume editing
+                </button>
+                <button
+                  className="icon"
+                  aria-label="Discard agent draft"
+                  onClick={clearDraft}
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            </div>
+          )}
           {active !== "repos" && (
             <header className="page-heading">
               <div>
                 <div className="title-line">
                   <PageIcon size={22} />
                   <h1 tabIndex={-1}>
-                    {isRunDetail ? "Review results" : titles[active]}
+                    {isRunDetail ? "Review results" : pageTitle}
                   </h1>
                 </div>
-                <p>{descriptions[active]}</p>
+                <p>{pageDescription}</p>
               </div>
               {active !== "runs" &&
                 rows.length > 0 &&
+                !(
+                  active === "access" &&
+                  accessSubject === "user" &&
+                  session.sso_required
+                ) &&
                 !(active === "connections" && tab === "github") && (
                   <button className="primary" onClick={() => edit(newKind)}>
                     <Plus size={16} />
@@ -875,25 +1052,6 @@ function App() {
             )}
           {active === "connections" && (
             <>
-              <div className="tabs">
-                {[
-                  ["models", "Models"],
-                  ["mcp", "MCP servers"],
-                  ["github", "GitHub App"],
-                ].map(([k, t]) => (
-                  <button
-                    key={k}
-                    aria-pressed={tab === k}
-                    className={tab === k ? "active" : ""}
-                    onClick={() => {
-                      setTab(k);
-                      setQuery("");
-                    }}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
               {tab === "github" && (
                 <GitHubSettings
                   setup={setup}
@@ -902,13 +1060,6 @@ function App() {
                   onReset={resetGithub}
                   onRepositories={() => navigate("/repositories")}
                 />
-              )}
-              {tab === "mcp" && (
-                <div className="info">
-                  <CircleHelp size={16} />
-                  Add a remote Streamable HTTP MCP server, test it to discover
-                  tools, then select its tools on each agent.
-                </div>
               )}
             </>
           )}
@@ -938,11 +1089,9 @@ function App() {
               onReset={resetGithub}
               onSettings={() => {
                 navigate("/settings");
-                setTab("github");
               }}
               onModel={() => {
-                navigate("/settings");
-                setTab("models");
+                navigate("/models");
               }}
               onAgent={(agent) =>
                 agent ? edit("agents", agent) : setStarter(true)
@@ -1120,7 +1269,27 @@ function App() {
               )}
             </>
           ) : active === "repos" ||
-            (active === "connections" && tab === "github") ? null : (
+            (active === "connections" && tab === "github") ? null : active ===
+              "access" &&
+            accessSubject === "user" &&
+            session.sso_required ? (
+            <People
+              rows={rows}
+              targets={[...store.agents, ...store.groups]}
+              edit={(row) => edit("access", row)}
+              reset={(row) => remove("access", row)}
+            />
+          ) : active === "connections" && tab === "mcp" ? (
+            <MCPServers
+              rows={rows}
+              busy={busy}
+              edit={(row) => edit("connections", row)}
+              connect={connectOAuth}
+              test={testConnection}
+              disconnect={disconnectOAuth}
+              remove={(row) => remove("connections", row)}
+            />
+          ) : (
             <>
               {active === "agents" && store.agents.length > 0 && (
                 <div className="tabs agent-tabs" aria-label="Filter agents">
@@ -1228,7 +1397,7 @@ function App() {
                     <button
                       onClick={() =>
                         active === "agents" && !modelConnections.length
-                          ? (navigate("/settings"), setTab("models"))
+                          ? navigate("/models")
                           : edit(newKind)
                       }
                     >
@@ -1438,7 +1607,7 @@ function App() {
                                 disabled={busy}
                                 onClick={() => testConnection(row)}
                               >
-                                Test
+                                Test connection
                               </button>
                             )}
                             {active !== "runs" && (
@@ -1519,22 +1688,30 @@ function App() {
             }[editor.kind]
           }
           title={
-            editor.kind === "access"
-              ? (editor.id ? "Edit " : "Add ") +
-                (editor.data.subject === "user"
-                  ? "person"
-                  : "repository access")
-              : (editor.id ? "Edit " : "Create ") +
-                {
-                  access: "access",
-                  agents: "PR agent",
-                  groups: "agent group",
-                  connections: "connection",
-                  skills: "skill",
-                  repos: "repository",
-                }[editor.kind]
+            editor.kind === "access" && editor.data.sso
+              ? "Edit access"
+              : editor.kind === "connections" && editor.data.type === "mcp"
+                ? editor.id
+                  ? "Edit MCP server"
+                  : "Add MCP server"
+                : editor.kind === "access"
+                  ? (editor.id ? "Edit " : "Add ") +
+                    (editor.data.subject === "user"
+                      ? "person"
+                      : "repository access")
+                  : (editor.id ? "Edit " : "Create ") +
+                    {
+                      access: "access",
+                      agents: "PR agent",
+                      groups: "agent group",
+                      connections: "connection",
+                      skills: "skill",
+                      repos: "repository",
+                    }[editor.kind]
           }
-          close={() => !busy && setEditor(null)}
+          close={() => !busy && closeEditor()}
+          openNavigation={() => setMobileNav(true)}
+          navigationOpen={mobileNav}
         >
           <form onSubmit={save} className="resource-editor-form">
             <div className={"dialog-body resource-form " + editor.kind}>
@@ -1554,7 +1731,12 @@ function App() {
                       : "Identify this resource in your workspace."
                 }
               >
-                {editor.kind === "access" && editor.data.subject === "repo" ? (
+                {editor.kind === "access" && editor.data.sso ? (
+                  <Field label="GitHub account">
+                    <input value={editor.data.name} readOnly />
+                  </Field>
+                ) : editor.kind === "access" &&
+                  editor.data.subject === "repo" ? (
                   <SearchPicker
                     label="Repository"
                     value={editor.data.name}
@@ -1965,7 +2147,7 @@ function App() {
                     description="Attach reusable instructions and supporting files. The same skill can guide multiple agents."
                   >
                     {!store.skills.length ? (
-                      <p>Create reusable instructions on the Skills page.</p>
+                      <p>Add reusable instructions and supporting files.</p>
                     ) : (
                       store.skills.map((s) => (
                         <Toggle
@@ -1980,16 +2162,20 @@ function App() {
                         </Toggle>
                       ))
                     )}
+                    <button
+                      type="button"
+                      className="resource-link"
+                      onClick={() => navigate("/skills")}
+                    >
+                      Manage skills <ArrowUpRight size={14} />
+                    </button>
                   </FormSection>
                   <FormSection
                     title="MCP tools"
                     description="Select tools from your shared connections. Only selected tools are available to this agent."
                   >
                     {!mcpConnections.length ? (
-                      <p>
-                        Add and test an MCP server under Settings to select its
-                        tools here.
-                      </p>
+                      <p>Connect an MCP server to select its tools here.</p>
                     ) : (
                       mcpConnections.map((c) => (
                         <div className="mcp-selector" key={c.id}>
@@ -2039,6 +2225,13 @@ function App() {
                         </div>
                       ))
                     )}
+                    <button
+                      type="button"
+                      className="resource-link"
+                      onClick={() => navigate("/mcp")}
+                    >
+                      Manage MCP servers <ArrowUpRight size={14} />
+                    </button>
                   </FormSection>
                 </>
               )}
@@ -2216,17 +2409,20 @@ function App() {
                   title="Connection"
                   description="Credentials are stored securely and shared only through the review service."
                 >
-                  <Field label="Connection type">
-                    <select
-                      value={editor.data.type}
-                      onChange={(e) => update("type", e.target.value)}
-                    >
-                      <option value="gateway">OpenAI-compatible gateway</option>
-                      <option value="openai">OpenAI</option>
-                      <option value="anthropic">Anthropic</option>
-                      <option value="mcp">MCP server (Streamable HTTP)</option>
-                    </select>
-                  </Field>
+                  {editor.data.type !== "mcp" && (
+                    <Field label="Connection type">
+                      <select
+                        value={editor.data.type}
+                        onChange={(e) => update("type", e.target.value)}
+                      >
+                        <option value="gateway">
+                          OpenAI-compatible gateway
+                        </option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                      </select>
+                    </Field>
+                  )}
                   <Field
                     label={
                       editor.data.type === "mcp"
@@ -2246,30 +2442,32 @@ function App() {
                       required={["gateway", "mcp"].includes(editor.data.type)}
                     />
                   </Field>
-                  <Field
-                    label={
-                      editor.data.type === "mcp" ? "Bearer token" : "API key"
-                    }
-                    hint={
-                      editor.data.has_secret
-                        ? "A credential is saved. Leave blank to keep it."
-                        : "Encrypted at rest. Shared only through the job-scoped relay."
-                    }
-                  >
-                    <input
-                      type="password"
-                      autoComplete="new-password"
-                      value={editor.data.api_key}
-                      onChange={(e) => update("api_key", e.target.value)}
-                      placeholder={
-                        editor.data.has_secret ? "•••••••• (saved)" : ""
+                  {editor.data.type === "mcp" && (
+                    <MCPAuthFields data={editor.data} update={update} />
+                  )}
+                  {(editor.data.type !== "mcp" ||
+                    (editor.data.auth_type || "bearer") === "bearer") && (
+                    <Field
+                      label={
+                        editor.data.type === "mcp" ? "Bearer token" : "API key"
                       }
-                    />
-                  </Field>
-                  <div className="info">
-                    Save the connection, then use Test to discover{" "}
-                    {editor.data.type === "mcp" ? "tools" : "models"}.
-                  </div>
+                      hint={
+                        editor.data.has_secret
+                          ? "A credential is saved. Leave blank to keep it."
+                          : "Encrypted at rest. Shared only through the job-scoped relay."
+                      }
+                    >
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={editor.data.api_key}
+                        onChange={(e) => update("api_key", e.target.value)}
+                        placeholder={
+                          editor.data.has_secret ? "•••••••• (saved)" : ""
+                        }
+                      />
+                    </Field>
+                  )}
                 </FormSection>
               )}
               {editor.kind === "skills" && (
@@ -2433,11 +2631,7 @@ function App() {
                   <span>Changes apply to future reviews.</span>
                 )}
               </div>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setEditor(null)}
-              >
+              <button type="button" disabled={busy} onClick={closeEditor}>
                 Cancel
               </button>
               <button className="primary" disabled={busy}>
@@ -2446,6 +2640,13 @@ function App() {
                     <Loader2 size={15} className="spin" />
                     Saving…
                   </>
+                ) : editor.kind === "connections" ? (
+                  editor.data.type === "mcp" &&
+                  editor.data.auth_type === "oauth" ? (
+                    "Save & connect"
+                  ) : (
+                    "Save & test"
+                  )
                 ) : (
                   "Save " +
                   {

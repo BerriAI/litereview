@@ -10,6 +10,10 @@ class Connection(BaseModel):
     base_url: str = ""
     api_key: str = ""
     tools: list[dict] = Field(default_factory=list)
+    auth_type: Literal["none", "bearer", "oauth"] = "bearer"
+    oauth_client_id: str = Field(default="", max_length=1000)
+    oauth_client_secret: str = Field(default="", max_length=4000)
+    oauth_scope: str = Field(default="", max_length=2000)
 
     @field_validator("base_url")
     @classmethod

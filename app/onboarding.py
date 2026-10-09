@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from runner.catalog import HARNESS_VERSIONS, review_capabilities
 
 from . import github, reviews
-from .access import permits
+from .access import caller_permits, permits
 from .db import Job, Resource, Run, Session
 from .schemas import Repository
 from .security import require_admin, require_user
@@ -185,7 +185,7 @@ async def member_start(user):
         (r.data["subject"], r.data["name"].lower()): r for r in resources.values() if r.kind == "access"
     }
     caller = grants.get(("user", user["github_login"].lower()))
-    if not caller:
+    if not caller and not settings().sso_required:
         return {**result, "state": "approval"}
     checked = {a["id"] for a in readiness["agents"] if a["checked"]}
     candidates = []
@@ -196,7 +196,7 @@ async def member_start(user):
         targets = []
         for target in resources.values():
             if target.kind not in ("agents", "groups") or not (
-                permits(caller, target.id) and permits(grant, target.id)
+                caller_permits(caller, target.id) and permits(grant, target.id)
             ):
                 continue
             group = (

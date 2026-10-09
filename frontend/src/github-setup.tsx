@@ -169,9 +169,11 @@ export function GitHubSetup(p: Props) {
     status.public !== true &&
     !installed.length;
   const hasModels = p.connections.some((c) => c.type !== "mcp");
-  const hasPeople = p.access.some(
-    (g) => g.subject === "user" && (g.scope === "all" || g.target_ids.length),
-  );
+  const hasPeople =
+    p.ssoRequired ||
+    p.access.some(
+      (g) => g.subject === "user" && (g.scope === "all" || g.target_ids.length),
+    );
   const appUrl = status?.app_url || p.setup.github_app_url;
   const installUrl = appUrl ? appUrl + "/installations/new" : "";
   const needs = !hasModels
@@ -421,7 +423,7 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
                         check:
                           "Run a private harness check before your first review. This uses Modal and model credits.",
                         people:
-                          "Only approved People can request reviews. Google sign-in alone does not grant access.",
+                          "Add the GitHub usernames that can request reviews and choose their access.",
                         review:
                           "Connect your personal GitHub identity and get a comment for a repository you can use.",
                       }[needs]
@@ -614,8 +616,9 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
       <p className="repository-policy">
         <LockKeyhole size={14} />
         <span>
-          Public and private repositories are supported. New selections allow
-          existing approved People to use their permitted reviewers.{" "}
+          {p.ssoRequired
+            ? "Public and private repositories are supported. People with current Google sign-in and linked GitHub can use their permitted reviewers."
+            : "Public and private repositories are supported. New selections allow approved People to use their permitted reviewers."}{" "}
           <button className="text-button" onClick={p.onPeople}>
             Manage people
           </button>
