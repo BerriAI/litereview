@@ -332,12 +332,13 @@ export function Modal({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const navigable = page && !!openNavigation;
   useEffect(() => {
     const dialog = ref.current;
-    if (page) dialog?.show();
+    if (navigable) dialog?.show();
     else dialog?.showModal();
     return () => dialog?.close();
-  }, [page]);
+  }, [navigable]);
   return (
     <dialog
       className={page ? "page-editor" : "compact-editor"}
