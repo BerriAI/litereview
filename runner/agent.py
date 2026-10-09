@@ -176,7 +176,9 @@ async def run(relay, data):
                     ],
                 }
             )
-        for _ in range(data["max_rounds"]):
+        rounds = 0
+        while data.get("max_rounds") is None or rounds < data["max_rounds"]:
+            rounds += 1
             prune_images(messages)
             reply = await relay("model", {"messages": messages, "tools": definitions(cfg)})
             messages.append(reply)
@@ -245,7 +247,7 @@ async def main():
     relay = Relay()
     try:
         data = await relay("bootstrap")
-        async with asyncio.timeout(data["timeout"]):
+        async with asyncio.timeout(data.get("timeout")):
             await run(relay, data)
     except Exception as exc:
         while isinstance(exc, BaseExceptionGroup) and exc.exceptions:

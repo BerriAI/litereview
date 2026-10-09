@@ -80,6 +80,15 @@ export function Documentation() {
                 incomplete. Longer reviews can use more credits. Private harness
                 checks do not use this minimum.
               </p>
+              <p>
+                Runs have no LiteReview time or model-call limit by default. In
+                the agent editor, expand Optional limits to set Maximum run time
+                (minutes), Maximum model calls, or both. Clear a field to remove
+                its limit. Maximum run time includes setup; minimum review time
+                does not create a maximum. These settings apply to future runs,
+                including group instances. Modal’s 24-hour sandbox lifetime and
+                provider limits still apply.
+              </p>
             </li>
             <li>
               <h3>Read the results</h3>

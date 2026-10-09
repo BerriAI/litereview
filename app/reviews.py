@@ -64,8 +64,7 @@ def expand(groups, resources):
                 raise HTTPException(
                     409, "A reviewer's minimum time exceeds the workspace limit. Update it in PR agents."
                 )
-            if minutes:
-                data.update(timing_limits(minutes))
+            data.update(timing_limits(minutes, data.get("maximum_minutes"), data.get("max_model_calls")))
             conn = resources.get(data["connection_id"])
             if not conn or conn.kind != "connections" or conn.data["type"] == "mcp":
                 raise HTTPException(409, "An agent needs a model connection.")
@@ -405,7 +404,7 @@ async def publish(run_id):
 
 
 async def dispatcher():
-    from .runtime import launch, terminate
+    from .runtime import launch, terminate, watch_existing
 
     launching = {}
     while True:
@@ -414,7 +413,8 @@ async def dispatcher():
             with Session() as db:
                 active = db.scalars(select(Job).where(Job.status.in_(["starting", "running"]))).all()
                 for job in active:
-                    if job.started_at and now - job.started_at > job_timeout(job.config) + 300:
+                    timeout = job_timeout(job.config)
+                    if timeout is not None and job.started_at and now - job.started_at > timeout + 300:
                         job.status = "timed_out"
                         job.finished_at = now
                         job.result = {
@@ -425,6 +425,8 @@ async def dispatcher():
                         }
                         if job.sandbox_id:
                             asyncio.create_task(terminate(job.sandbox_id))
+                    elif job.sandbox_id and job.id not in launching:
+                        launching[job.id] = asyncio.create_task(watch_existing(job.id, job.sandbox_id))
                 db.commit()
                 queued = (
                     select(Job)
@@ -463,8 +465,8 @@ async def dispatcher():
                         db.commit()
             for job_id, task in list(launching.items()):
                 if task.done():
-                    task.result()
                     del launching[job_id]
+                    task.result()
         except asyncio.CancelledError:
             raise
         except Exception:

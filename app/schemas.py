@@ -47,6 +47,8 @@ class AgentModel(BaseModel):
 class Agent(ReviewTarget, AgentModel):
     instructions: str = Field(min_length=1, max_length=20000)
     minimum_minutes: int = Field(default=0, ge=0, le=1440, strict=True)
+    maximum_minutes: int | None = Field(default=None, ge=1, le=1440, strict=True)
+    max_model_calls: int | None = Field(default=None, ge=1, strict=True)
     skill_ids: list[str] = Field(default_factory=list)
     mcps: list[dict] = Field(default_factory=list)
 
@@ -58,6 +60,12 @@ class Agent(ReviewTarget, AgentModel):
         if value > settings().max_review_minutes:
             raise ValueError(f"Minimum review time cannot exceed {settings().max_review_minutes} minutes.")
         return value
+
+    @model_validator(mode="after")
+    def compatible_times(self):
+        if self.maximum_minutes is not None and self.maximum_minutes <= self.minimum_minutes:
+            raise ValueError("Maximum run time must exceed minimum review time to allow for setup.")
+        return self
 
 
 class Member(BaseModel):

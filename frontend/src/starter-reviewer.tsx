@@ -158,7 +158,9 @@ export function StarterReviewer({
           />
           <p className="starter-note">
             Harness: {harness === "codex" ? "Codex" : "Claude Code"}. Review
-            instructions, skills, and MCP tools remain editable in Agents.
+            instructions, skills, and MCP tools remain editable in Agents. No
+            run time or model-call limit is set. Optional limits are in the
+            agent editor; Modal has a 24-hour sandbox lifetime.
           </p>
           {saved && (
             <p className="notice">

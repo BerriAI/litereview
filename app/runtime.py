@@ -10,7 +10,7 @@ from runner.catalog import HARNESS_VERSIONS, NPM_PACKAGES, validate_connection
 
 from . import providers
 from .db import Job, Session
-from .limits import job_timeout
+from .limits import SANDBOX_MAX_SECONDS, job_timeout
 from .settings import settings
 
 
@@ -68,7 +68,7 @@ def create_sandbox(job_id, token, harness="builtin", timeout=None):
         image=sandbox_image(harness),
         client=c,
         name="lr-" + job_id,
-        timeout=(timeout if timeout is not None else s.job_timeout) + 60,
+        timeout=min(timeout + 60, SANDBOX_MAX_SECONDS) if timeout else SANDBOX_MAX_SECONDS,
         cpu=2,
         memory=4096,
         workdir="/opt/litereview",
@@ -85,7 +85,7 @@ async def terminate(sandbox_id):
     try:
         await asyncio.to_thread(lambda: modal.Sandbox.from_id(sandbox_id, client=client()).terminate())
     except Exception:
-        pass  # The hard sandbox timeout remains the cleanup backstop.
+        pass  # Modal's lifetime remains the cleanup backstop if its API is unavailable.
 
 
 async def launch(job_id, token):
@@ -115,32 +115,12 @@ async def launch(job_id, token):
             job = db.get(Job, job_id)
             job.sandbox_id = sandbox.object_id
             db.commit()
-        await sandbox.wait.aio()
-        with Session() as db:
-            job = db.get(Job, job_id)
-            if job.status not in ("completed", "failed", "timed_out"):
-                job.status = "failed"
-                job.finished_at = time.time()
-                job.result = {
-                    "status": "failed",
-                    "summary": "The sandbox exited before submitting its review.",
-                    "findings": [],
-                    "limitations": ["Check PUBLIC_URL connectivity and the Modal sandbox logs."],
-                }
-                db.commit()
-    except modal.exception.SandboxTimeoutError:
-        with Session() as db:
-            job = db.get(Job, job_id)
-            if job and job.status not in ("completed", "failed", "timed_out"):
-                job.status = "timed_out"
-                job.finished_at = time.time()
-                job.result = {
-                    "status": "timed_out",
-                    "summary": "The sandbox reached its execution time limit.",
-                    "findings": [],
-                    "limitations": ["Execution time limit reached."],
-                }
-                db.commit()
+        await watch(job_id, sandbox)
+    except asyncio.CancelledError:
+        # API shutdown is not a request to stop the review. The next dispatcher
+        # watches the saved sandbox ID while the worker keeps its active-job token.
+        sandbox = None
+        raise
     except Exception as exc:
         from fastapi import HTTPException
 
@@ -166,3 +146,44 @@ async def launch(job_id, token):
     finally:
         if sandbox:
             await terminate(sandbox.object_id)
+
+
+async def watch(job_id, sandbox):
+    """Observe actual sandbox exit, including after the API restarts."""
+    try:
+        await sandbox.wait.aio()
+        with Session() as db:
+            job = db.get(Job, job_id)
+            if job.status not in ("completed", "failed", "timed_out"):
+                job.status = "failed"
+                job.finished_at = time.time()
+                job.result = {
+                    "status": "failed",
+                    "summary": "The sandbox exited before submitting its review.",
+                    "findings": [],
+                    "limitations": ["Check PUBLIC_URL connectivity and the Modal sandbox logs."],
+                }
+                db.commit()
+    except modal.exception.SandboxTimeoutError:
+        with Session() as db:
+            job = db.get(Job, job_id)
+            if job and job.status not in ("completed", "failed", "timed_out"):
+                job.status = "timed_out"
+                job.finished_at = time.time()
+                job.result = {
+                    "status": "timed_out",
+                    "summary": "The sandbox reached its execution time limit.",
+                    "findings": [],
+                    "limitations": [
+                        "Execution time limit reached."
+                        if job_timeout(job.config)
+                        else "Modal's 24-hour sandbox lifetime was reached. No agent time limit was configured."
+                    ],
+                }
+                db.commit()
+
+
+async def watch_existing(job_id, sandbox_id):
+    sandbox = await asyncio.to_thread(lambda: modal.Sandbox.from_id(sandbox_id, client=client()))
+    await watch(job_id, sandbox)
+    await terminate(sandbox_id)

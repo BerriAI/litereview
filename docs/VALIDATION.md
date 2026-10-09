@@ -129,3 +129,11 @@ Validated October 9, 2026:
 - Google SSO is active in production: the callback was registered, an actual sign-in succeeded, the domain is restricted to `berri.ai`, and legacy token login is disabled. This supersedes the October 8 callback blocker above. The existing personal private GitHub App cannot be installed in BerriAI; an organization owner still needs to finish the organization-owned App setup. No new production PR review is claimed by this onboarding validation.
 
 Minimum review time is now saved in the reviewer UI. Timing tests verify that plain name-only comments apply independent saved times to direct agents and every group instance, accepted jobs keep their original time after edits, old reviewers remain untimed, and comment overrides and invalid UI/API values are rejected. The actual local editor saved a five-minute value, retained it after reload, and the member page still generated `@litereview reviewer`. The timing enforcement and previously verified Codex continuation path are unchanged; no new live model call was needed for this settings change.
+
+## Optional agent limits (October 9, 2026)
+
+- No LiteReview run timeout or model-call budget is set by default, including for agents with a saved minimum. The agent editor can save or clear each optional limit independently; direct and group calls snapshot the same settings.
+- Regression tests cover passing the previous 60-call/400-message cutoffs, active-job authorization after ten hours, explicit limits, immutable snapshots, validation, Modal lifetime selection, and observing an existing sandbox after API restart. API shutdown leaves a registered running sandbox alive.
+- The actual local app was checked in the browser: both fields start blank, explicit values survive a reload, a maximum below the minimum is rejected, and clearing values persists without changing the minimum.
+- The pinned Deep Agents dependency was exercised with a real LangGraph that completed 200 steps using an unbounded recursion setting. This does not validate model compaction or multi-day agent runs. Provider/network errors can still stop a run.
+- Modal requires a lifetime of at most 24 hours. LiteReview uses the full platform lifetime when no maximum is selected, and reports that constraint in settings and incomplete results. Sandbox replacement/resumption is not implemented.

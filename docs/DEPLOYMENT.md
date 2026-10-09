@@ -8,7 +8,7 @@ The private workspace is live at **https://litereview.onrender.com**.
 - `ADMIN_USERS` is `moe-berri`. Gateway base URL is `https://gateway.litellm-sandbox.ai/v1`; the replacement key supplied by the owner is configured. Change the existing model connection through the UI after initial bootstrap.
 - No development GitHub token is configured. No demo agents, test runs, or local screenshots were copied to production.
 
-Both paid services stay running when idle; there is no free-tier wake-up delay. This does not imply zero downtime during maintenance or deployments. Sandboxes are created on demand in Modal, with 2 CPU cores and 4 GiB requested per agent. `CONCURRENCY=0` removes the app-level queue cap; a positive value sets an optional workspace-wide limit. Modal quotas and provider rate limits still apply.
+Both paid services stay running when idle; there is no free-tier wake-up delay. This does not imply zero downtime during maintenance or deployments. Sandboxes are created on demand in Modal, with 2 CPU cores and 4 GiB requested per agent. `CONCURRENCY=0` removes the app-level queue cap; a positive value sets an optional workspace-wide limit. Modal quotas and provider rate limits still apply. Runs have no application time or model-call cap unless one is selected in the agent editor’s **Optional limits**. `JOB_TIMEOUT` and `MAX_ROUNDS` are no longer read. Modal requires a maximum sandbox lifetime of 24 hours, which is used when no run time is selected; continuing across replacement sandboxes is not implemented.
 
 ## Google SSO
 

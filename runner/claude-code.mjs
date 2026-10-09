@@ -25,7 +25,6 @@ try {
       options: {
         cwd: "/workspace/repo",
         model: cfg.model,
-        maxTurns: cfg.max_rounds || 60,
         ...(sessionId ? { resume: sessionId } : {}),
         systemPrompt: {
           type: "preset",

@@ -22,7 +22,7 @@ from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
 from . import github, providers, reviews
 from .access import initialize_access
 from .db import Artifact, Job, Resource, ReviewTiming, Run, Session, init_db, uid
-from .limits import job_timeout, model_rounds
+from .limits import count_model_call, job_timeout, model_rounds
 from .onboarding import exclude_repository, include_repository
 from .onboarding import router as onboarding_router
 from .schemas import SCHEMAS, AgentModel, ReviewResult
@@ -927,7 +927,10 @@ def worker(request: Request, job_id: str):
             not job
             or not secrets.compare_digest(digest(token), job.token_hash)
             or job.status not in ("starting", "running")
-            or time.time() - (job.started_at or 0) > job_timeout(job.config) + 300
+            or (
+                job_timeout(job.config) is not None
+                and time.time() - (job.started_at or 0) > job_timeout(job.config) + 300
+            )
         ):
             raise HTTPException(401, "Job token is invalid or expired.")
         return job
@@ -999,18 +1002,9 @@ def start_review(job_id: str, request: Request):
 @app.post("/api/internal/jobs/{job_id}/model")
 async def model_relay(job_id: str, request: Request):
     job = worker(request, job_id)
-    with Session() as db:
-        changed = db.execute(
-            update(Job)
-            .where(Job.id == job.id, Job.model_calls < model_rounds(job.config))
-            .values(model_calls=Job.model_calls + 1)
-        ).rowcount
-        db.commit()
-    if not changed:
+    if not count_model_call(job):
         raise HTTPException(429, "Model round limit reached.")
     body = await request.json()
-    if len(body.get("messages", [])) > 400:
-        raise HTTPException(400, "Conversation limit reached.")
     return await providers.complete(
         providers.snapshot_connection(job.config["connection"]),
         job.config["model"],

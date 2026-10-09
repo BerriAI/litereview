@@ -424,6 +424,7 @@ def test_job_model_budget_and_screenshot_auth(owner, monkeypatch):
         job.status = "running"
         job.started_at = time.time()
         job.model_calls = 60
+        job.config = {**job.config, "max_rounds": 60}
         job.token_hash = digest("limited-token")
         job_id = job.id
         db.commit()
@@ -448,6 +449,7 @@ def test_expired_job_cannot_use_relay(owner, monkeypatch):
         job = db.scalar(select(Job))
         job.status = "running"
         job.started_at = time.time() - 1000
+        job.config = {**job.config, "timeout_seconds": 600}
         job.token_hash = digest("expired-token")
         job_id = job.id
         db.commit()
@@ -633,4 +635,6 @@ async def test_modal_hard_timeout_is_incomplete_not_start_failure(owner, monkeyp
     with Session() as db:
         result = db.get(Job, job_id)
         assert result.status == "timed_out"
-        assert result.result["limitations"] == ["Execution time limit reached."]
+        assert result.result["limitations"] == [
+            "Modal's 24-hour sandbox lifetime was reached. No agent time limit was configured."
+        ]

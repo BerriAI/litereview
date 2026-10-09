@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -86,7 +87,7 @@ async def main():
             middleware=[ReviewTools()],
         )
         result = await agent.ainvoke(
-            {"messages": [{"role": "user", "content": data["prompt"]}]}, {"recursion_limit": 120}
+            {"messages": [{"role": "user", "content": data["prompt"]}]}, {"recursion_limit": math.inf}
         )
         while (
             cfg.get("minimum_review_seconds") and not (await client.get(url + "/status")).json()["finished"]
@@ -102,7 +103,7 @@ async def main():
                         },
                     ]
                 },
-                {"recursion_limit": 120},
+                {"recursion_limit": math.inf},
             )
 
 

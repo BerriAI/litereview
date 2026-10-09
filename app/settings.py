@@ -33,8 +33,6 @@ class Settings(BaseSettings):
     modal_token_secret: str = ""
     modal_app_name: str = "litereview"
     concurrency: int = Field(default=0, ge=0)  # 0 launches on demand without an app-level cap.
-    job_timeout: int = 600
-    max_rounds: int = 60
     max_review_minutes: int = Field(default=120, ge=1, le=1440)
     dispatcher_enabled: bool = True
 

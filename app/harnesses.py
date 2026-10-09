@@ -3,11 +3,9 @@
 import httpx
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import update
 
 from . import providers
-from .db import Job, Session
-from .limits import model_rounds
+from .limits import count_model_call
 
 PROTOCOLS = {"chat/completions", "responses", "messages", "messages/count_tokens"}
 
@@ -23,14 +21,7 @@ async def relay_model(job, request, path):
     if kind == "openai" and path.startswith("messages"):
         raise HTTPException(400, "This model connection uses the OpenAI API.")
     if path != "messages/count_tokens":
-        with Session() as db:
-            changed = db.execute(
-                update(Job)
-                .where(Job.id == job.id, Job.model_calls < model_rounds(cfg))
-                .values(model_calls=Job.model_calls + 1)
-            ).rowcount
-            db.commit()
-        if not changed:
+        if not count_model_call(job):
             raise HTTPException(429, "Model round limit reached.")
     body = await request.json()
     for key in (
