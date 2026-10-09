@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from runner.catalog import HARNESS_VERSIONS
+from runner.catalog import HARNESS_VERSIONS, review_capabilities
 
 from . import github
 from .access import permits
@@ -59,6 +59,7 @@ def expand(groups, resources):
             if not agent or agent.kind != "agents":
                 raise HTTPException(409, "A group references a missing agent.")
             data = agent.data.copy()
+            data["capabilities"] = review_capabilities(data.get("capabilities", []))
             data.setdefault("harness", "builtin")
             data["harness_version"] = HARNESS_VERSIONS[data["harness"]]
             minutes = data.get("minimum_minutes", 0)
@@ -292,7 +293,7 @@ def render_comment(run, jobs, newer=False):
         visible, notes = [], []
         if incomplete:
             visible += ["**Review incomplete.**", ""]
-            if result.get("summary"):
+            if result.get("summary") and not result.get("limitations"):
                 visible += [md(result["summary"]), ""]
         elif not result.get("findings"):
             visible += ["**No issues found.**", ""]
@@ -312,7 +313,7 @@ def render_comment(run, jobs, newer=False):
             ]
         for limit in result.get("limitations", []):
             visible += [f"- {md(limit)}"]
-        if result.get("summary") and not incomplete:
+        if result.get("summary") and (not incomplete or result.get("limitations")):
             notes += [md(result["summary"]), ""]
         if c.get("minimum_review_seconds"):
             notes += [f"Requested minimum: {c['minimum_review_seconds'] // 60} minutes."]

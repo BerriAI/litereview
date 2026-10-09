@@ -64,7 +64,7 @@ export function StarterReviewer({
             harness,
             model,
             connection_id: connectionId,
-            capabilities: [],
+            capabilities: ["terminal"],
             skill_ids: [],
             mcps: [],
             instructions:

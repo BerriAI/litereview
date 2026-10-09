@@ -248,12 +248,19 @@ export function Documentation() {
           <h2>Choose what an agent can do</h2>
           <dl className="docs-capabilities">
             <div>
-              <dt>Code only</dt>
-              <dd>Read the PR diff and repository files.</dd>
+              <dt>Code & terminal · Included</dt>
+              <dd>
+                Read the diff and files, install dependencies, run tests, and
+                create reproducers in a disposable checkout.
+              </dd>
             </div>
             <div>
-              <dt>Terminal</dt>
-              <dd>Run commands, install dependencies, and execute tests.</dd>
+              <dt>Subagents</dt>
+              <dd>
+                Instructions and skills can request delegation in harnesses that
+                support it. The main reviewer combines their evidence into one
+                result.
+              </dd>
             </div>
             <div>
               <dt>Browser</dt>

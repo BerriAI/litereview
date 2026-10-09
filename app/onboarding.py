@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from runner.catalog import HARNESS_VERSIONS
+from runner.catalog import HARNESS_VERSIONS, review_capabilities
 
 from . import github, reviews
 from .access import permits
@@ -133,7 +133,11 @@ def workspace_readiness():
                 and job.config.get("harness_version") == HARNESS_VERSIONS[row.data.get("harness", "builtin")]
                 and all(
                     job.config.get(k, "builtin" if k == "harness" else None)
-                    == row.data.get(k, "builtin" if k == "harness" else None)
+                    == (
+                        review_capabilities(row.data.get("capabilities", []))
+                        if k == "capabilities"
+                        else row.data.get(k, "builtin" if k == "harness" else None)
+                    )
                     for k in ("harness", "connection_id", "model", "capabilities")
                 )
             ),

@@ -35,4 +35,11 @@ def validate_connection(harness, connection_type):
     if harness == "codex" and connection_type == "anthropic":
         raise ValueError("Codex needs an OpenAI or gateway connection that supports the Responses API.")
     if harness == "claude-code" and connection_type == "openai":
-        raise ValueError("Claude Code needs an Anthropic or gateway connection that supports the Messages API.")
+        raise ValueError(
+            "Claude Code needs an Anthropic or gateway connection that supports the Messages API."
+        )
+
+
+def review_capabilities(values):
+    """Every reviewer can investigate and run tests in its disposable checkout."""
+    return list(dict.fromkeys(["terminal", *values]))

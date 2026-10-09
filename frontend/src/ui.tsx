@@ -286,15 +286,13 @@ export function FormSection({
 }
 
 export function Capabilities({ values }: { values: string[] }) {
-  const modes = values.length ? values : ["repository"];
+  const modes = Array.from(new Set(["terminal", ...values]));
   const labels: Record<string, string> = {
-    repository: "Code only",
     terminal: "Terminal",
     browser: "Browser",
     computer: "Computer",
   };
   const icons = {
-    repository: FileCode2,
     terminal: Terminal,
     browser: Globe,
     computer: Monitor,

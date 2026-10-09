@@ -80,6 +80,12 @@ const { session } = await createAgentSession({
   model: modelRuntime.getModel("litereview", cfg.model),
   thinkingLevel: "off",
   tools: [
+    "read",
+    "edit",
+    "write",
+    "grep",
+    "find",
+    "ls",
     ...definitions.map((t) => t.name),
     ...(cfg.capabilities.includes("terminal") ? ["bash"] : []),
   ],

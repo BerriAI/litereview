@@ -30,6 +30,10 @@ def opencode_config(cfg, url, instructions):
         "glob": "allow",
         "grep": "allow",
         "litereview_*": "allow",
+        "task": "allow",
+        "edit": "allow",
+        "write": "allow",
+        "apply_patch": "allow",
         "external_directory": "allow",
     }
     permission["shell" if v2 else "bash"] = "allow" if "terminal" in cfg["capabilities"] else "deny"
@@ -107,8 +111,7 @@ def command(cfg, url, instructions, prompt, env, resume_id=None):
             "model_provider": "litereview",
             "approval_policy": "never",
             "features.shell_tool": terminal,
-            "features.apply_patch_freeform": False,
-            "features.multi_agent": False,
+            "features.multi_agent": True,
             "web_search": "disabled",
             "analytics.enabled": False,
             "model_providers.litereview": {
@@ -163,7 +166,7 @@ async def run_external(tools, relay, data, system, prompt):
         + f"\n\nRepository: {REPO}. Skills: /workspace/skills. Use these absolute paths with native tools."
         + "\nLiteReview tools start with lr_ (MCP clients may add a server prefix)."
         + " Submit with lr_finish_review as your last action; a prose answer does not submit the review."
-        + " Do not edit source files or delegate to additional agents. Commands may create disposable test/build artifacts."
+        + " Use the disposable checkout for tests and reproducers. Delegate when the configured instructions or skills request it; wait for results before submitting. Only the main reviewer calls lr_finish_review."
     )
     bridge = Bridge(tools, relay, cfg)
     await relay.event(f"Starting {HARNESS_LABELS[harness]} {HARNESS_VERSIONS[harness]}")
