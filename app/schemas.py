@@ -96,6 +96,7 @@ class Access(BaseModel):
     name: str = Field(min_length=1, max_length=250)
     scope: Literal["all", "selected"] = "all"
     target_ids: list[str] = Field(default_factory=list)
+    identity_sub: str = Field(default="", max_length=255)
 
     @field_validator("name")
     @classmethod

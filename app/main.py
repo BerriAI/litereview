@@ -20,8 +20,8 @@ from sqlalchemy.exc import IntegrityError
 from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
 
 from . import github, mcp_oauth, providers, reviews
-from .access import initialize_access, people
-from .db import Artifact, Job, MCPOAuth, Resource, ReviewTiming, Run, Session, init_db, uid
+from .access import bind_existing_people, initialize_access, people
+from .db import Artifact, Job, MCPOAuth, Resource, ReviewTiming, Run, Session, SSOIdentity, init_db, uid
 from .limits import count_model_call, job_timeout, model_rounds
 from .onboarding import exclude_repository, include_repository
 from .onboarding import router as onboarding_router
@@ -39,6 +39,7 @@ async def lifespan(app):
         )
     init_db()
     initialize_access()
+    bind_existing_people()
     # Optional first-deploy model bootstrap; subsequent edits belong to the UI.
     with Session() as db:
         s = settings()
@@ -350,6 +351,33 @@ async def save_resource(kind: str, request: Request, resource_id: str | None = N
         if resource_id and (not row or row.kind != kind):
             raise HTTPException(404)
         rid = resource_id or uid()
+        if kind == "access":
+            # Bind restrictions to the Google person, not their mutable GitHub login.
+            if settings().sso_required and data["subject"] == "user":
+                sub = (row.data.get("identity_sub") if row else None) or data.get("identity_sub")
+                identity = db.get(SSOIdentity, sub) if sub else None
+                if not sub:
+                    matches = db.scalars(
+                        select(SSOIdentity).where(func.lower(SSOIdentity.github_login) == data["name"])
+                    ).all()
+                    if len(matches) == 1:
+                        identity = matches[0]
+                if sub and not identity:
+                    raise HTTPException(400, "This Google identity no longer exists. Reload People.")
+                if identity:
+                    if identity.github_login.lower() != data["name"]:
+                        raise HTTPException(409, "This person's GitHub account changed. Reload People.")
+                    data["identity_sub"] = identity.sub
+                    # Prevent multiple overrides when the GitHub username changed.
+                    for grant in db.scalars(
+                        select(Resource).where(Resource.kind == "access", Resource.id != rid)
+                    ):
+                        if grant.data.get("identity_sub") == identity.sub:
+                            raise HTTPException(
+                                409, "This person already has an access override. Reload People."
+                            )
+            else:
+                data["identity_sub"] = row.data.get("identity_sub", "") if row else ""
         validate_resource(kind, data, db, rid)
         secret = row.secret if row else ""
         if kind == "connections":

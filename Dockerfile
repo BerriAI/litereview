@@ -1,11 +1,13 @@
-FROM node:22-bookworm-slim AS web
+ARG NODE_IMAGE=node:22-bookworm-slim
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm
+FROM ${NODE_IMAGE} AS web
 WORKDIR /web
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM python:3.12-slim-bookworm
+FROM ${PYTHON_IMAGE}
 ENV PYTHONUNBUFFERED=1 UV_PROJECT_ENVIRONMENT=/opt/venv PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:0.10.9 /uv /uvx /bin/
