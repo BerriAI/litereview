@@ -25,7 +25,7 @@ from mcp.shared.auth_utils import check_resource_allowed, resource_url_from_serv
 from sqlalchemy import delete, select
 
 from .db import LoginState, MCPOAuth, Resource, Session, uid
-from .security import decrypt, digest, encrypt, require_admin
+from .security import decrypt, digest, encrypt, require_user
 from .settings import settings
 
 router = APIRouter()
@@ -414,7 +414,7 @@ class MCPAuth(httpx.Auth):
 
 
 @router.post("/api/connections/{cid}/oauth/start")
-async def start(cid: str, request: Request, user=Depends(require_admin)):
+async def start(cid: str, request: Request, user=Depends(require_user)):
     try:
         url, browser = await asyncio.to_thread(prepare_authorization, cid, user.get("sub") or user["login"])
     except HTTPException:
@@ -438,7 +438,7 @@ async def start(cid: str, request: Request, user=Depends(require_admin)):
 
 @router.get("/api/mcp/oauth/callback")
 async def callback(
-    request: Request, state: str = "", code: str = "", error: str = "", user=Depends(require_admin)
+    request: Request, state: str = "", code: str = "", error: str = "", user=Depends(require_user)
 ):
     browser = request.cookies.get("lr_mcp_state", "")
     if not state or len(state) > 200 or not browser:
@@ -473,7 +473,7 @@ async def callback(
     return response
 
 
-@router.post("/api/connections/{cid}/oauth/disconnect", dependencies=[Depends(require_admin)])
+@router.post("/api/connections/{cid}/oauth/disconnect", dependencies=[Depends(require_user)])
 def disconnect(cid: str):
     with Session() as db:
         conn = current_connection(db, cid)

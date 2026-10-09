@@ -46,14 +46,7 @@ def require_user(request: Request):
         raise HTTPException(401, "Sign in to LiteReview.")
     user = unsign(token)
     if user.get("login") != "owner" and user.get("login", "").lower() not in settings().admins:
-        raise HTTPException(403, "This account is not a workspace administrator.")
-    return {**user, "admin": True}
-
-
-def require_admin(request: Request):
-    user = require_user(request)
-    if not user.get("admin"):
-        raise HTTPException(403, "This account is not a workspace administrator.")
+        raise HTTPException(403, "This account is not approved for this workspace.")
     return user
 
 

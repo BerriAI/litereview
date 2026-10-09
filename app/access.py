@@ -93,7 +93,7 @@ def people(db, grants):
 
 
 def initialize_access():
-    """Migrate explicit grants once; never recreate access an admin revoked."""
+    """Migrate explicit grants once; never recreate revoked access."""
     with Session() as db:
         if db.get(Resource, "access-v1"):
             return

@@ -34,8 +34,8 @@ export function Documentation() {
               <p>
                 Open <a href="/start">Start a review</a>, sign in with your
                 workspace Google account, and choose Connect GitHub. Link the
-                account you use to comment on pull requests. Your workspace
-                owner handles repository setup and optional access restrictions.
+                account you use to comment on pull requests. Everyone admitted
+                through Google SSO can manage the shared workspace.
               </p>
             </li>
             <li>
@@ -44,8 +44,7 @@ export function Documentation() {
                 Start a review shows repositories and checked reviewers
                 available to your account. Choose a repository and reviewer,
                 then use Copy comment. If repository or reviewer setup is
-                missing, the page explains what your workspace owner needs to
-                finish.
+                missing, the page links to the setup you can finish.
               </p>
             </li>
             <li>
@@ -69,16 +68,16 @@ export function Documentation() {
                 directly and through a group runs separately for each selection.
               </p>
               <p>
-                Workspace owners set Minimum review time (minutes) in the
-                reviewer’s PR agents editor. Use 0 for no minimum, or whole
-                minutes up to the workspace limit (120 by default). Every
-                instance uses its reviewer’s saved time, including inside
-                groups. Comments contain only names; time options in comments
-                are rejected. The clock starts after setup. Agents continue
-                investigating and cannot finish successfully before that time
-                elapses. Failures and exhausted limits are reported as
-                incomplete. Longer reviews can use more credits. Private harness
-                checks do not use this minimum.
+                Set Minimum review time (minutes) in the reviewer’s PR agents
+                editor. Use 0 for no minimum, or whole minutes up to the
+                workspace limit (120 by default). Every instance uses its
+                reviewer’s saved time, including inside groups. Comments contain
+                only names; time options in comments are rejected. The clock
+                starts after setup. Agents continue investigating and cannot
+                finish successfully before that time elapses. Failures and
+                exhausted limits are reported as incomplete. Longer reviews can
+                use more credits. Private harness checks do not use this
+                minimum.
               </p>
               <p>
                 Runs have no LiteReview time or model-call limit by default. In
@@ -95,8 +94,8 @@ export function Documentation() {
               <p>
                 LiteReview reacts with 👀 when it accepts your request. When all
                 agents finish, it posts one comment with findings or “No issues
-                found.” Expand Review notes for the summary. Workspace owners
-                can open <a href="/runs">Runs</a> for details, activity, and
+                found.” Expand Review notes for the summary. Open
+                <a href="/runs"> Runs</a> for details, activity, and
                 screenshots. An incomplete check means the agent could not
                 finish its configured review. Results are summary comments;
                 agents do not push fixes.
@@ -107,7 +106,12 @@ export function Documentation() {
 
         <section>
           <h2>Set up a workspace</h2>
-          <p>Workspace owners complete these steps once.</p>
+          <p>
+            Any signed-in workspace member can complete setup and manage agents,
+            skills, connections, repositories, and review settings. Connections
+            and model credits are shared. GitHub still controls who can install
+            the App and which repositories it can access.
+          </p>
           <ol className="docs-steps">
             <li>
               <h3>Connect repositories</h3>

@@ -65,7 +65,7 @@ def test_reset_preserves_workspace_and_undo_restores_connection(owner, monkeypat
     assert owner.get("/api/setup").json()["github_reset"] is True
     assert owner.get("/api/github/status").json()["state"] == "unconfigured"
     session = owner.get("/api/session").json()
-    assert session["user"]["admin"] is True and session["github_login"] is False
+    assert session["user"]["login"] == "owner" and session["github_login"] is False
     assert owner.get("/api/auth/github").status_code == 400
     assert webhook(owner, payload()).status_code == 401
     with Session() as db:

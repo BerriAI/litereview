@@ -130,7 +130,7 @@ function App() {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [draft, setDraft] = useState<Editor | null>(null);
   const oauthHandled = useRef(false);
-  const draftKey = session?.user?.admin
+  const draftKey = session?.user
     ? "litereview:agent-draft:" + (session.user.sub || session.user.login)
     : "";
   const [busy, setBusy] = useState(false);
@@ -206,7 +206,7 @@ function App() {
   const modelConnection =
     editor?.kind === "agents" ? editor.data.connection_id : "";
   useEffect(() => {
-    if (session?.user?.admin)
+    if (session?.user)
       api("/harnesses")
         .then(setHarnesses)
         .catch(() => {});
@@ -325,19 +325,23 @@ function App() {
       window.removeEventListener("litereview:unauthorized", expiredSession);
   }, []);
   useEffect(() => {
-    if (!session?.user?.admin || !workspaceLoaded || path !== "/") return;
+    if (!session?.user || !workspaceLoaded || path !== "/") return;
     navigate(
-      store.repos.length && store.agents.length ? "/runs" : "/repositories",
+      session.sso_required && !session.user.github_login
+        ? "/start"
+        : store.repos.length && store.agents.length
+          ? "/runs"
+          : "/repositories",
     );
-  }, [session?.user?.admin, workspaceLoaded]);
+  }, [session?.user, workspaceLoaded]);
   useEffect(() => {
-    if (!session?.user?.admin || ["/account", "/start"].includes(path)) return;
+    if (!session?.user || ["/account", "/start"].includes(path)) return;
     document.title = pageTitle + " · LiteReview";
     if (!editor)
       document
         .querySelector<HTMLElement>("main h1")
         ?.focus({ preventScroll: true });
-  }, [path, session?.user?.admin, editor]);
+  }, [path, session?.user, editor]);
   const load = async () => {
     const kinds = Object.keys(empty) as Kind[];
     const values = await Promise.all(kinds.map((k) => api("/resources/" + k)));
@@ -379,11 +383,10 @@ function App() {
     }
   };
   useEffect(() => {
-    if (session?.user?.admin) load().catch((e) => setError(e.message));
+    if (session?.user) load().catch((e) => setError(e.message));
   }, [session]);
   useEffect(() => {
-    if (!session?.user?.admin || !["connections", "repos"].includes(active))
-      return;
+    if (!session?.user || !["connections", "repos"].includes(active)) return;
     let alive = true;
     const refreshSetup = () => {
       api("/setup")
@@ -402,9 +405,9 @@ function App() {
       window.removeEventListener("focus", refreshSetup);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [session?.user?.admin, active, githubRevision]);
+  }, [session?.user, active, githubRevision]);
   useEffect(() => {
-    if (!session?.user?.admin || active !== "runs") return;
+    if (!session?.user || active !== "runs") return;
     let alive = true;
     const refresh = async () => {
       try {
@@ -563,7 +566,7 @@ function App() {
     const result = params.get("oauth"),
       cid = params.get("connection");
     if (
-      !session?.user?.admin ||
+      !session?.user ||
       !workspaceLoaded ||
       !result ||
       !cid ||
@@ -581,7 +584,7 @@ function App() {
           ? "OAuth was cancelled. Your server is saved; choose Connect account to try again."
           : "OAuth could not finish. Your server is saved; reconnect or check its OAuth settings.",
       );
-  }, [session?.user?.admin, workspaceLoaded]);
+  }, [session?.user, workspaceLoaded]);
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!editor) return;
@@ -709,8 +712,8 @@ function App() {
               </a>
             ) : (
               <p role="alert">
-                Google sign-in is being configured. Contact your workspace
-                administrator.
+                Google sign-in is being configured. Contact the person who
+                manages this deployment.
               </p>
             ))}
           {!session.sso_required && session.github_login && (
@@ -723,15 +726,12 @@ function App() {
             <LockKeyhole size={13} />
             {session.sso_required
               ? "Access is restricted to your Google Workspace."
-              : "Access is restricted to workspace administrators."}
+              : "Access is restricted to approved workspace accounts."}
           </small>
         </div>
       </div>
     );
-  if (
-    session.sso_required &&
-    (path === "/account" || path === "/start" || !session.user.admin)
-  )
+  if (session.sso_required && (path === "/account" || path === "/start"))
     return (
       <MemberStart
         user={session.user}
@@ -882,10 +882,12 @@ function App() {
           <div>
             <strong>
               {session.user.login === "owner"
-                ? "Workspace owner"
+                ? "Workspace account"
                 : session.user.login}
             </strong>
-            <small>Administrator</small>
+            <small>
+              {session.sso_required ? "Google Workspace" : "Workspace"}
+            </small>
           </div>
           {session.sso_required && (
             <button

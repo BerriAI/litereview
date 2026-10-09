@@ -10,12 +10,11 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/litereview.db"
     secret_key: str = ""
     admin_token: str = ""
-    admin_users: str = ""
+    admin_users: str = ""  # Legacy GitHub-only sign-in allowlist; ignored for Google workspace access.
     google_sso_required: bool = False
     google_client_id: str = ""
     google_client_secret: str = ""
     google_allowed_domains: str = ""
-    google_admin_emails: str = ""
     sso_session_seconds: int = Field(default=43200, ge=300, le=86400)
     public_url: str = ""
     gateway_url: str = ""
@@ -54,10 +53,6 @@ class Settings(BaseSettings):
     @property
     def google_domains(self):
         return {v.strip().lower() for v in self.google_allowed_domains.split(",") if v.strip()}
-
-    @property
-    def google_admins(self):
-        return {v.strip().lower() for v in self.google_admin_emails.split(",") if v.strip()}
 
 
 @lru_cache
