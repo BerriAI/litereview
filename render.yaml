@@ -26,8 +26,6 @@ services:
         sync: false
       - key: GOOGLE_ALLOWED_DOMAINS
         value: berri.ai
-      - key: GOOGLE_ADMIN_EMAILS
-        sync: false
       - key: GITHUB_ORGANIZATION
         value: BerriAI
       - key: MODAL_TOKEN_ID

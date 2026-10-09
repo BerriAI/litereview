@@ -24,7 +24,7 @@ Use flat surfaces, hairline separators, restrained 400/500 type weights, and vio
 
 ## Onboarding
 
-Google sign-in routes teammates to `/start` and owners into the workspace. Members link a GitHub identity once; App creation and repository selection remain owner tasks. Repositories has one next action based on verified state. Sync must preserve exclusions and grants. A private harness check establishes model/runtime readiness; a real PR review establishes the first useful result. Expired sessions lead to Google sign-in with a validated return path. Never show sample reviewer names as usable production commands.
+All approved Google members have the same workspace interface and management access. The home page routes unlinked accounts to `/start`, where they can link GitHub or open the workspace; direct resource links remain usable before linking. Linked members open the workspace. GitHub controls App creation and installation permissions. Repositories has one next action based on verified state. Sync must preserve exclusions and grants. A private harness check establishes model/runtime readiness; a real PR review establishes the first useful result. Expired sessions lead to Google sign-in with a validated return path. Never show sample reviewer names as usable production commands.
 
 ## Validation
 

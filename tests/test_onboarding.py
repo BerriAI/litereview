@@ -83,13 +83,14 @@ def test_sync_cannot_commit_after_reset(owner, monkeypatch):
     assert owner.get("/api/resources/repos").json() == []
 
 
-def test_members_cannot_sync_or_read_admin_readiness(client, monkeypatch):
+def test_signed_in_members_can_sync_and_read_workspace_readiness(client, monkeypatch):
     assert client.get("/api/start").status_code == 401
     assert client.post("/api/github/sync").status_code == 401
     enable(monkeypatch)
     identity(client)
-    assert client.post("/api/github/sync").status_code == 403
-    assert client.get("/api/workspace/readiness").status_code == 403
+    discovery(monkeypatch)
+    assert client.post("/api/github/sync").json()["added"] == 1
+    assert client.get("/api/workspace/readiness").status_code == 200
 
 
 def ready_workspace(owner, monkeypatch):

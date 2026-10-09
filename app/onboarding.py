@@ -1,4 +1,4 @@
-"""Role-aware readiness and idempotent installation synchronization."""
+"""Workspace readiness and idempotent installation synchronization."""
 
 import asyncio
 
@@ -14,7 +14,7 @@ from . import github, reviews
 from .access import caller_grant, caller_permits, permits
 from .db import Job, Resource, Run, Session
 from .schemas import Repository
-from .security import require_admin, require_user
+from .security import require_user
 from .settings import settings
 
 router = APIRouter()
@@ -89,7 +89,7 @@ async def synchronize():
         return {**status, "added": added, "excluded": sorted(excluded)}
 
 
-@router.post("/api/github/sync", dependencies=[Depends(require_admin)])
+@router.post("/api/github/sync", dependencies=[Depends(require_user)])
 async def sync_repositories():
     try:
         return await asyncio.wait_for(synchronize(), timeout=25)
@@ -163,15 +163,13 @@ def workspace_readiness():
     return {"agents": agents, "runtime": runtime, "has_review": has_review}, resources
 
 
-@router.get("/api/workspace/readiness", dependencies=[Depends(require_admin)])
+@router.get("/api/workspace/readiness", dependencies=[Depends(require_user)])
 def readiness():
     return workspace_readiness()[0]
 
 
 async def member_start(user):
-    owner = next(iter(sorted(settings().google_admins)), "your workspace owner")
     result = {
-        "owner": owner,
         "state": "github",
         "repositories": [],
         "max_minutes": settings().max_review_minutes,
@@ -242,7 +240,6 @@ async def start(request: Request):
         return await asyncio.wait_for(member_start(user), timeout=25)
     except TimeoutError:
         return {
-            "owner": next(iter(sorted(settings().google_admins)), "your workspace owner"),
             "state": "unavailable",
             "repositories": [],
             "max_minutes": settings().max_review_minutes,

@@ -89,8 +89,6 @@ def current_user(request):
         "github_login": identity.github_login,
         "github_id": identity.github_id,
         "expires_at": identity.expires_at,
-        "admin": identity.email in settings().google_admins
-        or identity.github_login.lower() in settings().admins,
     }
 
 
@@ -170,7 +168,7 @@ def redirect(url, browser):
 @router.get("/api/auth/google")
 def google_start(next_path: str = Query("/", alias="next")):
     if not configured():
-        raise HTTPException(503, "Google sign-in is not configured. Contact the workspace administrator.")
+        raise HTTPException(503, "Google sign-in is not configured. Contact whoever manages this deployment.")
     nonce, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
     state, browser = start_state(
         "google", {"nonce": nonce, "verifier": verifier, "next": return_path(next_path)}
@@ -285,9 +283,7 @@ def github_start(request):
     user = current_user(request)
     conf = github.config()
     if not conf.get("client_id"):
-        raise HTTPException(
-            409, "An administrator must connect the GitHub App before accounts can be linked."
-        )
+        raise HTTPException(409, "Connect the GitHub App in Repositories before linking your account.")
     state, browser = start_state(
         "github-link", {"sub": user["sub"], "next": return_path(request.query_params.get("next", "/start"))}
     )

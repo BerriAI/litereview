@@ -113,23 +113,26 @@ def test_settings_changes_invalidate_in_flight_authorization_before_exchange(own
     assert not any(path == "/token" for path, *_ in server["calls"])
 
 
-def test_browser_and_actor_binding_expiry_and_admin_only(owner, server, monkeypatch):
+def test_browser_and_actor_binding_and_member_authorization(owner, server, monkeypatch):
     conn = connection(owner, server)
     callback = start(owner, conn)
-    saved = owner.cookies.get("lr_mcp_state")
+    saved = next(cookie for cookie in owner.cookies.jar if cookie.name == "lr_mcp_state")
     owner.cookies.delete("lr_mcp_state")
     assert owner.get(callback, follow_redirects=False).status_code == 403
-    owner.cookies.set("lr_mcp_state", saved)
+    owner.cookies.set("lr_mcp_state", saved.value, domain=saved.domain, path=saved.path)
     enable(monkeypatch)
-    identity(owner, email="admin@berri.ai")
+    identity(owner)
     assert owner.get(callback, follow_redirects=False).status_code == 403
+    authorize(owner, conn)
+    assert owner.post(f"/api/connections/{conn['id']}/test").status_code == 200
+    assert owner.post(f"/api/connections/{conn['id']}/oauth/disconnect").status_code == 200
     with Session() as db:
         from app.db import SSOIdentity
 
-        db.get(SSOIdentity, "google-sub").email = "member@berri.ai"
+        db.get(SSOIdentity, "google-sub").expires_at = 0
         db.commit()
-    assert owner.post(f"/api/connections/{conn['id']}/oauth/start").status_code == 403
-    assert owner.post(f"/api/connections/{conn['id']}/oauth/disconnect").status_code == 403
+    assert owner.post(f"/api/connections/{conn['id']}/oauth/start").status_code == 401
+    assert owner.post(f"/api/connections/{conn['id']}/oauth/disconnect").status_code == 401
 
 
 def test_expired_state_rejected(owner, server):

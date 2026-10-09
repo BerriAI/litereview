@@ -6,7 +6,6 @@ import { Brand, ProviderMark } from "./ui";
 type Availability = {
   state:
     "github" | "workspace" | "approval" | "reviewer" | "unavailable" | "ready";
-  owner: string;
   max_minutes: number;
   repositories: { name: string; reviewers: string[] }[];
 };
@@ -82,17 +81,14 @@ export function MemberStart({
       setNotice("Select and copy the text below.");
     }
   };
-  const owner = data?.owner || "your workspace owner";
   const needsRepositories =
-    user.admin && workspaceLoaded && (!githubConfigured || !repositoryCount);
+    workspaceLoaded && (!githubConfigured || !repositoryCount);
   return (
     <div className="member-start">
       <header className="member-header">
         <Brand />
         <div className="actions">
-          {user.admin && (
-            <button onClick={() => navigate("/repositories")}>Workspace</button>
-          )}
+          <button onClick={() => navigate("/agents")}>Workspace</button>
           <button
             className="text-button"
             onClick={() => navigate(account ? "/start" : "/account")}
@@ -129,41 +125,37 @@ export function MemberStart({
             )}
             {!githubLogin && (
               <p className="member-note">
-                {user.admin
-                  ? "Connect the workspace’s GitHub repositories below first. Then you can link the account you use to comment on PRs."
-                  : "Your workspace owner needs to finish repository setup before you can link your GitHub account."}
+                Connect the workspace’s GitHub repositories below first. Then
+                link the account you use to comment on PRs.
               </p>
             )}
-            {user.admin && (
-              <section
-                className="account-repositories"
-                aria-label="GitHub repository access"
+            <section
+              className="account-repositories"
+              aria-label="GitHub repository access"
+            >
+              <div className="account-detail">
+                <strong>Repository access</strong>
+                <span>
+                  {!workspaceLoaded
+                    ? "Checking…"
+                    : !githubConfigured || !repositoryCount
+                      ? "Not connected"
+                      : `${repositoryCount} saved ${repositoryCount === 1 ? "repository" : "repositories"}`}
+                </span>
+              </div>
+              <p className="member-note">
+                Linking your account lets LiteReview recognize your PR comments.
+                Repository access lets the workspace read and review code.
+              </p>
+              <button
+                className="primary full"
+                onClick={() => navigate("/repositories")}
               >
-                <div className="account-detail">
-                  <strong>Repository access</strong>
-                  <span>
-                    {!workspaceLoaded
-                      ? "Checking…"
-                      : !githubConfigured || !repositoryCount
-                        ? "Not connected"
-                        : `${repositoryCount} saved ${repositoryCount === 1 ? "repository" : "repositories"}`}
-                  </span>
-                </div>
-                <p className="member-note">
-                  Linking your account lets LiteReview recognize your PR
-                  comments. Repository access lets the workspace read and review
-                  code.
-                </p>
-                <button
-                  className="primary full"
-                  onClick={() => navigate("/repositories")}
-                >
-                  {githubConfigured && repositoryCount
-                    ? "Manage repository access"
-                    : "Connect GitHub repositories"}
-                </button>
-              </section>
-            )}
+                {githubConfigured && repositoryCount
+                  ? "Manage repository access"
+                  : "Connect GitHub repositories"}
+              </button>
+            </section>
             <p className="member-note">
               Sign in with Google again after{" "}
               {new Date(user.expires_at * 1000).toLocaleString()} to keep
@@ -213,21 +205,16 @@ export function MemberStart({
                         Connect GitHub
                       </a>
                       <p className="member-note">
-                        Your workspace owner manages repository access.
+                        Manage shared repository access in Repositories.
                       </p>
                     </>
                   )}
                   {data.state === "workspace" && (
                     <>
-                      <h1 tabIndex={-1}>
-                        {user.admin
-                          ? "Connect GitHub repositories."
-                          : "GitHub setup is not finished."}
-                      </h1>
+                      <h1 tabIndex={-1}>Connect GitHub repositories.</h1>
                       <p className="member-intro">
-                        {user.admin
-                          ? "Connect the workspace to GitHub and choose repositories. Then link your account and set up a reviewer."
-                          : `${owner} needs to finish GitHub setup before you can connect your account and request a review.`}
+                        Connect the workspace to GitHub and choose repositories.
+                        Then link your account and set up a reviewer.
                       </p>
                     </>
                   )}
@@ -235,33 +222,15 @@ export function MemberStart({
                     <>
                       <h1 tabIndex={-1}>You’re connected. Access is next.</h1>
                       <p className="member-intro">
-                        {user.admin
-                          ? `Add @${user.github_login} in People to allow review requests from this account.`
-                          : `Ask ${owner} to add @${user.github_login} to People so you can request reviews.`}
+                        Review the reviewer access settings for @
+                        {user.github_login} in People.
                       </p>
                       <button
                         className="primary"
-                        onClick={() =>
-                          user.admin
-                            ? navigate("/people")
-                            : copy(
-                                `Please approve @${user.github_login} in LiteReview → People so I can request reviews.`,
-                              )
-                        }
+                        onClick={() => navigate("/people")}
                       >
-                        {user.admin ? (
-                          "Manage People"
-                        ) : (
-                          <>
-                            <Copy size={15} /> Copy access request
-                          </>
-                        )}
+                        Manage People
                       </button>
-                      {!user.admin && (
-                        <p className="member-note">
-                          Nothing is sent automatically.
-                        </p>
-                      )}
                     </>
                   )}
                   {data.state === "reviewer" && (
@@ -269,16 +238,12 @@ export function MemberStart({
                       <h1 tabIndex={-1}>
                         {needsRepositories
                           ? "GitHub repositories aren’t connected."
-                          : user.admin
-                            ? "Finish setting up reviews."
-                            : "Your reviewer isn’t ready yet."}
+                          : "Finish setting up reviews."}
                       </h1>
                       <p className="member-intro">
                         {needsRepositories
                           ? `Your GitHub account is linked as @${user.github_login}. Connect repository access before requesting a review.`
-                          : user.admin
-                            ? "Your Google and GitHub accounts are linked. Continue setup to connect repository access and test your first reviewer."
-                            : `${owner} needs to connect a repository and test a reviewer you have access to. Your Google and GitHub accounts are already connected.`}
+                          : "Your Google and GitHub accounts are linked. Continue setup to connect repository access and test your first reviewer."}
                       </p>
                     </>
                   )}
@@ -295,7 +260,7 @@ export function MemberStart({
                     data.state,
                   ) && (
                     <div className="actions">
-                      {user.admin && data.state !== "unavailable" && (
+                      {data.state !== "unavailable" && (
                         <button
                           className="primary"
                           onClick={() => navigate("/repositories")}
@@ -307,7 +272,7 @@ export function MemberStart({
                       )}
                       <button
                         className={
-                          user.admin && data.state !== "unavailable"
+                          data.state !== "unavailable"
                             ? "text-button"
                             : "primary"
                         }

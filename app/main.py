@@ -26,7 +26,7 @@ from .limits import count_model_call, job_timeout, model_rounds
 from .onboarding import exclude_repository, include_repository
 from .onboarding import router as onboarding_router
 from .schemas import SCHEMAS, AgentModel, ReviewResult
-from .security import decrypt, digest, encrypt, require_admin, require_user, signed, unsign, verify_signature
+from .security import decrypt, digest, encrypt, require_user, signed, unsign, verify_signature
 from .settings import settings
 from .sso import router as sso_router
 
@@ -320,7 +320,7 @@ def validate_resource(kind, data, db, resource_id):
             raise HTTPException(400, "Skill files exceed 2 MB.")
 
 
-@app.get("/api/resources/{kind}", dependencies=[Depends(require_admin)])
+@app.get("/api/resources/{kind}", dependencies=[Depends(require_user)])
 def list_resources(kind: str):
     if kind not in SCHEMAS:
         raise HTTPException(404)
@@ -333,8 +333,8 @@ def list_resources(kind: str):
         return [public_resource(r) for r in rows]
 
 
-@app.post("/api/resources/{kind}", dependencies=[Depends(require_admin)])
-@app.put("/api/resources/{kind}/{resource_id}", dependencies=[Depends(require_admin)])
+@app.post("/api/resources/{kind}", dependencies=[Depends(require_user)])
+@app.put("/api/resources/{kind}/{resource_id}", dependencies=[Depends(require_user)])
 async def save_resource(kind: str, request: Request, resource_id: str | None = None):
     if kind not in SCHEMAS:
         raise HTTPException(404)
@@ -434,7 +434,7 @@ async def save_resource(kind: str, request: Request, resource_id: str | None = N
         return public_resource(row)
 
 
-@app.delete("/api/resources/{kind}/{resource_id}", dependencies=[Depends(require_admin)])
+@app.delete("/api/resources/{kind}/{resource_id}", dependencies=[Depends(require_user)])
 def delete_resource(kind: str, resource_id: str):
     with Session() as db:
         row = db.get(Resource, resource_id, with_for_update=True)
@@ -479,7 +479,7 @@ def delete_resource(kind: str, resource_id: str):
     return {"ok": True}
 
 
-@app.post("/api/skills/upload", dependencies=[Depends(require_admin)])
+@app.post("/api/skills/upload", dependencies=[Depends(require_user)])
 async def upload_skill(file: UploadFile = File(...)):
     content = await file.read(2_000_001)
     if len(content) > 2_000_000:
@@ -515,7 +515,7 @@ async def upload_skill(file: UploadFile = File(...)):
         raise HTTPException(400, "Upload a valid ZIP with a UTF-8 SKILL.md.") from None
 
 
-@app.post("/api/connections/{resource_id}/test", dependencies=[Depends(require_admin)])
+@app.post("/api/connections/{resource_id}/test", dependencies=[Depends(require_user)])
 async def test_connection(resource_id: str):
     conn = providers.connection(resource_id)
     if conn["type"] == "mcp":
@@ -552,7 +552,7 @@ async def test_connection(resource_id: str):
     return {"ok": True, "models": await providers.models(conn)}
 
 
-@app.post("/api/agents/test", dependencies=[Depends(require_admin)])
+@app.post("/api/agents/test", dependencies=[Depends(require_user)])
 async def test_agent_model(data: AgentModel):
     connection = providers.connection(data.connection_id)
     if connection["type"] == "mcp":
@@ -566,7 +566,7 @@ async def test_agent_model(data: AgentModel):
     )
 
 
-@app.get("/api/harnesses", dependencies=[Depends(require_admin)])
+@app.get("/api/harnesses", dependencies=[Depends(require_user)])
 def harnesses():
     return [
         {"id": key, "name": HARNESS_LABELS[key], "version": version}
@@ -574,7 +574,7 @@ def harnesses():
     ]
 
 
-@app.post("/api/agents/check", dependencies=[Depends(require_admin)])
+@app.post("/api/agents/check", dependencies=[Depends(require_user)])
 def check_agent(data: AgentModel):
     from .agent_checks import enqueue
 
@@ -588,7 +588,7 @@ def check_agent(data: AgentModel):
         raise HTTPException(400, str(exc)) from None
 
 
-@app.get("/api/agents/check/{run_id}", dependencies=[Depends(require_admin)])
+@app.get("/api/agents/check/{run_id}", dependencies=[Depends(require_user)])
 def agent_check_status(run_id: str):
     with Session() as db:
         run = db.get(Run, run_id)
@@ -598,7 +598,7 @@ def agent_check_status(run_id: str):
         return {"id": run.id, "status": job.status, "result": job.result, "logs": job.logs}
 
 
-@app.post("/api/agents/check/{run_id}/cancel", dependencies=[Depends(require_admin)])
+@app.post("/api/agents/check/{run_id}/cancel", dependencies=[Depends(require_user)])
 async def cancel_agent_check(run_id: str):
     from .runtime import terminate
 
@@ -628,7 +628,7 @@ async def cancel_agent_check(run_id: str):
     return {"ok": True}
 
 
-@app.post("/api/agents/{resource_id}/test", dependencies=[Depends(require_admin)])
+@app.post("/api/agents/{resource_id}/test", dependencies=[Depends(require_user)])
 async def test_agent(resource_id: str):
     with Session() as db:
         row = db.get(Resource, resource_id)
@@ -642,7 +642,7 @@ async def test_agent(resource_id: str):
     )
 
 
-@app.get("/api/setup", dependencies=[Depends(require_admin)])
+@app.get("/api/setup", dependencies=[Depends(require_user)])
 def setup_status():
     conf = github.config()
     return {
@@ -654,17 +654,16 @@ def setup_status():
         "github_organization": github.setup_state().get("organization") or settings().github_organization,
         "development_github_token": bool(settings().github_token),
         "webhook_url": settings().public_url + "/api/webhook/github",
-        "admin_users": sorted(settings().admins),
         "max_review_minutes": settings().max_review_minutes,
     }
 
 
-@app.get("/api/github/repositories", dependencies=[Depends(require_admin)])
+@app.get("/api/github/repositories", dependencies=[Depends(require_user)])
 async def repos():
     return await github.installed_repositories()
 
 
-@app.get("/api/github/status", dependencies=[Depends(require_admin)])
+@app.get("/api/github/status", dependencies=[Depends(require_user)])
 async def github_status():
     try:
         return await asyncio.wait_for(github.connection_status(), timeout=25)
@@ -676,8 +675,8 @@ async def github_status():
         ) from None
 
 
-@app.post("/api/github/reset", dependencies=[Depends(require_admin)])
-@app.post("/api/github/reset/undo", dependencies=[Depends(require_admin)])
+@app.post("/api/github/reset", dependencies=[Depends(require_user)])
+@app.post("/api/github/reset/undo", dependencies=[Depends(require_user)])
 def reset_github(request: Request):
     disabled = not request.url.path.endswith("/undo")
     with Session() as db:
@@ -709,7 +708,7 @@ def reset_github(request: Request):
     return response
 
 
-@app.post("/api/github/connect", dependencies=[Depends(require_admin)])
+@app.post("/api/github/connect", dependencies=[Depends(require_user)])
 async def connect_repository(request: Request):
     generation = github.setup_state().get("generation", "")
     name = str((await request.json()).get("name", "")).strip().lower()
@@ -770,7 +769,7 @@ async def connect_repository(request: Request):
         return public_resource(row)
 
 
-@app.post("/api/github/manifest", dependencies=[Depends(require_admin)])
+@app.post("/api/github/manifest", dependencies=[Depends(require_user)])
 async def manifest(request: Request):
     body = await request.json()
     state = signed(
@@ -828,7 +827,7 @@ async def manifest_callback(request: Request, code: str, state: str):
         return result
 
     try:
-        require_admin(request)
+        require_user(request)
         state_data = unsign(state, 900)
         if (
             not secrets.compare_digest(state, request.cookies.get("lr_manifest", ""))
@@ -877,7 +876,7 @@ async def manifest_callback(request: Request, code: str, state: str):
     return response
 
 
-@app.post("/api/github/config", dependencies=[Depends(require_admin)])
+@app.post("/api/github/config", dependencies=[Depends(require_user)])
 async def github_config(request: Request):
     data = await request.json()
     allowed = {"app_id", "private_key", "webhook_secret", "client_id", "client_secret", "html_url"}
@@ -930,7 +929,7 @@ def run_public(run):
     }
 
 
-@app.get("/api/runs", dependencies=[Depends(require_admin)])
+@app.get("/api/runs", dependencies=[Depends(require_user)])
 def runs():
     with Session() as db:
         return [
@@ -944,7 +943,7 @@ def runs():
         ]
 
 
-@app.get("/api/runs/{run_id}", dependencies=[Depends(require_admin)])
+@app.get("/api/runs/{run_id}", dependencies=[Depends(require_user)])
 def run_detail(run_id: str):
     with Session() as db:
         run = db.get(Run, run_id)
@@ -976,7 +975,7 @@ def run_detail(run_id: str):
         return result
 
 
-@app.get("/api/artifacts/{artifact_id}", dependencies=[Depends(require_admin)])
+@app.get("/api/artifacts/{artifact_id}", dependencies=[Depends(require_user)])
 def artifact(artifact_id: str):
     with Session() as db:
         a = db.get(Artifact, artifact_id)

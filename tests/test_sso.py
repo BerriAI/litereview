@@ -22,7 +22,6 @@ def enable(monkeypatch):
         "google_client_id": "test-client",
         "google_client_secret": "test-secret",
         "google_allowed_domains": "berri.ai",
-        "google_admin_emails": "admin@berri.ai",
     }.items():
         monkeypatch.setattr(settings(), key, value)
 
@@ -138,16 +137,17 @@ def test_oauth_browser_binding_pkce_and_single_use(client, signing, monkeypatch)
     assert "test-secret" not in response.text
 
 
-def test_legacy_sessions_cannot_bypass_sso_and_members_cannot_admin(owner, monkeypatch):
+def test_legacy_sessions_cannot_bypass_sso_and_members_get_workspace_access(owner, monkeypatch):
     enable(monkeypatch)
     assert owner.get("/api/resources/agents").status_code == 401
     assert owner.post("/api/login", json={"token": settings().admin_token}).status_code == 403
     assert owner.get("/api/auth/github", follow_redirects=False).status_code == 401
     owner.cookies.clear()
     identity(owner)
-    assert owner.get("/api/session").json()["user"]["admin"] is False
-    for path in ["/api/resources/agents", "/api/runs", "/api/artifacts/any", "/api/setup", "/api/harnesses"]:
-        assert owner.get(path).status_code == 403
+    assert "admin" not in owner.get("/api/session").json()["user"]
+    for path in ["/api/resources/agents", "/api/runs", "/api/setup", "/api/harnesses"]:
+        assert owner.get(path).status_code == 200
+    assert owner.get("/api/artifacts/any").status_code == 404
     assert owner.post("/api/logout").status_code == 200
     assert not sso.eligible_caller({"id": 42, "login": "trusted"})
 
