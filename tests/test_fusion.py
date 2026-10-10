@@ -36,7 +36,9 @@ def test_fusion_is_one_visible_review_with_immutable_independent_branches(owner,
         assert all(j.status == 'queued' and 'Edited' not in j.config['instructions'] for j in children)
         assert children[1].config['connection']['base_url'] == 'https://other.example/v1'
         assert children[0].config['skills'][0]['instructions'] == 'Look for actionable issues.'
-        assert 'Trace real callers' in children[1].config['instructions']
+        assert children[0].config['instructions'] == children[1].config['instructions']
+        assert 'Trace real callers' not in children[1].config['instructions']
+        assert 'focus' not in children[1].config
         assert 'fusion' not in children[0].config
         assert 'secret' not in str([j.config for j in jobs])
     data = owner.get('/api/runs/' + rid).json()
