@@ -433,6 +433,7 @@ async def test_cancelled_publisher_releases_lock_and_recovers_post(publication, 
 def test_publication_lock_excludes_another_process_and_releases_on_exit(client):
     import subprocess
     import sys
+    import time
 
     from app.publication_lock import publication_lock
 
@@ -456,6 +457,12 @@ def test_publication_lock_excludes_another_process_and_releases_on_exit(client):
     finally:
         child.kill()
         child.communicate(timeout=5)
-    # Abrupt death releases the PostgreSQL connection or local OS file lock.
-    with publication_lock("process-test") as acquired:
-        assert acquired
+    # PostgreSQL releases the lock after its backend observes the closed socket.
+    # Reap of the client process does not synchronize with that server event.
+    deadline = time.monotonic() + 3
+    while True:
+        with publication_lock("process-test") as acquired:
+            if acquired:
+                break
+        assert time.monotonic() < deadline, "Publication lock was not released after client exit"
+        time.sleep(0.02)

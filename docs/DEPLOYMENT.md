@@ -59,10 +59,10 @@ Modal workers must reach this public HTTPS origin. Keep one API worker and one s
 3. Open **Models → Add connection**, choose your provider or gateway, and enter its API key. For a gateway, use the API base URL supplied by its operator. Save and test the connection.
 4. In Repositories, choose **Configure reviewer**, name it `review`, choose a model, and use **Save and check reviewer**. This executes a sample project in a real Modal sandbox and consumes model/Modal credits. It does not post to GitHub. Resolve any reported compatibility or credential error before proceeding.
 5. Open the reviewer under **PR agents** to set its instructions and optional maximum run time/model-call limits. Set `CONCURRENCY` in the deployment environment if you want a workspace-wide sandbox cap; `0` leaves concurrency to Modal quotas. Configure provider and Modal budgets in those services.
-6. Choose **Start a review**, link your GitHub identity, and copy the permitted command. Post it as a new comment on an open PR in your connected repository:
+6. The first reviewer becomes the default automatically. To change it, use **PR agents → Default reviewer**. Choose **Start a review**, link your GitHub identity, and copy the permitted command. Post it as a new comment on an open PR in your connected repository:
 
    ```text
-   @litereview review
+   @litereview
    ```
 
    An accepted request gets 👀 and each agent gets a separate progress comment. As an agent finishes, its comment shows ✅, its response, and links to finding threads where you can reply. Findings without a usable diff line stay in that comment. The agent’s 👀 reaction disappears on completion; the request’s disappears when all agents finish. Expand an agent in **Runs** to read its report and open its findings, checks, screenshots, or activity. An incomplete result lists the work that could not finish. Read the result before accepting findings as correct.

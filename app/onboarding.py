@@ -102,6 +102,7 @@ async def sync_repositories():
 
 
 def workspace_readiness():
+    from . import fusion
     with Session() as db:
         resources = {r.id: r for r in db.scalars(select(Resource)).all()}
         checks = db.execute(
@@ -128,8 +129,11 @@ def workspace_readiness():
                 job
                 for job, created in checks
                 if conn
+                and not job.config.get("fusion_parent_id")
                 and conn.data["type"] in ("openai", "gateway")
                 and created >= conn.updated_at
+                and fusion.selection(job.config) == fusion.selection(row.data)
+                and fusion.connections_current(row.data, resources, created)
                 and job.config.get("harness_version") == HARNESS_VERSIONS["codex"]
                 and all(
                     job.config.get(k, "builtin" if k == "harness" else None)
@@ -138,7 +142,7 @@ def workspace_readiness():
                         if k == "capabilities"
                         else row.data.get(k, "builtin" if k == "harness" else None)
                     )
-                    for k in ("harness", "connection_id", "model", "capabilities")
+                    for k in ("harness", "connection_id", "model", "reasoning_effort", "capabilities")
                 )
             ),
             None,
@@ -169,6 +173,8 @@ def readiness():
 
 
 async def member_start(user):
+    from .review_defaults import selected
+
     result = {
         "state": "github",
         "repositories": [],
@@ -178,6 +184,7 @@ async def member_start(user):
     if not user.get("github_login"):
         return result
     readiness, resources = workspace_readiness()
+    default = selected(resources)
     grants = {
         (r.data["subject"], r.data["name"].lower()): r for r in resources.values() if r.kind == "access"
     }
@@ -226,7 +233,12 @@ async def member_start(user):
                 expected_id=user.get("github_id"),
             )
             if permission in ("read", "triage", "write", "maintain", "admin"):
-                result["repositories"].append({"name": repo.data["name"], "reviewers": targets})
+                result["repositories"].append({
+                    "name": repo.data["name"],
+                    "reviewers": targets,
+                    "default_reviewer": default.data["name"]
+                    if default and default.data["name"] in targets else None,
+                })
     except (HTTPException, httpx.RequestError, ValueError):
         return {**result, "state": "unavailable", "repositories": []}
     return {**result, "state": "ready" if result["repositories"] else "reviewer"}

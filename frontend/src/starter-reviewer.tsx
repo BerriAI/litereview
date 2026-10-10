@@ -87,7 +87,7 @@ export function StarterReviewer({
     >
       <form onSubmit={save} className="starter-form">
         <div className="dialog-body">
-          <Field label="Reviewer name" hint="Use this name in your PR comment.">
+          <Field label="Reviewer name" hint="Your first reviewer becomes the default. Comment @litereview to run it; its name also works.">
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}

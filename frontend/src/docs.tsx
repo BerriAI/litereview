@@ -76,8 +76,20 @@ export function Documentation() {
             <li>
               <h3>Comment on an open PR</h3>
               <p>
-                Use agent names, group names, or both in a new comment, with
-                nothing else in it:
+                Post this comment to use the workspace’s default reviewer:
+              </p>
+              <pre>
+                <code>@litereview</code>
+              </pre>
+              <p>
+                The first reviewer becomes the default automatically. Change
+                it under PR agents → Default reviewer. If an existing workspace
+                has several reviewers, choose a default once. Caller and
+                repository permissions still apply.
+              </p>
+              <p>
+                To choose specific agents or groups, put their names in the
+                comment, with nothing else in it:
               </p>
               <pre>
                 <code>@litereview frontend security</code>
@@ -99,7 +111,7 @@ export function Documentation() {
                 Set Minimum review time (minutes) in the reviewer’s PR agents
                 editor. Use 0 for no minimum, or enter whole minutes. Every instance uses its
                 reviewer’s saved time, including inside groups. Comments contain
-                only names; time options in comments are rejected. The clock
+                only reviewer names or the bare mention; time options in comments are rejected. The clock
                 starts after setup. Agents continue investigating and cannot
                 finish successfully before that time elapses. Failures and
                 exhausted limits are reported as incomplete. Longer reviews can
@@ -271,7 +283,7 @@ export function Documentation() {
           </p>
         </section>
         <section>
-          <h2>Codex and agent groups</h2>
+          <h2>Codex, Fusion, and agent groups</h2>
           <p>
             Every agent uses Codex. Choose an OpenAI connection or a gateway
             that supports the Responses API. A gateway can route compatible
@@ -296,6 +308,26 @@ export function Documentation() {
             In <a href="/groups">Agent groups</a>, bundle existing agents and
             choose how many instances to run. Groups are optional; you can call
             one agent directly for your first review.
+          </p>
+          <p>
+            To combine independent reviews into one result, open a reviewer in
+            <a href="/agents"> PR agents</a> and set Review mode to Fusion.
+            Choose each branch’s connection, model, reasoning effort, and optional
+            focus. Add branch supports up to 16 branches. All branches use the
+            reviewer’s instructions, skills, and enabled tools. Select the
+            Aggregator model, save, and run Test agent to check every stage.
+          </p>
+          <p>
+            Each branch gets its own checkout. The aggregator verifies their reports
+            against a fresh checkout and publishes one review. Expand Fusion in Runs
+            to see branch results and activity. Failed branches remain visible as
+            incomplete coverage; if every branch fails, the aggregator does not run.
+          </p>
+          <p>
+            Fusion costs include every branch plus the aggregator. Time and call
+            limits apply separately to each stage; minimum review time applies to
+            branches. Workspace concurrency can queue branches. Choose a fusion
+            reviewer as Default reviewer to run it with <code>@litereview</code>.
           </p>
         </section>
 

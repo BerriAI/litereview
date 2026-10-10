@@ -205,7 +205,6 @@ def test_parallel_expansion_deduplication_and_snapshots(owner, monkeypatch):
         "hello @litereview general",
         "```\n@litereview general\n```",
         "@other general",
-        "@litereview",
         "@litereview general; echo unsafe",
     ],
 )
