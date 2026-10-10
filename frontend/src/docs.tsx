@@ -117,16 +117,19 @@ export function Documentation() {
             <li>
               <h3>Read the results</h3>
               <p>
-                LiteReview reacts with 👀 when it accepts your request. When all
-                agents finish, it posts their responses and findings in one
-                comment, preserving each agent’s configured voice. Expand Checks
-                and execution details for verification results. Open
-                <a href="/runs"> Runs</a> for details, activity, and
-                screenshots. An incomplete check means the agent could not
-                finish work required by its instructions. Optional checks that
-                were not run appear under Checks without making the review
-                incomplete. Results are summary comments;
-                agents do not push fixes.
+                LiteReview reacts with 👀 and creates a progress comment for
+                each agent. Each comment shows ✅ and that agent’s response as
+                it finishes. Findings link to inline threads where you can
+                reply; findings without a usable diff line stay in the agent
+                comment. The agent’s 👀 reaction disappears when it finishes,
+                and the request’s disappears when all agents finish. ✅ means
+                finished, not issue-free. Expand Checks and execution details
+                for verification results. Open <a href="/runs">Runs</a> and
+                expand an agent to read its report. Findings, checks, activity,
+                and screenshots start collapsed. An incomplete check means the
+                agent could not finish work required by its instructions.
+                Optional checks that were not run appear under Checks without
+                making the review incomplete. Agents do not push fixes.
               </p>
             </li>
           </ol>

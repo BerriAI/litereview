@@ -13,7 +13,7 @@ from test_harnesses import seed_job
 from test_reviews import mock_github, payload, setup, webhook
 
 from app import github, providers, reviews
-from app.db import Artifact, Job, Run, Session
+from app.db import Artifact, Job, ReviewPublication, Run, Session
 from runner import agent, harness, tools
 from runner.bridge import content_blocks
 
@@ -385,8 +385,11 @@ async def test_multicomment_publication_recovers_a_lost_response(owner, monkeypa
     assert len({c["body"].split("\n", 1)[0] for c in comments}) == len(comments)
     with Session() as db:
         run = db.get(Run, run_id)
-        assert run.published == 2 and run.comment_id == comments[0]["id"]
-        expected = reviews.render_comment(run, db.scalars(select(Job).where(Job.run_id == run_id)).all())
-    assert "".join(c["body"].split("\n", 1)[1] for c in comments) == expected.removeprefix(
-        f"<!-- litereview:{run_id} -->"
-    )
+        assert run.published == 2
+        jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
+        for job in jobs:
+            state = db.get(ReviewPublication, f"job:{job.id}").data
+            parts = [next(c["body"] for c in comments if c["id"] == cid) for cid in state["comment_ids"]]
+            expected = reviews.render_comment(run, [job], agent_comment=True, all_jobs=jobs)
+            marker = expected.split("\n", 1)[0]
+            assert "".join(part.split("\n", 1)[1] for part in parts) == expected.removeprefix(marker)

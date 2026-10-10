@@ -4,14 +4,14 @@ import secrets
 import time
 from collections import Counter
 
-import httpx
 from fastapi import HTTPException
+from markdown_it import MarkdownIt
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from runner.catalog import HARNESS_VERSIONS, review_capabilities, validate_connection
 
-from . import github, tracing
+from . import github
 from .access import caller_grant, caller_permits, permits
 from .db import Job, Resource, Run, Session, uid
 from .limits import job_timeout, timing_limits
@@ -258,16 +258,39 @@ async def accept(payload, delivery):
 
 def md(value):
     # Prevent model output from causing mentions or breaking attribution headings.
-    return str(value).replace("@", "@\u200b").replace("<", "&lt;").replace(">", "&gt;")
+    value = str(value)
+    lines = value.splitlines(keepends=True)
+    tokens = MarkdownIt().parse(value)
+    protected = set()
+    for token in tokens:
+        if token.type in ("fence", "code_block"):
+            protected.update(range(*token.map))
+    for index, line in enumerate(lines):
+        if index not in protected:
+            lines[index] = line.replace("@", "@\u200b").replace("<", "&lt;")
+    # Token maps distinguish actual headings from fenced/indented code.
+    for token in reversed(tokens):
+        if token.type != "heading_open" or int(token.tag[1:]) > 3:
+            continue
+        start, end = token.map
+        if token.markup.startswith("#"):
+            lines[start] = re.sub(r"(?<!\S)#{1,3}(?=\s|$)", "####", lines[start], count=1)
+        else:
+            lines[start] = re.sub(r"^([ >\t]*(?:(?:[-+*]|\d+[.)])\s+)?)", r"\1#### ", lines[start], count=1)
+            lines[end - 1] = "\n" if lines[end - 1].endswith("\n") else ""
+    return "".join(lines)
 
 
-def render_comment(run, jobs, newer=False):
+def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None, finding_links=None):
     if run.status == "rejected":
         return f"<!-- litereview:{run.id} -->\n### Review not started\n\n{md(run.snapshot['rejection'])}"
-    lines = [f"<!-- litereview:{run.id} -->", ""]
+    marker = (
+        f"<!-- litereview:{run.id}:job:{jobs[0].id} -->" if agent_comment else f"<!-- litereview:{run.id} -->"
+    )
+    lines = [marker, ""]
     if newer:
         lines += [f"> New commits were pushed. This review covers `{run.head[:12]}`.", ""]
-    counts = Counter((j.config.get("group"), j.config["name"]) for j in jobs)
+    counts = Counter((j.config.get("group"), j.config["name"]) for j in (all_jobs or jobs))
     for job in jobs:
         c = job.config
         label = md(c["name"])
@@ -275,7 +298,8 @@ def render_comment(run, jobs, newer=False):
             label += f" · {md(c['group'])}"
         if counts[(c.get("group"), c["name"])] > 1:
             label += f" · Run {c['instance']}"
-        lines += [f"### {label}", ""]
+        icon = ("✅ " if job.status in TERMINAL else "👀 ") if agent_comment else ""
+        lines += [f"### {icon}{label}", ""]
         if job.status not in TERMINAL:
             lines += ["Review in progress.", ""]
             continue
@@ -290,7 +314,14 @@ def render_comment(run, jobs, newer=False):
             visible += [md(result["summary"]), ""]
         elif not incomplete and not result.get("findings"):
             visible += ["**No issues found.**", ""]
-        for finding in result.get("findings", []):
+        for index, finding in enumerate(result.get("findings", [])):
+            thread = (finding_links or {}).get(str(index))
+            if thread:
+                visible += [
+                    f"- **{md(finding['severity'].capitalize())}** · [{md(finding['title'])}]({thread}) · Reply in thread",
+                    "",
+                ]
+                continue
             location = ""
             if finding.get("file"):
                 from urllib.parse import quote
@@ -304,6 +335,8 @@ def render_comment(run, jobs, newer=False):
                 md(finding["explanation"]),
                 "",
             ]
+            for evidence in finding.get("evidence", []):
+                visible += [md(evidence), ""]
         if result.get("limitations"):
             visible += ["**Couldn’t complete**", ""]
             visible += [f"- {md(limit)}" for limit in result["limitations"]]
@@ -319,7 +352,15 @@ def render_comment(run, jobs, newer=False):
         section = "\n".join(visible).strip()
         lines += [section, ""]
         if note_text:
-            lines += ["<details>", "<summary>Checks and execution details</summary>", "", note_text, "", "</details>", ""]
+            lines += [
+                "<details>",
+                "<summary>Checks and execution details</summary>",
+                "",
+                note_text,
+                "",
+                "</details>",
+                "",
+            ]
     lines += [
         "---",
         f"[View review]({settings().public_url}/runs/{run.id}) · Reviewed [`{run.head[:12]}`](https://github.com/{run.repo}/commit/{run.head})",
@@ -335,10 +376,11 @@ def comment_parts(run, body):
     if len(body) <= GITHUB_COMMENT_CHARACTERS:
         return [body]
     parts = []
-    remaining = body.removeprefix(f"<!-- litereview:{run.id} -->")
+    root_marker = body.split("\n", 1)[0]
+    remaining = body.removeprefix(root_marker)
     while remaining:
         number = len(parts) + 1
-        marker = f"<!-- litereview:{run.id} -->" if number == 1 else f"<!-- litereview:{run.id}:part:{number} -->"
+        marker = root_marker if number == 1 else root_marker.removesuffix(" -->") + f":part:{number} -->"
         prefix = marker + "\n"
         available = GITHUB_COMMENT_CHARACTERS - len(prefix)
         end = len(remaining) if len(remaining) <= available else remaining.rfind("\n", 0, available) + 1
@@ -350,105 +392,9 @@ def comment_parts(run, body):
 
 
 async def publish(run_id):
-    with Session() as db:
-        run = db.get(Run, run_id)
-        jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
-        done = all(j.status in TERMINAL for j in jobs)
-        if run.published == 2 or (run.published == 1 and not done):
-            return
-        if done:
-            for job in jobs:
-                tracing.finish_job(job, run)
-        if run.snapshot.get("harness_check"):
-            run.status = (
-                "completed"
-                if done and all(j.status == "completed" and not j.result.get("limitations") for j in jobs)
-                else "incomplete"
-                if done
-                else "running"
-            )
-            run.published = 2 if done else 1
-            db.commit()
-            return
-    if run.published == 0 and run.status != "rejected":
-        comment_id = run.snapshot.get("trigger_comment_id")
-        if comment_id:
-            try:
-                # GitHub returns the existing reaction on retries, including after a lost response.
-                await github.repo_request(
-                    run.repo,
-                    run.installation,
-                    "POST",
-                    f"issues/comments/{comment_id}/reactions",
-                    json={"content": "eyes"},
-                )
-            except (HTTPException, httpx.HTTPError):
-                if not done:
-                    raise
-                # A deleted request comment must not prevent publication of finished findings.
-        with Session() as db:
-            saved = db.get(Run, run_id)
-            saved.published = 1
-            saved.status = "running"
-            saved.error = ""
-            db.commit()
-    if not done:
-        return
-    newer = False
-    if done and run.status != "rejected":
-        info = (await github.repo_request(run.repo, run.installation, "GET", f"pulls/{run.pr}")).json()
-        newer = info["head"]["sha"] != run.head
-    bodies = comment_parts(run, render_comment(run, jobs, newer))
-    existing = {}
-    if run.comment_id:
-        existing[f"<!-- litereview:{run.id} -->"] = run.comment_id
-    if not run.comment_id or len(bodies) > 1:
-        # Recover every successful POST, including a lost response halfway through a large review.
-        page = 1
-        while True:
-            comments = (
-                await github.repo_request(
-                    run.repo, run.installation, "GET", f"issues/{run.pr}/comments?per_page=100&page={page}"
-                )
-            ).json()
-            for comment in comments:
-                if comment["user"].get("type") == "Bot" or settings().github_token:
-                    marker = comment.get("body", "").split("\n", 1)[0]
-                    existing[marker] = comment["id"]
-            if len(comments) < 100:
-                break
-            page += 1
-    for index, body in enumerate(bodies):
-        marker = body.split("\n", 1)[0]
-        comment_id = existing.get(marker)
-        if comment_id:
-            await github.repo_request(
-                run.repo, run.installation, "PATCH", f"issues/comments/{comment_id}", json={"body": body}
-            )
-        else:
-            result = await github.repo_request(
-                run.repo, run.installation, "POST", f"issues/{run.pr}/comments", json={"body": body}
-            )
-            comment_id = result.json()["id"]
-        if index == 0:
-            run.comment_id = comment_id
-    with Session() as db:
-        saved = db.get(Run, run_id)
-        saved.comment_id = run.comment_id
-        saved.published = 2 if done else 1
-        saved.status = (
-            "rejected"
-            if run.status == "rejected"
-            else (
-                "completed"
-                if done and all(j.status == "completed" and not j.result.get("limitations") for j in jobs)
-                else "incomplete"
-                if done
-                else "running"
-            )
-        )
-        saved.error = ""
-        db.commit()
+    from .publication import publish_run
+
+    await publish_run(run_id)
 
 
 async def dispatcher():

@@ -95,14 +95,14 @@
   padding: 20px 0;
   border-top: 1px solid var(--line);
 }
-.review-finding > h4 {
+.review-finding > summary {
   display: flex;
   gap: 9px;
   align-items: baseline;
   margin: 0 0 8px;
   font-size: 14px;
 }
-.review-finding > h4 .badge {
+.review-finding > summary .badge {
   flex-shrink: 0;
   text-transform: capitalize;
 }
@@ -120,7 +120,7 @@
   padding: 2px 0 2px 16px;
   margin: 10px 0 20px;
 }
-.review-incomplete > h4 {
+.review-incomplete > summary {
   font-size: 13px;
   margin: 0 0 10px;
 }
@@ -180,11 +180,47 @@
   .job {
     padding: 18px;
   }
-  .review-finding > h4 {
+  .review-finding > summary {
     flex-wrap: wrap;
   }
   .job .logs > div {
     flex-direction: column;
     gap: 2px;
   }
+}
+
+/* Native disclosures retain the reader's open state across polling updates. */
+.job > .job-title {
+  list-style: none;
+  color: var(--ink);
+}
+.job > .job-title::-webkit-details-marker {
+  display: none;
+}
+.job > .job-title::before {
+  content: "›";
+  font-size: 20px;
+  transition: transform 120ms ease;
+}
+.job[open] > .job-title::before {
+  transform: rotate(90deg);
+}
+.job > .job-title h3 {
+  margin: 0;
+}
+.review-finding > summary::before {
+  content: "›";
+}
+.review-finding[open] > summary::before {
+  content: "⌄";
+}
+.review-finding > summary {
+  color: var(--ink);
+  list-style: none;
+}
+.review-finding > summary::-webkit-details-marker {
+  display: none;
+}
+.review-finding[open] > summary {
+  margin-bottom: 14px;
 }

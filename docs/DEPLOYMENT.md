@@ -65,7 +65,7 @@ Modal workers must reach this public HTTPS origin. Keep one API worker and one s
    @litereview review
    ```
 
-   An accepted request gets a 👀 reaction. **Runs** shows progress; completion posts a PR comment with the reviewed commit and a link to the full result. An incomplete result lists the work that could not finish. Read the result before accepting findings as correct.
+   An accepted request gets 👀 and each agent gets a separate progress comment. As an agent finishes, its comment shows ✅, its response, and links to finding threads where you can reply. Findings without a usable diff line stay in that comment. The agent’s 👀 reaction disappears on completion; the request’s disappears when all agents finish. Expand an agent in **Runs** to read its report and open its findings, checks, screenshots, or activity. An incomplete result lists the work that could not finish. Read the result before accepting findings as correct.
 7. Invite trusted colleagues to your deployment URL. They sign in with Google and link GitHub. **People → Edit access** and each repository's **Review permissions** can restrict who invokes which reviewers; these controls do not remove workspace management access.
 
 For an existing App, see [manual credentials and permissions](../README.md#existing-github-app). For repository-specific build commands, browser checks, skills, and MCP tools, use the in-app **Documentation** page. Add only disposable test credentials to review environments.

@@ -367,8 +367,8 @@ def test_duplicate_comment_publication_recovers_existing_comment(owner, monkeypa
     mock_github(monkeypatch)
     run_id = webhook(owner, payload()).json()["run_id"]
     with Session() as db:
-        db.get(Run, run_id).published = 1
-        for job in db.scalars(select(Job)).all():
+        jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
+        for job in jobs:
             job.status = "completed"
         db.commit()
     calls = []
@@ -378,18 +378,16 @@ def test_duplicate_comment_publication_recovers_existing_comment(owner, monkeypa
         if suffix.startswith("pulls/"):
             return httpx.Response(200, json={"head": {"sha": "a" * 40}})
         if method == "GET":
-            return httpx.Response(
-                200,
-                json=[{"id": 5879827650, "body": f"<!-- litereview:{run_id} -->", "user": {"type": "Bot"}}],
-            )
+            return httpx.Response(200, json=[
+                {"id": 5879827650 + i, "body": f"<!-- litereview:{run_id}:job:{j.id} -->", "user": {"type": "Bot"}}
+                for i, j in enumerate(jobs)
+            ])
         return httpx.Response(200, json={"id": 5879827650})
 
     monkeypatch.setattr(github, "repo_request", request)
-    import asyncio
-
     asyncio.run(reviews.publish(run_id))
     assert "POST" not in calls
-    assert calls == ["GET", "GET", "PATCH"]
+    assert calls.count("PATCH") == 4
 
 
 def test_model_connection_snapshot_is_immutable(owner, monkeypatch):

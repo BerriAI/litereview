@@ -15,6 +15,19 @@ from .settings import settings
 API = "https://api.github.com"
 
 
+class GitHubError(HTTPException):
+    def __init__(self, response, method, path):
+        self.upstream_status = response.status_code
+        try:
+            self.errors = response.json().get("errors", [])
+        except (ValueError, AttributeError):
+            self.errors = []
+        super().__init__(
+            502,
+            f"GitHub returned {response.status_code} for {method} {path}. Check the App installation and repository permissions.",
+        )
+
+
 def setup_state():
     with Session() as db:
         saved = db.get(Resource, "github")
@@ -63,10 +76,7 @@ async def request(method, path, token=None, **kwargs):
     async with httpx.AsyncClient(timeout=None) as client:
         response = await client.request(method, API + path, headers=headers, **kwargs)
     if not response.is_success:
-        raise HTTPException(
-            502,
-            f"GitHub returned {response.status_code} for {method} {path}. Check the App installation and repository permissions.",
-        )
+        raise GitHubError(response, method, path)
     return response
 
 

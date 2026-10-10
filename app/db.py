@@ -101,6 +101,13 @@ class Artifact(Base):
     mime: Mapped[str] = mapped_column(String(80), default="image/png")
 
 
+class ReviewPublication(Base):
+    __tablename__ = "review_publications"
+    # Separate run/agent records checkpoint GitHub side effects for restart recovery.
+    key: Mapped[str] = mapped_column(String(90), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class ReviewTiming(Base):
     __tablename__ = "review_timing"
     job_id: Mapped[str] = mapped_column(String(40), primary_key=True)

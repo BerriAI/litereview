@@ -34,7 +34,7 @@ GitHub commands accept **agents and groups** together. Their command names share
    @litereview frontend pentest security
    ```
 
-6. LiteReview adds a 👀 reaction to the request, launches the selected instances, and posts a comment when every instance finishes. The web app shows progress and results.
+6. LiteReview adds 👀 to the request and a separate progress comment for each selected instance. Each comment switches from 👀 to ✅ and publishes that agent’s response as it finishes. Findings become linked inline threads where possible. Runs shows collapsed agent reports by default.
 
 If `frontend` and `pentest` are individual agents and `security` contains five instances, this runs seven independent jobs.
 
@@ -152,7 +152,7 @@ The [agent control plane](https://github.com/LiteLLM-Labs/litellm-agent-control-
 4. For every job, create a fresh sandbox, stage the repository and diff, mount attached skills, and initialize enabled tools. Run configured setup only when the job needs the runnable application environment.
 5. Run Codex: request a model response, execute permitted tool calls, return tool results, and continue until it returns a structured review or reaches its limits.
 6. Persist results and artifacts. Terminate the sandbox in cleanup, with Modal’s required sandbox lifetime as a backstop.
-7. When all jobs reach a terminal state, post one final GitHub comment. Recover an existing marked comment after a lost publication response. One failed agent does not discard other agents’ results.
+7. As each job reaches a terminal state, update its own GitHub comment with its response and links to inline finding threads on valid right-side lines of the captured diff. Keep unanchored or oversized findings in the agent comment. Demote model headings below the agent title. Recover marked comments and threads after lost responses. Replace the agent title’s 👀 with ✅ and remove its eyes reaction; remove the request’s eyes when every result is published. GitHub has no check-mark reaction. Keep incomplete status explicit. One failed agent does not discard other agents’ results.
 
 Jobs run concurrently subject to Modal capacity and a deployment concurrency limit. Show queued work honestly. Use atomic job claims and idempotent publication so retries do not duplicate reviews. Do not automatically rerun completed agents.
 
@@ -186,7 +186,7 @@ The build is ready to try when all of these work against a real test repository:
 
 1. Connect a direct model provider and, separately, a gateway; run a real agent through each path.
 2. Create an agent with skills and tools; reuse it in two groups without copying it. Confirm edits affect future runs in both groups.
-3. Trigger three groups totaling seven instances from one PR comment. Confirm separate sandboxes, one shared commit snapshot, and attributed results in one GitHub comment.
+3. Trigger three groups totaling seven instances from one PR comment. Confirm separate sandboxes, one shared commit snapshot, and separate attributed agent comments, per-agent completion indicators, and linked finding threads.
 4. Complete a repository-only review, a test/Playwright review, and a **computer-use review that actually observes screenshots and operates the virtual desktop**. Verify that browser and desktop screenshots reach the model as image inputs and that it checks the visible result after acting. Use a controlled PR with an observable UI failure for the last two, including a visual issue that cannot be established from page structure alone.
 5. Confirm selected skills/supporting files are available and unattached skills/tools are unavailable. Verify a configured remote MCP tool call.
 6. Show real findings, a clean completed review, and an incomplete review caused by a setup/model failure accurately.
