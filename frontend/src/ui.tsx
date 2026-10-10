@@ -16,7 +16,7 @@ import {
 export function Brand() {
   return (
     <span className="brand-lockup">
-      <img src="/brand/litellm-train.webp" alt="" />
+      <img src="/brand/litereview.png" alt="" />
       <span>
         <strong>LiteReview</strong>
         <small>by LiteLLM</small>
