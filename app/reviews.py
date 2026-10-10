@@ -246,14 +246,35 @@ async def accept(payload, delivery):
         if state.get("disabled") or state.get("generation", "") != github_state.get("generation", ""):
             return None
         db.add(run)
-        for cfg in configurations:
-            db.add(Job(id=uid(), run_id=run.id, config=cfg))
+        for position, cfg in enumerate(configurations):
+            db.add(Job(id=uid(), run_id=run.id, config={**cfg, "run_order": position}))
         try:
             db.commit()
         except IntegrityError:
             db.rollback()
             return db.scalar(select(Run).where(Run.delivery == delivery)).id
     return run.id
+
+
+def ordered_jobs(run, jobs):
+    # Older accepted runs already retain command/group/member order in their
+    # immutable snapshot. Reconstruct it without changing or restarting jobs.
+    positions = {}
+    for group in run.snapshot.get("groups", []):
+        for member in group.get("members", []):
+            for instance in range(1, member.get("count", 1) + 1):
+                positions[(group["name"], member["agent_id"], instance)] = len(positions)
+
+    def order(job):
+        cfg = job.config
+        position = cfg.get("run_order")
+        if position is None:
+            position = positions.get(
+                (cfg.get("group"), cfg.get("agent_id"), cfg.get("instance", 1)), len(positions)
+            )
+        return position, cfg.get("instance", 1), job.id
+
+    return sorted(jobs, key=order)
 
 
 def md(value):

@@ -161,3 +161,45 @@ def test_editor_probes_current_unsaved_model_without_saving_agent(owner, monkeyp
 
 def test_model_probe_requires_authentication(client):
     assert client.post("/api/agents/test", json={"connection_id": "any", "model": "any"}).status_code == 401
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_command_order_survives_updates_and_controls_publication(owner, monkeypatch, legacy):
+    from test_review_publication import GitHubFixture
+
+    from app import github
+
+    _, _, agent, _, group = setup(owner)
+    other = create(owner, "agents", **{**agent, "name": "second"})
+    update(
+        owner,
+        "groups",
+        group,
+        members=[
+            {"agent_id": other["id"], "count": 2},
+            {"agent_id": agent["id"], "count": 2},
+        ],
+    )
+    mock_github(monkeypatch)
+    # Command order, member order, and numeric instance order all matter.
+    run_id = webhook(owner, payload(body="@litereview second reviewer general")).json()["run_id"]
+    with Session.begin() as db:
+        jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
+        expected = [j.id for j in sorted(jobs, key=lambda j: j.config["run_order"])]
+        if legacy:
+            for job in jobs:
+                job.config = {k: v for k, v in job.config.items() if k != "run_order"}
+        # Force deliberately reversed input independently of the DB's row order.
+        assert [j.id for j in reviews.ordered_jobs(db.get(Run, run_id), list(reversed(jobs)))] == expected
+    for job_id in reversed(expected):
+        with Session.begin() as db:
+            job = db.get(Job, job_id)
+            job.status = "running"
+            job.logs = [{"time": 1, "message": "Another activity event"}]
+        assert [j["id"] for j in owner.get(f"/api/runs/{run_id}").json()["jobs"]] == expected
+    fake = GitHubFixture(run_id)
+    monkeypatch.setattr(github, "repo_request", fake.request)
+    await reviews.publish(run_id)
+    assert [c["body"].split("\n", 1)[0] for c in fake.comments] == [
+        f"<!-- litereview:{run_id}:job:{job_id} -->" for job_id in expected
+    ]

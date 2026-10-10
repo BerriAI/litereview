@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import pytest
 from markdown_it import MarkdownIt
@@ -370,3 +372,90 @@ async def test_one_agent_publication_error_does_not_block_other_agent(publicatio
     monkeypatch.setattr(github, "repo_request", fake.request)
     await reviews.publish(fake.run_id)
     assert len(fake.threads) == 2
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+async def test_overlapping_publishers_do_not_duplicate_comments_or_threads(
+    publication, monkeypatch, terminal
+):
+    fake = publication
+    if terminal:
+        await reviews.publish(fake.run_id)
+        finish(fake.run_id, findings=[FINDING])
+    entered, release = asyncio.Event(), asyncio.Event()
+    first_post = True
+
+    async def request(*args, **kwargs):
+        nonlocal first_post
+        if first_post and args[2:4] == ("POST", "pulls/1/comments" if terminal else "issues/1/comments"):
+            first_post = False
+            # The first publisher has already listed comments and is now in
+            # flight to GitHub. A second process must not use that empty list.
+            entered.set()
+            await release.wait()
+        return await fake.request(*args, **kwargs)
+
+    monkeypatch.setattr(github, "repo_request", request)
+    first = asyncio.create_task(reviews.publish(fake.run_id))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.wait_for(reviews.publish(fake.run_id), 2)
+    finally:
+        release.set()
+        await first
+    await reviews.publish(fake.run_id)
+    assert len(fake.comments) == 2
+    assert len(fake.threads) == (2 if terminal else 0)
+
+
+async def test_cancelled_publisher_releases_lock_and_recovers_post(publication, monkeypatch):
+    fake = publication
+    posted = asyncio.Event()
+
+    async def request(*args, **kwargs):
+        response = await fake.request(*args, **kwargs)
+        if args[2:4] == ("POST", "issues/1/comments"):
+            posted.set()
+            await asyncio.Event().wait()
+        return response
+
+    monkeypatch.setattr(github, "repo_request", request)
+    first = asyncio.create_task(reviews.publish(fake.run_id))
+    await asyncio.wait_for(posted.wait(), 2)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    monkeypatch.setattr(github, "repo_request", fake.request)
+    await reviews.publish(fake.run_id)
+    assert len(fake.comments) == 2
+
+
+def test_publication_lock_excludes_another_process_and_releases_on_exit(client):
+    import subprocess
+    import sys
+
+    from app.publication_lock import publication_lock
+
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-u",
+            "-c",
+            "from app.publication_lock import publication_lock; "
+            "ctx = publication_lock('process-test'); print(ctx.__enter__(), flush=True); input()",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert child.stdout.readline().strip() == "True"
+        with publication_lock("process-test") as acquired:
+            assert not acquired
+    finally:
+        child.kill()
+        child.communicate(timeout=5)
+    # Abrupt death releases the PostgreSQL connection or local OS file lock.
+    with publication_lock("process-test") as acquired:
+        assert acquired

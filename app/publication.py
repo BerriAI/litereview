@@ -9,7 +9,8 @@ from sqlalchemy import select
 
 from . import github, tracing
 from .db import Job, ReviewPublication, Run, Session
-from .reviews import GITHUB_COMMENT_CHARACTERS, TERMINAL, comment_parts, md, render_comment
+from .publication_lock import publication_lock
+from .reviews import GITHUB_COMMENT_CHARACTERS, TERMINAL, comment_parts, md, ordered_jobs, render_comment
 from .settings import settings
 
 
@@ -222,9 +223,17 @@ async def publish_agent(run, job, jobs, existing, newer, allowed):
 
 
 async def publish_run(run_id):
+    # Acquire before reading checkpoints or listing comments. A marker only
+    # recovers a completed POST; it cannot stop two simultaneous POSTs.
+    with publication_lock(run_id) as acquired:
+        if acquired:
+            await _publish_run(run_id)
+
+
+async def _publish_run(run_id):
     with Session() as db:
         run = db.get(Run, run_id)
-        jobs = db.scalars(select(Job).where(Job.run_id == run_id).order_by(Job.id)).all()
+        jobs = ordered_jobs(run, db.scalars(select(Job).where(Job.run_id == run_id)).all())
         if run.published == 2:
             return
     done = all(j.status in TERMINAL for j in jobs)
