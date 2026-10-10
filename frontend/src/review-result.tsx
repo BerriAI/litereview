@@ -81,8 +81,8 @@ export function ReviewResult({
         </div>
       )}
       {findings.map((finding: any, index: number) => (
-        <section className="review-finding" key={index}>
-          <h4>
+        <details className="review-finding" key={index}>
+          <summary>
             <Badge
               tone={
                 ["high", "critical"].includes(finding.severity)
@@ -95,7 +95,7 @@ export function ReviewResult({
               {finding.severity}
             </Badge>
             <span>{finding.title}</span>
-          </h4>
+          </summary>
           {finding.file && (
             <a
               className="source-link"
@@ -124,18 +124,30 @@ export function ReviewResult({
               </ul>
             </details>
           )}
-        </section>
+        </details>
       ))}
       {checks.length > 0 && (
-        <details className="review-checks" open={checks.some((check: any) => check.status === "not_run")}>
+        <details className="review-checks">
           <summary>Checks</summary>
           <ul>
             {checks.map((check: any, index: number) => (
               <li key={index}>
                 <div className="review-check-heading">
                   <strong>{check.name}</strong>
-                  <Badge tone={check.status === "passed" ? "green" : check.status === "failed" ? "red" : ""}>
-                    {check.status === "not_run" ? "Not run" : check.status === "failed" ? "Failed" : "Passed"}
+                  <Badge
+                    tone={
+                      check.status === "passed"
+                        ? "green"
+                        : check.status === "failed"
+                          ? "red"
+                          : ""
+                    }
+                  >
+                    {check.status === "not_run"
+                      ? "Not run"
+                      : check.status === "failed"
+                        ? "Failed"
+                        : "Passed"}
                   </Badge>
                   <span>{check.required ? "Required" : "Optional"}</span>
                 </div>
@@ -146,8 +158,8 @@ export function ReviewResult({
         </details>
       )}
       {incomplete && (limitations.length > 0 || !result.summary) && (
-        <section className="review-incomplete">
-          <h4>Couldn’t complete</h4>
+        <details className="review-incomplete">
+          <summary>Couldn’t complete</summary>
           {limitations.length > 0 ? (
             <ul>
               {limitations.map((limitation: string, i: number) => (
@@ -158,10 +170,11 @@ export function ReviewResult({
             </ul>
           ) : (
             <ReviewMarkdown>
-              The task ended before completion. Open activity for execution details.
+              The task ended before completion. Open activity for execution
+              details.
             </ReviewMarkdown>
           )}
-        </section>
+        </details>
       )}
     </>
   );

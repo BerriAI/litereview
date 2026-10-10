@@ -1,3 +1,4 @@
+import hashlib
 import time
 import uuid
 from pathlib import Path
@@ -100,6 +101,13 @@ class Artifact(Base):
     mime: Mapped[str] = mapped_column(String(80), default="image/png")
 
 
+class ReviewPublication(Base):
+    __tablename__ = "review_publications"
+    # Separate run/agent records checkpoint GitHub side effects for restart recovery.
+    key: Mapped[str] = mapped_column(String(90), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class ReviewTiming(Base):
     __tablename__ = "review_timing"
     job_id: Mapped[str] = mapped_column(String(40), primary_key=True)
@@ -112,10 +120,19 @@ class SSOIdentity(Base):
     email: Mapped[str] = mapped_column(String(320))
     domain: Mapped[str] = mapped_column(String(255))
     audience: Mapped[str] = mapped_column(String(255))
-    expires_at: Mapped[float] = mapped_column(Float)
-    session_id: Mapped[str] = mapped_column(String(64))
+    # Legacy single-session fields; startup moves their value to sso_sessions.
+    expires_at: Mapped[float] = mapped_column(Float, default=0)
+    session_id: Mapped[str] = mapped_column(String(64), default="")
     github_id: Mapped[str | None] = mapped_column(String(40), unique=True, nullable=True)
     github_login: Mapped[str] = mapped_column(String(100), default="")
+
+
+class SSOSession(Base):
+    __tablename__ = "sso_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    identity_sub: Mapped[str] = mapped_column(String(255), index=True)
+    audience: Mapped[str] = mapped_column(String(255))
+    expires_at: Mapped[float] = mapped_column(Float, index=True)
 
 
 class LoginState(Base):
@@ -157,9 +174,23 @@ def init_db():
             if getattr(name["type"], "length", None) is not None:
                 connection.execute(text("ALTER TABLE artifacts ALTER COLUMN name TYPE TEXT"))
 
-    # Migrate saved reviewers only. Accepted jobs keep their original snapshots;
-    # running sandboxes continue, and retired queued runtimes require a new review.
     with Session.begin() as db:
+        # Preserve currently valid browser cookies across the upgrade. Clearing
+        # the old fields in the same transaction prevents resurrection on restart.
+        for identity in db.scalars(select(SSOIdentity).where(SSOIdentity.session_id != "").with_for_update()):
+            if identity.expires_at > time.time():
+                db.add(
+                    SSOSession(
+                        token_hash=hashlib.sha256(identity.session_id.encode()).hexdigest(),
+                        identity_sub=identity.sub,
+                        audience=identity.audience,
+                        expires_at=identity.expires_at,
+                    )
+                )
+            identity.session_id = ""
+            identity.expires_at = 0
+        # Migrate saved reviewers only. Accepted jobs retain their snapshots;
+        # running sandboxes continue, and retired queued runtimes need a new review.
         for row in db.scalars(select(Resource).where(Resource.kind == "agents")):
             if row.data.get("harness") != "codex":
                 row.data = {**row.data, "harness": "codex"}

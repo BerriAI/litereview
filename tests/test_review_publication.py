@@ -1,18 +1,81 @@
 import httpx
 import pytest
+from markdown_it import MarkdownIt
 from sqlalchemy import select
 from test_reviews import mock_github, payload, setup, webhook
 
 from app import github, reviews
 from app.db import Job, Run, Session
+from app.publication import diff_lines
+
+DIFF = """diff --git a/app.py b/app.py
+--- a/app.py
++++ b/app.py
+@@ -1,3 +1,3 @@
+ context
+-old
++new
+ tail
+"""
+FINDING = {
+    "title": "Fix the cache",
+    "severity": "medium",
+    "explanation": "The stale entry is reused.",
+    "file": "app.py",
+    "line": 2,
+    "evidence": ["Reproduced with two requests."],
+}
 
 
-def finish(run_id, status="completed"):
-    with Session() as db:
-        for job in db.scalars(select(Job).where(Job.run_id == run_id)).all():
+def finish(run_id, status="completed", *, one=False, findings=None):
+    with Session.begin() as db:
+        jobs = db.scalars(select(Job).where(Job.run_id == run_id).order_by(Job.id)).all()
+        for job in jobs[:1] if one else jobs:
             job.status = status
-            job.result = {"summary": "Checked the changed paths.", "findings": [], "limitations": []}
-        db.commit()
+            job.result = {
+                "summary": "Checked the changed paths.",
+                "findings": findings or [],
+                "limitations": [],
+            }
+        return jobs[0].id
+
+
+class GitHubFixture:
+    def __init__(self, run_id):
+        self.run_id = run_id
+        self.calls, self.comments, self.threads = [], [], []
+        self.reactions = {}
+        self.sequence = 6_000_000_000
+        self.head = "a" * 40
+
+    async def request(self, repo, installation, method, suffix, **kwargs):
+        assert (repo, installation) == ("owner/repo", 42)
+        body = kwargs.get("json")
+        self.calls.append((method, suffix, body))
+        if method == "GET" and suffix == "pulls/1":
+            return httpx.Response(200, json={"head": {"sha": self.head}})
+        if method == "GET":
+            source = self.threads if suffix.startswith("pulls/") else self.comments
+            page = int(suffix.split("page=")[-1])
+            return httpx.Response(200, json=source[(page - 1) * 100 : page * 100])
+        if "/reactions" in suffix:
+            if method == "DELETE":
+                parent = suffix.rsplit("/", 1)[0]
+                self.reactions.pop(parent, None)
+                return httpx.Response(204)
+            if suffix not in self.reactions:
+                self.sequence += 1
+                self.reactions[suffix] = self.sequence
+            return httpx.Response(200, json={"id": self.reactions[suffix]})
+        if method == "PATCH":
+            comment = next(c for c in self.comments if c["id"] == int(suffix.split("/")[-1]))
+            comment.update(body)
+            return httpx.Response(200, json=comment)
+        assert method == "POST"
+        self.sequence += 1
+        comment = {"id": self.sequence, **body, "user": {"type": "Bot"}}
+        (self.threads if suffix.startswith("pulls/") else self.comments).append(comment)
+        return httpx.Response(201, json=comment)
 
 
 @pytest.fixture
@@ -20,109 +83,195 @@ def publication(owner, monkeypatch):
     setup(owner)
     mock_github(monkeypatch)
     run_id = webhook(owner, payload()).json()["run_id"]
-    calls = []
+    with Session.begin() as db:
+        run = db.get(Run, run_id)
+        run.snapshot = {**run.snapshot, "diff": DIFF}
+    fake = GitHubFixture(run_id)
+    monkeypatch.setattr(github, "repo_request", fake.request)
+    return fake
 
-    async def request(repo, installation, method, suffix, **kwargs):
-        assert (repo, installation) == ("owner/repo", 42)
-        calls.append((method, suffix, kwargs.get("json")))
-        if suffix.startswith("pulls/"):
-            return httpx.Response(200, json={"head": {"sha": "a" * 40}})
-        if method == "GET":
-            return httpx.Response(200, json=[])
-        return httpx.Response(201, json={"id": 67890})
+
+async def test_agents_finish_independently_and_eyes_are_removed(publication):
+    fake = publication
+    await reviews.publish(fake.run_id)
+    assert len(fake.comments) == 2 and len(fake.reactions) == 3
+    assert all("### 👀 reviewer" in c["body"] for c in fake.comments)
+    calls = len(fake.calls)
+    await reviews.publish(fake.run_id)
+    assert len(fake.calls) == calls  # Polls without transitions do not call GitHub.
+    finish(fake.run_id, one=True, findings=[FINDING])
+    await reviews.publish(fake.run_id)
+    assert len(fake.comments) == 2 and len(fake.threads) == 1 and len(fake.reactions) == 2
+    completed = next(c for c in fake.comments if "### ✅" in c["body"])
+    assert f"#discussion_r{fake.threads[0]['id']}" in completed["body"]
+    assert "stale entry" not in completed["body"]
+    assert "stale entry" in fake.threads[0]["body"] and "Reproduced" in fake.threads[0]["body"]
+    assert f"#issuecomment-{completed['id']}" in fake.threads[0]["body"]
+    assert {k: fake.threads[0][k] for k in ("commit_id", "path", "line", "side")} == {
+        "commit_id": "a" * 40,
+        "path": "app.py",
+        "line": 2,
+        "side": "RIGHT",
+    }
+    with Session() as db:
+        assert db.get(Run, fake.run_id).status == "running"
+    finish(fake.run_id, "failed")
+    await reviews.publish(fake.run_id)
+    assert len(fake.comments) == 2 and not fake.reactions
+    assert all("### ✅ reviewer" in c["body"] for c in fake.comments)
+    assert any("Review incomplete." in c["body"] for c in fake.comments)
+    calls = len(fake.calls)
+    await reviews.publish(fake.run_id)
+    assert len(fake.calls) == calls
+    with Session() as db:
+        assert db.get(Run, fake.run_id).published == 2
+        assert db.get(Run, fake.run_id).status == "incomplete"
+
+
+@pytest.mark.parametrize("effect", ["eyes", "parent", "thread", "remove_eyes"])
+async def test_lost_responses_recover_without_duplicates(publication, monkeypatch, effect):
+    fake = publication
+    if effect == "remove_eyes":
+        await reviews.publish(fake.run_id)
+    if effect in ("thread", "remove_eyes"):
+        finish(fake.run_id, findings=[FINDING])
+    lost = False
+
+    async def request(*args, **kwargs):
+        nonlocal lost
+        response = await fake.request(*args, **kwargs)
+        method, suffix = args[2:4]
+        matches = {
+            "eyes": method == "POST" and suffix.endswith("/reactions"),
+            "parent": method == "POST" and suffix == "issues/1/comments",
+            "thread": method == "POST" and suffix == "pulls/1/comments",
+            "remove_eyes": method == "DELETE",
+        }
+        if not lost and matches[effect]:
+            lost = True
+            raise httpx.ReadTimeout("Response lost after GitHub accepted the request")
+        return response
 
     monkeypatch.setattr(github, "repo_request", request)
-    return run_id, calls, request
-
-
-async def test_acknowledgment_then_one_final_comment_after_every_agent(publication):
-    run_id, calls, _ = publication
-    await reviews.publish(run_id)
-    assert calls == [("POST", "issues/comments/12345/reactions", {"content": "eyes"})]
-    with Session() as db:
-        run = db.get(Run, run_id)
-        assert run.snapshot["trigger_comment_id"] == 12345
-        assert run.published == 1 and run.comment_id is None and run.status == "running"
-        db.scalar(select(Job).where(Job.run_id == run_id)).status = "completed"
-        db.commit()
-    await reviews.publish(run_id)
-    assert len(calls) == 1
-    finish(run_id)
-    await reviews.publish(run_id)
-    posted = [body for method, path, body in calls if path == "issues/1/comments" and method == "POST"]
-    assert len(posted) == 1
-    assert "Checked the changed paths." in posted[0]["body"]
-    assert "Review in progress" not in posted[0]["body"]
-    count = len(calls)
-    await reviews.publish(run_id)
-    assert len(calls) == count
-    with Session() as db:
-        run = db.get(Run, run_id)
-        assert run.published == 2 and run.comment_id == 67890 and run.status == "completed"
-
-
-async def test_lost_reaction_response_retries_without_comment(publication, monkeypatch):
-    run_id, calls, request = publication
-    first = True
-
-    async def lost_response(*args, **kwargs):
-        nonlocal first
-        response = await request(*args, **kwargs)
-        if first:
-            first = False
-            raise httpx.ReadTimeout("Response lost after GitHub accepted the reaction")
-        # GitHub returns 200 when the same App has already reacted with eyes.
-        return httpx.Response(200, json=response.json())
-
-    monkeypatch.setattr(github, "repo_request", lost_response)
     with pytest.raises(httpx.ReadTimeout):
-        await reviews.publish(run_id)
-    with Session() as db:
-        assert db.get(Run, run_id).published == 0
-    await reviews.publish(run_id)
-    assert [path for _, path, _ in calls] == ["issues/comments/12345/reactions"] * 2
+        await reviews.publish(fake.run_id)
+    await reviews.publish(fake.run_id)
+    assert len(fake.comments) == 2
+    assert len(fake.threads) == (2 if effect in ("thread", "remove_eyes") else 0)
+    assert len(fake.reactions) == (0 if effect in ("thread", "remove_eyes") else 3)
 
 
-@pytest.mark.parametrize("reaction_fails", [False, True])
-async def test_finished_review_publishes_even_if_acknowledgment_was_missed(
-    publication, monkeypatch, reaction_fails
+@pytest.mark.parametrize(
+    "finding",
+    [
+        {**FINDING, "line": 99},
+        {**FINDING, "file": "other.py"},
+        {**FINDING, "file": None},
+        {**FINDING, "explanation": "x" * 70_000},
+    ],
+)
+async def test_unanchored_and_oversized_findings_are_preserved(publication, finding):
+    fake = publication
+    finish(fake.run_id, findings=[finding])
+    await reviews.publish(fake.run_id)
+    assert not fake.threads
+    body = "".join(c["body"].split("\n", 1)[1] for c in fake.comments)
+    assert finding["explanation"] in body and FINDING["evidence"][0] in body
+    assert all(len(c["body"]) <= reviews.GITHUB_COMMENT_CHARACTERS for c in fake.comments)
+
+
+@pytest.mark.parametrize(
+    "status,errors,fallback",
+    [
+        (422, [{"field": "pull_request_review_thread.line", "code": "invalid"}], True),
+        (422, [{"message": "Spammed too quickly"}], False),
+        (403, [], False),
+        (502, [], False),
+    ],
+)
+async def test_invalid_anchor_falls_back_but_transient_errors_retry(
+    publication, monkeypatch, status, errors, fallback
 ):
-    run_id, calls, request = publication
-    finish(run_id)
+    fake = publication
+    finish(fake.run_id, findings=[FINDING])
 
-    async def react(*args, **kwargs):
-        if reaction_fails and args[3].endswith("/reactions"):
-            raise httpx.ReadTimeout("Request comment unavailable")
-        return await request(*args, **kwargs)
+    async def request(*args, **kwargs):
+        if args[2:4] == ("POST", "pulls/1/comments"):
+            raise github.GitHubError(httpx.Response(status, json={"errors": errors}), "POST", args[3])
+        return await fake.request(*args, **kwargs)
 
-    monkeypatch.setattr(github, "repo_request", react)
-    await reviews.publish(run_id)
-    assert sum(path == "issues/1/comments" and method == "POST" for method, path, _ in calls) == 1
-
-
-async def test_existing_progress_comment_is_updated_only_when_finished(publication):
-    run_id, calls, _ = publication
-    with Session() as db:
-        run = db.get(Run, run_id)
-        run.snapshot = {k: v for k, v in run.snapshot.items() if k != "trigger_comment_id"}
-        run.published = 1
-        run.comment_id = 24680
-        db.commit()
-    await reviews.publish(run_id)
-    assert not calls
-    finish(run_id, "failed")
-    await reviews.publish(run_id)
-    assert calls[-1][:2] == ("PATCH", "issues/comments/24680")
-    assert "Review incomplete." in calls[-1][2]["body"]
-    assert not any(method == "POST" for method, _, _ in calls)
+    monkeypatch.setattr(github, "repo_request", request)
+    if fallback:
+        await reviews.publish(fake.run_id)
+        assert all("The stale entry is reused." in c["body"] for c in fake.comments)
+    else:
+        with pytest.raises(github.GitHubError):
+            await reviews.publish(fake.run_id)
+        with Session() as db:
+            assert db.get(Run, fake.run_id).published < 2
+        monkeypatch.setattr(github, "repo_request", fake.request)
+        await reviews.publish(fake.run_id)
+        assert len(fake.threads) == 2
 
 
-async def test_rejected_command_explains_failure_without_eyes(publication):
-    _, calls, _ = publication
+async def test_rejected_and_already_published_runs(publication):
+    fake = publication
     run_id = reviews.reject_command("rejected", "owner/repo", 1, "trusted", 42, "Unknown reviewer.")
     await reviews.publish(run_id)
-    assert not any(path.endswith("/reactions") for _, path, _ in calls)
-    assert "Review not started" in calls[-1][2]["body"]
+    assert not fake.reactions and "Review not started" in fake.comments[0]["body"]
+    with Session.begin() as db:
+        db.get(Run, fake.run_id).published = 2
+    calls = len(fake.calls)
+    await reviews.publish(fake.run_id)
+    assert len(fake.calls) == calls
+
+
+async def test_new_head_and_legacy_progress_comment(publication):
+    fake = publication
+    fake.head = "c" * 40
+    fake.comments.append({"id": 99, "body": "Old progress", "user": {"type": "Bot"}})
+    with Session.begin() as db:
+        run = db.get(Run, fake.run_id)
+        run.published, run.comment_id = 1, 99
+    finish(fake.run_id, findings=[FINDING])
+    await reviews.publish(fake.run_id)
+    assert "✅ Reviews finished" in fake.comments[0]["body"]
+    assert all("New commits were pushed" in c["body"] for c in fake.comments[1:])
+    assert all(c["commit_id"] == "a" * 40 for c in fake.threads)
+    assert not fake.reactions
+
+
+def test_diff_lines_include_context_and_ignore_deleted_and_binary_files():
+    diff = (
+        DIFF
+        + """diff --git a/gone b/gone
+--- a/gone
++++ /dev/null
+@@ -1 +0,0 @@
+-removed
+ diff --git not a file header
+"""
+        + """diff --git "a/space file.py" "b/space file.py"
+--- "a/space file.py"
++++ "b/space file.py"
+@@ -10,0 +11,2 @@
++first
++second
+"""
+    )
+    assert diff_lines(diff) == {"app.py": {1, 2, 3}, "space file.py": {11, 12}}
+
+
+def test_report_headings_stay_below_attribution_and_code_is_preserved():
+    code = "```python\n# comment\nprint('<tag> @user')\n```\n\n    # indented comment\n"
+    report = (
+        "# Verdict\n\n## Evidence\n\nSetext title\n=====\n\n> ### Quote heading\n\n- ### List heading\n\n"
+        + code
+    )
+    rendered = reviews.md(report)
+    assert code in rendered
+    assert all(int(t.tag[1:]) >= 4 for t in MarkdownIt().parse(rendered) if t.type == "heading_open")
+    assert "Verdict" in rendered and "Setext title" in rendered
 
 
 def test_agent_response_is_visible_without_generic_narrative_replacement():
@@ -166,3 +315,58 @@ def test_findings_and_incomplete_coverage_stay_visible():
     assert "Browser unavailable." in body and "Token exposed" in body
     assert "Could not finish browser checks." in body
     assert "@all" not in body and "<script>" not in body
+
+
+@pytest.mark.parametrize("target", ["trigger", "agent"])
+async def test_completion_between_lost_eyes_response_and_retry(publication, monkeypatch, target):
+    fake = publication
+    lost = False
+
+    async def request(*args, **kwargs):
+        nonlocal lost
+        response = await fake.request(*args, **kwargs)
+        suffix = args[3]
+        is_target = (suffix == "issues/comments/12345/reactions") == (target == "trigger")
+        if not lost and args[2] == "POST" and suffix.endswith("/reactions") and is_target:
+            lost = True
+            raise httpx.ReadTimeout("Lost reaction response")
+        return response
+
+    monkeypatch.setattr(github, "repo_request", request)
+    with pytest.raises(httpx.ReadTimeout):
+        await reviews.publish(fake.run_id)
+    finish(fake.run_id)
+    await reviews.publish(fake.run_id)
+    assert len(fake.comments) == 2 and not fake.reactions
+
+
+async def test_retry_scans_all_pages_and_ignores_user_markers(publication):
+    fake = publication
+    first_id = finish(fake.run_id, one=True, findings=[FINDING])
+    marker = f"<!-- litereview:{fake.run_id}:job:{first_id} -->"
+    fake.comments = [{"id": i, "body": marker, "user": {"type": "User"}} for i in range(100)]
+    fake.comments.append({"id": 999, "body": marker, "user": {"type": "Bot"}})
+    await reviews.publish(fake.run_id)
+    assert all(c["body"] == marker for c in fake.comments[:100])
+    assert "### ✅" in fake.comments[100]["body"]
+    assert len(fake.comments) == 102
+    assert any(path.endswith("page=2") for _, path, _ in fake.calls)
+
+
+async def test_one_agent_publication_error_does_not_block_other_agent(publication, monkeypatch):
+    fake = publication
+    failed_id = finish(fake.run_id, findings=[FINDING])
+
+    async def request(*args, **kwargs):
+        if args[2:4] == ("POST", "pulls/1/comments") and failed_id in kwargs["json"]["body"]:
+            raise httpx.ReadTimeout("One failed request")
+        return await fake.request(*args, **kwargs)
+
+    monkeypatch.setattr(github, "repo_request", request)
+    with pytest.raises(httpx.ReadTimeout):
+        await reviews.publish(fake.run_id)
+    assert len(fake.threads) == 1
+    assert any("Reply in thread" in c["body"] for c in fake.comments)
+    monkeypatch.setattr(github, "repo_request", fake.request)
+    await reviews.publish(fake.run_id)
+    assert len(fake.threads) == 2

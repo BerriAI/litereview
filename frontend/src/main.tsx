@@ -1173,8 +1173,8 @@ function App() {
                   </dl>
                   {run.error && <div className="error">{run.error}</div>}
                   {run.jobs.map((job: any) => (
-                    <article className="job" key={job.id}>
-                      <div className="job-title">
+                    <details className="job" key={job.id}>
+                      <summary className="job-title">
                         <h3>{job.config.name}</h3>
                         {job.config.target_kind !== "agent" && (
                           <span>{job.config.group}</span>
@@ -1200,7 +1200,11 @@ function App() {
                             ? "incomplete"
                             : job.status}
                         </Badge>
-                      </div>
+                        <span>
+                          {job.result.findings?.length || 0}{" "}
+                          {job.result.findings?.length === 1 ? "finding" : "findings"}
+                        </span>
+                      </summary>
                       <p className="meta">
                         <code>{job.config.model}</code>
                       </p>
@@ -1254,7 +1258,7 @@ function App() {
                           )}
                         </div>
                       </details>
-                    </article>
+                    </details>
                   ))}
                 </div>
               ) : (
