@@ -24,7 +24,7 @@ def content_blocks(result):
     images = result.pop("images", [])
     if result.get("image"):
         images.append(result.pop("image"))
-    content = [{"type": "text", "text": json.dumps(result, ensure_ascii=False)[:65000]}]
+    content = [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]
     for image in images:
         prefix, data = image.split(",", 1)
         content.append({"type": "image", "data": data, "mimeType": prefix[5:].split(";")[0]})
@@ -62,7 +62,7 @@ class Bridge:
                 return content_blocks({"submitted": True})
             return content_blocks(await self.tools.execute(name.removeprefix("lr_"), arguments))
         except Exception as exc:
-            return {"content": [{"type": "text", "text": str(exc)[:2000]}], "isError": True}
+            return {"content": [{"type": "text", "text": str(exc)}], "isError": True}
 
     async def list_http(self, request):
         return JSONResponse(

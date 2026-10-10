@@ -18,7 +18,7 @@ Set **Minimum review time (minutes)** when creating a reviewer or under **PR age
 @litereview frontend security
 ```
 
-Every instance uses its reviewer's saved minimum, including when called through a group. The clock starts after repository/tool setup. `0` means no minimum and preserves the normal behavior for existing reviewers. Use whole minutes up to `MAX_REVIEW_MINUTES` (120 by default). Changing the setting affects future reviews; accepted jobs keep their saved duration. Comment time options are rejected with instructions to use the UI setting. Private harness checks do not run for this minimum.
+Every instance uses its reviewer's saved minimum, including when called through a group. The clock starts after repository/tool setup. `0` means no minimum and preserves the normal behavior for existing reviewers. Use whole minutes; LiteReview does not impose a workspace ceiling. Changing the setting affects future reviews; accepted jobs keep their saved duration. Comment time options are rejected with instructions to use the UI setting. Private harness checks do not run for this minimum.
 
 The harness checks a monotonic clock, asks the agent to keep investigating and verifying, and rejects early completion. The API independently checks elapsed time. Codex continues the same thread if it returns without submitting; the other harnesses retain their sessions too. This does not invoke the interactive `/goal` slash command. Runs have no LiteReview time or model-call limit by default. To set one, expand **Optional limits** in the agent editor and enter **Maximum run time (minutes)**, **Maximum model calls**, or both. Leave a field blank to remove its limit. Maximum run time includes setup and must exceed the minimum; a minimum never creates a maximum. Groups use each agent’s saved limits, and accepted jobs keep their snapshots. Provider failures and reached limits produce an incomplete review, never a successful early completion. [Modal imposes a 24-hour sandbox lifetime](https://modal.com/docs/guide/sandboxes#timeouts); LiteReview uses that full lifetime when no maximum is selected. Runs do not yet resume across sandbox replacements. Existing MCP selections, skills, visual tools, models, and instructions are preserved.
 
@@ -159,13 +159,12 @@ Tracing is off by default. You can run LiteReview without Lens or any Berri-host
 
 Traces include the reviewer, harness, model, job and run IDs, duration, status, and token counts when the
 provider supplies them. To also capture prompt and response text, set `LITEREVIEW_TRACE_CONTENT=true`.
-This can send private source code and text from a review to your collector. Text is limited to 8,192
-characters per input or output. Images, tool arguments, request headers, and stored credentials are
+This can send private source code and text from a review to your collector. Full prompt and response text is exported. Images, tool arguments, request headers, and stored credentials are
 not captured. Content capture does not redact secrets that appear inside prompt or response text.
 
 All supported harnesses export through the API. The collector key never enters a Modal sandbox.
-Exports run in the background with a bounded queue. If the collector is unavailable or the queue is
-full, traces can be lost; reviews continue. An API restart can also lose pending traces.
+Exports run in the background without a queue-size cap. Failed exports are logged; reviews continue.
+An API restart can lose pending traces.
 
 If traces do not appear, check the endpoint and tracing key, then check the API logs for export errors.
 Keep `/v1/traces` in the endpoint. To turn tracing off, clear `LITEREVIEW_TRACE_ENDPOINT` and redeploy.
@@ -178,8 +177,14 @@ The checkout is a GitHub source archive at the PR's immutable head SHA, rather t
 
 Long-lived model and MCP keys are encrypted in the database using `SECRET_KEY`. They stay in the API service. Sandboxes use job-scoped tokens to call the configured model/MCP relay. Tokens remain valid only while the job is active; an explicitly selected timeout also expires access after a short result-reporting grace period. GitHub credentials never enter the checkout. Optional repository test secrets are deliberately made available to the sandbox; use test credentials only.
 
-For a small v1, screenshots are private, bounded Postgres artifacts rather than a separate storage service. Each job stores at most 20 PNGs, 2 MB each. Logs are bounded to 200 events. Repository archives are limited to 50 MB compressed / 250 MB expanded; PRs to 300 changed files / a 2 MB diff. Sandboxes launch on demand across reviews by default. Set `CONCURRENCY` to a positive number for an optional workspace-wide cap; `0` leaves concurrency to Modal account quotas and provider rate limits. Each sandbox requests 2 CPU cores and 4 GiB of memory. Time and model-call budgets are optional per-agent settings. Legacy `JOB_TIMEOUT` and `MAX_ROUNDS` environment values no longer impose defaults. Existing reviewers have no minimum by default. Keep Postgres backups enabled; deleting the database loses settings and run history.
+Repository downloads and extraction have no LiteReview size or file-count limit. Downloads stream through the API into a temporary file in the sandbox, and extraction copies file contents in chunks. Available sandbox disk space and upstream service limits still apply. LiteReview also accepts PRs without a changed-file or diff-size cap; the full diff is stored and available to review tools, with optional ranges chosen by the agent.
+
+Screenshots and activity logs are private Postgres records with no LiteReview size or count cap. Skill uploads, instructions, tool results, review findings, and summaries are also retained without application size caps or truncation.
+
+File, search, shell, browser, and MCP tools return their full results unless the agent requests a range. Model, MCP, download, setup, and tool requests have no LiteReview deadline unless one is explicitly selected for the run or command. Harnesses and upstream services can still enforce their own capacities. When a harness needs model capacities, LiteReview uses the published model metadata when available and otherwise leaves the harness defaults in place.
+
+Sandboxes launch on demand across reviews by default. Set `CONCURRENCY` to a positive number for an optional workspace-wide cap; `0` leaves concurrency to Modal account quotas and provider rate limits. Each sandbox requests 2 CPU cores and 4 GiB of memory. Time and model-call budgets are optional per-agent settings. Legacy `JOB_TIMEOUT`, `MAX_ROUNDS`, and `MAX_REVIEW_MINUTES` environment values no longer impose defaults. Existing reviewers have no minimum by default. Keep Postgres backups enabled; deleting the database loses settings and run history.
 
 GitHub retries are deduplicated by delivery ID. Pending jobs survive API restarts; completed jobs are never rerun automatically. Sandboxes are terminated on completion. The dispatcher reattaches to recorded active sandboxes after API restarts and reports an incomplete result if a sandbox exits without a result. Modal’s 24-hour lifetime still applies. Acknowledgment retries reuse the same eyes reaction, and final-publication retries recover the marked result comment. Existing progress comments from older versions are updated when their runs finish. Results always name the reviewed SHA; later pushes are called out.
 
-This v1 posts summary comments, not resolvable inline review threads. It has no automatic fixes, push triggers, fusion/judge agent, persistent chat, local stdio MCP servers, or plugin marketplace. See [SPEC.md](SPEC.md) for the product decisions and [docs/VALIDATION.md](docs/VALIDATION.md) for actual test evidence and external setup boundaries.
+Reviews longer than GitHub's 65,536-character comment limit are published across multiple comments without truncating the review. Retries recover every already-published part. This v1 posts summary comments, not resolvable inline review threads. It has no automatic fixes, push triggers, fusion/judge agent, persistent chat, local stdio MCP servers, or plugin marketplace. See [SPEC.md](SPEC.md) for the product decisions and [docs/VALIDATION.md](docs/VALIDATION.md) for actual test evidence and external setup boundaries.

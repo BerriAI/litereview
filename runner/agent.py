@@ -5,8 +5,10 @@ import base64
 import io
 import json
 import os
+import shutil
 import tarfile
 from pathlib import PurePosixPath
+from tempfile import TemporaryFile
 
 import httpx
 
@@ -23,7 +25,7 @@ class Relay:
         self.client = httpx.AsyncClient(
             base_url=f"{api}/api/internal/jobs/{job}/",
             headers={"Authorization": "Bearer " + token},
-            timeout=120,
+            timeout=None,
         )
 
     async def __call__(self, endpoint, data=None):
@@ -51,11 +53,11 @@ class Relay:
 
 def extract_archive(raw, root):
     root.mkdir(parents=True, exist_ok=True)
-    total = 0
-    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
-        for index, member in enumerate(tar):
-            if index > 30000:
-                raise ValueError("Repository archive contains too many files.")
+    source = io.BytesIO(raw) if isinstance(raw, bytes) else raw
+    # Stream tar metadata and file contents; neither grows an in-memory archive.
+    with tarfile.open(fileobj=source, mode="r|gz") as tar:
+        for member in tar:
+            tar.members.clear()
             parts = PurePosixPath(member.name).parts
             if len(parts) < 2:
                 continue
@@ -66,13 +68,36 @@ def extract_archive(raw, root):
             if member.isdir():
                 path.mkdir(parents=True, exist_ok=True)
             elif member.isfile():
-                total += member.size
-                if total > 250_000_000:
-                    raise ValueError("Expanded repository exceeds 250 MB.")
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(tar.extractfile(member).read())
+                with tar.extractfile(member) as contents, path.open("wb") as target:
+                    shutil.copyfileobj(contents, target, length=64 * 1024)
                 path.chmod(0o755 if member.mode & 0o111 else 0o644)
             # Symlinks and device entries are never materialized.
+
+
+async def prepare_repository(relay):
+    await relay.event("Downloading repository at the reviewed commit")
+    with TemporaryFile() as archive:
+        try:
+            async with relay.client.stream("GET", "archive") as response:
+                if not response.is_success:
+                    await response.aread()
+                    try:
+                        detail = response.json().get("detail")
+                    except (ValueError, AttributeError):
+                        detail = None
+                    raise RuntimeError(
+                        f"Repository download failed: {detail}"
+                        if isinstance(detail, str) and detail
+                        else f"Repository download failed (HTTP {response.status_code}). Retry the review."
+                    )
+                async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                    archive.write(chunk)
+        except httpx.HTTPError:
+            raise RuntimeError("Repository download was interrupted. Retry the review.") from None
+        await relay.event("Extracting repository")
+        archive.seek(0)
+        extract_archive(archive, REPO)
 
 
 def stage_skills(skills):
@@ -87,22 +112,6 @@ def stage_skills(skills):
                 raise ValueError("Invalid skill path.")
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(base64.b64decode(value))
-
-
-def prune_images(messages):
-    image_messages = [
-        m
-        for m in messages
-        if isinstance(m.get("content"), list) and any(c.get("type") == "image_url" for c in m["content"])
-    ]
-    for old in image_messages[:-4]:
-        old["content"] = [c for c in old["content"] if c.get("type") != "image_url"]
-        old["content"].append(
-            {
-                "type": "text",
-                "text": "Earlier screenshots omitted from the active context; use a screenshot tool to inspect the current state again.",
-            }
-        )
 
 
 def skill_context(skills):
@@ -120,9 +129,7 @@ def skill_context(skills):
 
 async def run(relay, data):
     data["config"]["capabilities"] = review_capabilities(data["config"].get("capabilities", []))
-    response = await relay.client.get("archive")
-    response.raise_for_status()
-    extract_archive(response.content, REPO)
+    await prepare_repository(relay)
     stage_skills(data["config"]["skills"])
     tools = Toolset(data, relay)
     try:
@@ -153,7 +160,7 @@ async def run(relay, data):
                         },
                     },
                     ensure_ascii=False,
-                )[:70000],
+                ),
             },
         ]
         if cfg.get("harness", "builtin") != "builtin":
@@ -178,7 +185,6 @@ async def run(relay, data):
         rounds = 0
         while data.get("max_rounds") is None or rounds < data["max_rounds"]:
             rounds += 1
-            prune_images(messages)
             reply = await relay("model", {"messages": messages, "tools": definitions(cfg)})
             messages.append(reply)
             calls = reply.get("tool_calls", [])
@@ -222,8 +228,8 @@ async def run(relay, data):
                         )
                     text = json.dumps(result, ensure_ascii=False)
                 except Exception as exc:
-                    text = json.dumps({"error": str(exc)[:2000]})
-                messages.append({"role": "tool", "tool_call_id": call["id"], "content": text[:65000]})
+                    text = json.dumps({"error": str(exc)})
+                messages.append({"role": "tool", "tool_call_id": call["id"], "content": text})
             if visuals:
                 # Image inputs use standard user image parts supported by both adapters.
                 messages.append({"role": "user", "content": visuals})
@@ -251,7 +257,7 @@ async def main():
             exc = exc.exceptions[0]
         status = "timed_out" if isinstance(exc, TimeoutError) else "failed"
         # Do not print headers, credentials, or provider request bodies.
-        message = "Execution time limit reached." if status == "timed_out" else str(exc)[:2000]
+        message = "Execution time limit reached." if status == "timed_out" else str(exc)
         try:
             await relay(
                 "finish",

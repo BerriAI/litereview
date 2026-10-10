@@ -43,7 +43,8 @@ def definitions(cfg):
         function(
             "search", "Search repository text for a literal string.", {"query": S, "path": S}, ["query"]
         ),
-        function("read_diff", "Read the immutable PR diff (paged by character offset).", {"offset": N}),
+        function("read_diff", "Read the immutable PR diff. Optionally select an offset and length.",
+                 {"offset": N, "length": N}),
         function(
             "finish_review",
             "Submit the configured task in the agent's requested voice. Summary is the primary response; findings holds concrete issues when relevant. Record verification in checks, distinguishing required work from optional checks. Limitations is only for blockers to completing the configured task. Optional checks not run do not make it incomplete. Use [] for empty arrays.",
@@ -149,7 +150,7 @@ def definitions(cfg):
                     "type": "function",
                     "function": {
                         "name": mcp_name(conn["id"], tool["name"]),
-                        "description": tool["description"][:2000],
+                        "description": tool["description"],
                         "parameters": tool["inputSchema"],
                     },
                 }
@@ -194,9 +195,12 @@ class Toolset:
 
             self.pw = await async_playwright().start()
             self.browser = await self.pw.chromium.launch(
-                headless=False, args=["--no-sandbox", "--disable-dev-shm-usage", "--window-size=1280,900"]
+                headless=False, timeout=0,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--window-size=1280,900"]
             )
             self.context = await self.browser.new_context(no_viewport=True)
+            self.context.set_default_timeout(0)
+            self.context.set_default_navigation_timeout(0)
             self.page = await self.context.new_page()
         repo = self.data["repository"]
         if self.caps:
@@ -204,7 +208,7 @@ class Toolset:
             if repo.get("setup_command"):
                 result = await self.shell(repo["setup_command"])
                 if result["exit_code"] != 0:
-                    raise RuntimeError("Repository setup command failed: " + result["output"][-2000:])
+                    raise RuntimeError("Repository setup command failed: " + result["output"])
             if repo.get("start_command"):
                 log = open("/tmp/litereview-app.log", "w")
                 p = subprocess.Popen(
@@ -221,19 +225,17 @@ class Toolset:
             if repo.get("readiness_url"):
                 import httpx
 
-                ready = False
-                async with httpx.AsyncClient(timeout=2) as client:
-                    for _ in range(60):
+                async with httpx.AsyncClient(timeout=None) as client:
+                    while True:
+                        if repo.get("start_command") and p.poll() is not None:
+                            raise RuntimeError("The app exited before becoming ready at the configured URL.")
                         try:
                             r = await client.get(repo["readiness_url"])
                             if r.status_code < 500:
-                                ready = True
                                 break
                         except httpx.HTTPError:
                             pass
                         await asyncio.sleep(1)
-                if not ready:
-                    raise RuntimeError("The app did not become ready at the configured URL.")
 
     def child_env(self):
         return {k: v for k, v in os.environ.items() if not k.startswith(("LR_", "MODAL_", "GITHUB_"))}
@@ -264,8 +266,6 @@ class Toolset:
         async def drain():
             while chunk := await process.stdout.read(8192):
                 output.extend(chunk)
-                if len(output) > 64000:
-                    del output[:-64000]
             await process.wait()
 
         timed_out = False
@@ -290,13 +290,12 @@ class Toolset:
         self.visual_calls += 1
         encoded = base64.b64encode(raw).decode()
         artifact = None
-        if self.artifacts < 20:
-            try:
-                result = await self.relay("artifact", {"data": encoded, "name": label})
-                artifact = result["id"]
-                self.artifacts += 1
-            except Exception:
-                pass
+        try:
+            result = await self.relay("artifact", {"data": encoded, "name": label})
+            artifact = result["id"]
+            self.artifacts += 1
+        except Exception:
+            pass
         return {"artifact_id": artifact, "image": "data:image/png;base64," + encoded}
 
     async def screen(self):
@@ -313,17 +312,15 @@ class Toolset:
             return self.clock.status()
         if name == "read_file":
             path = self.path(args["path"])
-            if path.stat().st_size > 2_000_000:
-                raise ValueError("File exceeds 2 MB; use search or a narrower file.")
             if path.suffix.lower() == ".png":
                 return await self.picture(path.read_bytes(), path.name)
             lines = path.read_text(errors="replace").splitlines()
             start = max(1, args.get("start_line", 1))
-            end = min(len(lines), args.get("end_line", start + 299), start + 999)
+            end = args.get("end_line", len(lines))
             return {
                 "content": "\n".join(
                     f"{i + 1}: {line}" for i, line in enumerate(lines[start - 1 : end], start - 1)
-                )[:40000],
+                ),
                 "total_lines": len(lines),
             }
         if name == "list_files":
@@ -340,19 +337,13 @@ class Toolset:
                     for f in files
                     if not (Path(root) / f).is_symlink()
                 )
-                if len(items) >= 3000:
-                    break
-            return {"files": items[:3000], "truncated": len(items) >= 3000}
+            return {"files": items, "truncated": False}
         if name == "search":
             path = self.path(args.get("path", "."))
             p = await asyncio.create_subprocess_exec(
                 "rg",
                 "-n",
                 "-F",
-                "--max-count",
-                "20",
-                "--max-columns",
-                "500",
                 "--",
                 args["query"],
                 str(path),
@@ -360,18 +351,19 @@ class Toolset:
                 stderr=asyncio.subprocess.STDOUT,
             )
             try:
-                out, _ = await asyncio.wait_for(p.communicate(), 10)
-            except TimeoutError:
+                out, _ = await p.communicate()
+            except asyncio.CancelledError:
                 p.kill()
                 await p.wait()
-                raise ValueError("Search timed out; narrow the path.") from None
-            return {"matches": out.decode(errors="replace")[:30000]}
+                raise
+            return {"matches": out.decode(errors="replace")}
         if name == "read_diff":
             diff = self.data["pr"]["diff"]
             offset = max(0, args.get("offset", 0))
+            end = offset + max(1, args["length"]) if args.get("length") is not None else len(diff)
             return {
-                "diff": diff[offset : offset + 40000],
-                "next_offset": offset + 40000 if offset + 40000 < len(diff) else None,
+                "diff": diff[offset:end],
+                "next_offset": end if end < len(diff) else None,
             }
         if name == "terminal":
             return await self.shell(args["command"], args.get("timeout_seconds"))
@@ -392,8 +384,8 @@ class Toolset:
                         if content["type"] == "image":
                             images.append("data:" + content["mimeType"] + ";base64," + content["data"])
                     return {
-                        "content": "\n".join(text)[:40000],
-                        "images": images[:3],
+                        "content": "\n".join(text),
+                        "images": images,
                         "isError": result.get("isError", False),
                     }
         raise ValueError("Unknown tool.")
@@ -406,11 +398,11 @@ class Toolset:
 
             if urlparse(a["url"]).scheme not in ("http", "https"):
                 raise ValueError("Browser URLs must use HTTP or HTTPS.")
-            await page.goto(a["url"], wait_until="domcontentloaded", timeout=30000)
+            await page.goto(a["url"], wait_until="domcontentloaded", timeout=0)
         elif action == "click":
-            await page.locator(a["selector"]).click(timeout=10000)
+            await page.locator(a["selector"]).click(timeout=0)
         elif action == "fill":
-            await page.locator(a["selector"]).fill(a["text"], timeout=10000)
+            await page.locator(a["selector"]).fill(a["text"], timeout=0)
         elif action == "press":
             await page.keyboard.press(a["key"])
         elif action == "scroll":
@@ -420,10 +412,10 @@ class Toolset:
         await page.wait_for_timeout(350)
         self.page = page
         result = await self.picture(
-            await page.screenshot(type="png"), "Browser: " + (await page.title())[:80]
+            await page.screenshot(type="png"), "Browser: " + (await page.title())
         )
         result.update(
-            {"url": page.url, "page": (await page.locator("body").aria_snapshot(timeout=5000))[:15000]}
+            {"url": page.url, "page": await page.locator("body").aria_snapshot(timeout=0)}
         )
         return result
 
@@ -445,15 +437,15 @@ class Toolset:
         elif action == "type":
             # xdotool handles UTF-8 text better than keyboard-layout-dependent key events.
             subprocess.run(
-                ["xdotool", "type", "--clearmodifiers", "--", a.get("text", "")[:10000]], check=True
+                ["xdotool", "type", "--clearmodifiers", "--", a.get("text", "")], check=True
             )
         elif action == "key":
             keys = a.get("keys", [])
-            if not keys or len(keys) > 5 or any(k not in gui.KEYBOARD_KEYS for k in keys):
+            if not keys or any(k not in gui.KEYBOARD_KEYS for k in keys):
                 raise ValueError("Use valid key names such as ctrl, shift, enter, tab, esc.")
             gui.hotkey(*keys)
         elif action == "scroll":
-            gui.scroll(max(-20, min(20, a.get("amount", -3))))
+            gui.scroll(a.get("amount", -3))
         elif action != "screenshot":
             raise ValueError("Unsupported computer action.")
         await asyncio.sleep(0.4)

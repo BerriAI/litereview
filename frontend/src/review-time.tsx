@@ -38,7 +38,6 @@ export function OptionalReviewLimits({
           <input
             type="number"
             min={Math.max(1, minimumMinutes + 1)}
-            max={1440}
             step={1}
             value={maximumMinutes ?? ""}
             placeholder="No limit set"
@@ -75,24 +74,21 @@ export function OptionalReviewLimits({
 
 export function MinimumReviewTime({
   value,
-  max,
   onChange,
   disabled = false,
 }: {
   value: number;
-  max: number;
   onChange: (value: number) => void;
   disabled?: boolean;
 }) {
   return (
     <Field
       label="Minimum review time (minutes)"
-      hint={`0 means no minimum. Up to ${max} whole minutes, starting after setup. Applies whenever this reviewer runs, including in groups. Longer reviews can use more credits.`}
+      hint="0 means no minimum. Enter whole minutes, starting after setup. Applies whenever this reviewer runs, including in groups."
     >
       <input
         type="number"
         min={0}
-        max={max}
         step={1}
         required
         value={value}

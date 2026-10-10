@@ -2,7 +2,20 @@ import time
 import uuid
 from pathlib import Path
 
-from sqlalchemy import JSON, BigInteger, Float, Index, Integer, LargeBinary, String, Text, create_engine, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Float,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    create_engine,
+    func,
+    inspect,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.schema import CreateIndex
 
@@ -81,7 +94,7 @@ class Artifact(Base):
     __tablename__ = "artifacts"
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=uid)
     job_id: Mapped[str] = mapped_column(String(40), index=True)
-    name: Mapped[str] = mapped_column(String(150))
+    name: Mapped[str] = mapped_column(Text)
     content: Mapped[bytes] = mapped_column(LargeBinary)
     mime: Mapped[str] = mapped_column(String(80), default="image/png")
 
@@ -138,3 +151,7 @@ def init_db():
     with engine.begin() as connection:
         connection.execute(CreateIndex(review_target_names, if_not_exists=True))
         connection.execute(CreateIndex(access_names, if_not_exists=True))
+        if connection.dialect.name == "postgresql":
+            name = next(c for c in inspect(connection).get_columns("artifacts") if c["name"] == "name")
+            if getattr(name["type"], "length", None) is not None:
+                connection.execute(text("ALTER TABLE artifacts ALTER COLUMN name TYPE TEXT"))

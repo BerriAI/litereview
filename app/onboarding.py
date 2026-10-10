@@ -92,7 +92,7 @@ async def synchronize():
 @router.post("/api/github/sync", dependencies=[Depends(require_user)])
 async def sync_repositories():
     try:
-        return await asyncio.wait_for(synchronize(), timeout=25)
+        return await synchronize()
     except (TimeoutError, httpx.RequestError):
         raise HTTPException(502, "GitHub is unavailable. Your saved setup is unchanged. Try again.") from None
     except (ValueError, jwt.InvalidKeyError):
@@ -109,7 +109,6 @@ def workspace_readiness():
             .join(Run, Job.run_id == Run.id)
             .where(Run.snapshot["harness_check"].as_boolean().is_(True))
             .order_by(Run.created_at.desc())
-            .limit(200)
         ).all()
         has_review = (
             db.scalar(
@@ -172,7 +171,6 @@ async def member_start(user):
     result = {
         "state": "github",
         "repositories": [],
-        "max_minutes": settings().max_review_minutes,
     }
     if not github.config().get("client_id"):
         return {**result, "state": "workspace"}
@@ -237,10 +235,9 @@ async def member_start(user):
 async def start(request: Request):
     user = require_user(request)
     try:
-        return await asyncio.wait_for(member_start(user), timeout=25)
+        return await member_start(user)
     except TimeoutError:
         return {
             "state": "unavailable",
             "repositories": [],
-            "max_minutes": settings().max_review_minutes,
         }

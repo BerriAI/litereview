@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import json
 from contextlib import asynccontextmanager
@@ -6,6 +5,7 @@ from contextlib import asynccontextmanager
 import httpx
 import litellm
 from fastapi import HTTPException
+from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -35,10 +35,31 @@ def snapshot_connection(snapshot):
     return {**snapshot, "api_key": current["api_key"]}
 
 
+def model_capacity(model):
+    """Use published model capacities when available; never invent a token budget."""
+    try:
+        info = litellm.get_model_info(model)
+    except Exception:
+        return {}
+    return {
+        name: info[key]
+        for name, key in (("context", "max_input_tokens"), ("output", "max_output_tokens"))
+        if isinstance(info.get(key), int) and info[key] > 0
+    }
+
+
+class UntimedHTTPHandler(AsyncHTTPHandler):
+    async def post(self, *args, **kwargs):
+        # LiteLLM coerces Anthropic's Timeout(None) to 600 seconds before calling this adapter.
+        kwargs["timeout"] = httpx.Timeout(None)
+        return await super().post(*args, **kwargs)
+
+
 async def complete(conn, model, messages, tools, *, trace=None):
     provider = conn["type"]
     prefix = "anthropic" if provider == "anthropic" else "openai"
     model_name = model if model.startswith(prefix + "/") and provider != "gateway" else prefix + "/" + model
+    client = UntimedHTTPHandler(timeout=httpx.Timeout(None)) if provider == "anthropic" else None
     try:
         response = await litellm.acompletion(
             model=model_name,
@@ -46,9 +67,9 @@ async def complete(conn, model, messages, tools, *, trace=None):
             api_base=(conn.get("base_url") or None),
             messages=messages,
             tools=tools or None,
-            max_tokens=4096,
-            timeout=90,
+            timeout=httpx.Timeout(None),
             num_retries=1,
+            **({"client": client} if client else {}),
         )
         if trace is not None:
             trace.result(response.model_dump(exclude_none=True))
@@ -59,6 +80,9 @@ async def complete(conn, model, messages, tools, *, trace=None):
             502,
             f"Model request failed ({type(exc).__name__}). Check the model ID, credentials, and image/tool support.",
         ) from None
+    finally:
+        if client:
+            await client.close()
 
 
 async def models(conn):
@@ -70,7 +94,7 @@ async def models(conn):
     headers = {"Authorization": "Bearer " + conn["api_key"]}
     if conn["type"] == "anthropic":
         headers = {"x-api-key": conn["api_key"], "anthropic-version": "2023-06-01"}
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=None) as client:
         r = await client.get(base.rstrip("/") + "/models", headers=headers)
     if not r.is_success:
         raise HTTPException(
@@ -91,14 +115,13 @@ async def mcp_session(conn):
         else {}
     )
     auth = MCPAuth(conn["id"], conn["base_url"]) if oauth else None
-    async with asyncio.timeout(40):
-        async with httpx.AsyncClient(
-            headers=headers, auth=auth, timeout=30, follow_redirects=False
-        ) as client:
-            async with streamable_http_client(conn["base_url"], http_client=client) as (read, write, _):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    yield session
+    async with httpx.AsyncClient(
+        headers=headers, auth=auth, timeout=None, follow_redirects=False
+    ) as client:
+        async with streamable_http_client(conn["base_url"], http_client=client) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
 
 
 def mcp_error(exc):

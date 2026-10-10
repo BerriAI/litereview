@@ -1,9 +1,12 @@
 import json
 import time
+from contextlib import asynccontextmanager
 
+import anyio
 import httpx
 import jwt
 from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
 
 from .db import Resource, Session
 from .security import decrypt
@@ -57,7 +60,7 @@ async def request(method, path, token=None, **kwargs):
         "X-GitHub-Api-Version": "2022-11-28",
     }
     headers.update(kwargs.pop("headers", {}))
-    async with httpx.AsyncClient(timeout=45) as client:
+    async with httpx.AsyncClient(timeout=None) as client:
         response = await client.request(method, API + path, headers=headers, **kwargs)
     if not response.is_success:
         raise HTTPException(
@@ -87,27 +90,45 @@ async def permission(repo, installation, user, expected_id=None):
     return data.get("permission", "none")
 
 
+@asynccontextmanager
 async def archive(repo, installation, sha):
     # Authenticate only to GitHub. Follow the redirect without the installation header.
     auth = await token(installation)
-    async with httpx.AsyncClient(timeout=90) as client:
+    client = httpx.AsyncClient(timeout=None)
+    stream = None
+    try:
         r = await client.get(f"{API}/repos/{repo}/tarball/{sha}", headers={"Authorization": f"Bearer {auth}"})
         if r.status_code not in (301, 302, 307):
             raise HTTPException(502, "GitHub did not provide a repository archive.")
         url = r.headers["location"]
         from urllib.parse import urlparse
 
-        if urlparse(url).hostname != "codeload.github.com":
+        if urlparse(url).scheme != "https" or urlparse(url).hostname != "codeload.github.com":
             raise HTTPException(502, "Unexpected GitHub archive host.")
-        chunks, total = [], 0
-        async with client.stream("GET", url) as stream:
-            stream.raise_for_status()
-            async for chunk in stream.aiter_bytes():
-                total += len(chunk)
-                if total > 50_000_000:
-                    raise HTTPException(413, "Repository archive exceeds the v1 limit of 50 MB.")
-                chunks.append(chunk)
-        return b"".join(chunks)
+        stream = await client.send(client.build_request("GET", url), stream=True)
+        if not stream.is_success:
+            raise HTTPException(502, f"GitHub repository download failed (HTTP {stream.status_code}).")
+        yield stream
+    except httpx.HTTPError:
+        raise HTTPException(502, "GitHub repository download was interrupted. Retry the review.") from None
+    finally:
+        # A disconnected sandbox must also release the upstream connection.
+        with anyio.CancelScope(shield=True):
+            if stream is not None:
+                await stream.aclose()
+            await client.aclose()
+
+
+class ArchiveResponse(StreamingResponse):
+    def __init__(self, repo, installation, sha):
+        super().__init__(iter(()), media_type="application/gzip")
+        self.archive = archive(repo, installation, sha)
+
+    async def __call__(self, scope, receive, send):
+        # Open upstream before sending headers so download failures retain their detail.
+        async with self.archive as stream:
+            self.body_iterator = stream.aiter_bytes(chunk_size=64 * 1024)
+            await super().__call__(scope, receive, send)
 
 
 async def installations():

@@ -69,8 +69,7 @@ export function Documentation() {
               </p>
               <p>
                 Set Minimum review time (minutes) in the reviewer’s PR agents
-                editor. Use 0 for no minimum, or whole minutes up to the
-                workspace limit (120 by default). Every instance uses its
+                editor. Use 0 for no minimum, or enter whole minutes. Every instance uses its
                 reviewer’s saved time, including inside groups. Comments contain
                 only names; time options in comments are rejected. The clock
                 starts after setup. Agents continue investigating and cannot

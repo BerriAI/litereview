@@ -240,7 +240,7 @@ async def google_callback(request: Request, state: str = "", code: str = "", err
         raise HTTPException(400, "Google sign-in was not completed.")
     s = settings()
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(timeout=None) as client:
             response = await client.post(
                 "https://oauth2.googleapis.com/token",
                 data={
@@ -307,7 +307,7 @@ async def github_callback(request, code, state):
         raise HTTPException(403, "Sign-in identity changed. Link GitHub again.")
     conf = github.config()
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(timeout=None) as client:
             response = await client.post(
                 "https://github.com/login/oauth/access_token",
                 headers={"Accept": "application/json"},

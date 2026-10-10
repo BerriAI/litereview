@@ -5,12 +5,10 @@ import { MinimumReviewTime } from "./review-time";
 
 export function StarterReviewer({
   connections,
-  maxMinutes,
   onSaved,
   close,
 }: {
   connections: any[];
-  maxMinutes: number;
   onSaved: () => Promise<void>;
   close: () => void;
 }) {
@@ -95,7 +93,6 @@ export function StarterReviewer({
               value={name}
               onChange={(e) => setName(e.target.value)}
               pattern="[a-zA-Z][a-zA-Z0-9_-]*"
-              maxLength={40}
               required
               disabled={!!saved || busy}
             />
@@ -152,7 +149,6 @@ export function StarterReviewer({
           </Field>
           <MinimumReviewTime
             value={minimumMinutes}
-            max={maxMinutes}
             onChange={setMinimumMinutes}
             disabled={!!saved || busy}
           />

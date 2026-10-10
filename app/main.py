@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import io
 import json
 import secrets
 import time
@@ -82,8 +81,6 @@ app.include_router(mcp_oauth.router)
 
 @app.middleware("http")
 async def guard(request, call_next):
-    if int(request.headers.get("content-length", "0")) > 12_000_000:
-        return JSONResponse({"detail": "Request exceeds 12 MB."}, status_code=413)
     if request.method not in ("GET", "HEAD", "OPTIONS") and not request.url.path.startswith(
         ("/api/webhook", "/api/internal/")
     ):
@@ -213,7 +210,7 @@ async def oauth_callback(request: Request, code: str, state: str):
     conf = github.config()
     if not conf.get("client_id") or not conf.get("client_secret"):
         raise HTTPException(400, "GitHub setup changed. Return to LiteReview and sign in again.")
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=None) as client:
         response = await client.post(
             "https://github.com/login/oauth/access_token",
             headers={"Accept": "application/json"},
@@ -250,7 +247,7 @@ def public_resource(row):
 
 def safe_path(name):
     p = PurePosixPath(name)
-    if p.is_absolute() or ".." in p.parts or "\\" in name or not p.parts or len(name) > 250:
+    if p.is_absolute() or ".." in p.parts or "\\" in name or not p.parts:
         raise HTTPException(400, "Invalid skill file path.")
     return str(p)
 
@@ -309,17 +306,12 @@ def validate_resource(kind, data, db, resource_id):
                     else "This name is already in use. Agents and groups must have unique names.",
                 )
     if kind == "skills":
-        if len(data["files"]) > 50:
-            raise HTTPException(400, "A skill can contain at most 50 supporting files.")
-        total = 0
         for name, value in data["files"].items():
             safe_path(name)
             try:
-                total += len(base64.b64decode(value, validate=True))
+                base64.b64decode(value, validate=True)
             except ValueError:
                 raise HTTPException(400, "Supporting files must contain base64 data.") from None
-        if total > 2_000_000:
-            raise HTTPException(400, "Skill files exceed 2 MB.")
 
 
 @app.get("/api/resources/{kind}", dependencies=[Depends(require_user)])
@@ -483,14 +475,10 @@ def delete_resource(kind: str, resource_id: str):
 
 @app.post("/api/skills/upload", dependencies=[Depends(require_user)])
 async def upload_skill(file: UploadFile = File(...)):
-    content = await file.read(2_000_001)
-    if len(content) > 2_000_000:
-        raise HTTPException(400, "Skill ZIP exceeds 2 MB.")
+    await file.seek(0)
     try:
-        archive = zipfile.ZipFile(io.BytesIO(content))
+        archive = zipfile.ZipFile(file.file)
         entries = [f for f in archive.infolist() if not f.is_dir()]
-        if len(entries) > 51 or sum(f.file_size for f in entries) > 2_000_000:
-            raise HTTPException(400, "Expanded skill exceeds the file or size limit.")
         files = {}
         for entry in entries:
             safe_path(entry.filename)
@@ -508,7 +496,7 @@ async def upload_skill(file: UploadFile = File(...)):
         }
         instructions = normalized.pop("SKILL.md").decode("utf-8")
         return {
-            "name": (root.name or file.filename.removesuffix(".zip"))[:100],
+            "name": (root.name or file.filename.removesuffix(".zip")),
             "description": "",
             "instructions": instructions,
             "files": {p: base64.b64encode(v).decode() for p, v in normalized.items()},
@@ -656,7 +644,6 @@ def setup_status():
         "github_organization": github.setup_state().get("organization") or settings().github_organization,
         "development_github_token": bool(settings().github_token),
         "webhook_url": settings().public_url + "/api/webhook/github",
-        "max_review_minutes": settings().max_review_minutes,
     }
 
 
@@ -668,7 +655,7 @@ async def repos():
 @app.get("/api/github/status", dependencies=[Depends(require_user)])
 async def github_status():
     try:
-        return await asyncio.wait_for(github.connection_status(), timeout=25)
+        return await github.connection_status()
     except (TimeoutError, httpx.RequestError):
         raise HTTPException(502, "Could not reach GitHub. Your setup is saved. Try checking again.") from None
     except (ValueError, jwt.InvalidKeyError):
@@ -715,7 +702,7 @@ async def connect_repository(request: Request):
     generation = github.setup_state().get("generation", "")
     name = str((await request.json()).get("name", "")).strip().lower()
     try:
-        available = await asyncio.wait_for(github.installed_repositories(), timeout=25)
+        available = await github.installed_repositories()
     except (TimeoutError, httpx.RequestError):
         raise HTTPException(
             502, "Could not verify repository access. Try again; your setup is saved."
@@ -840,7 +827,7 @@ async def manifest_callback(request: Request, code: str, state: str):
     except HTTPException:
         return failed("expired")
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=None) as client:
             response = await client.post(
                 github.API + f"/app-manifests/{code}/conversions",
                 headers={"Accept": "application/vnd.github+json"},
@@ -940,7 +927,6 @@ def runs():
                 select(Run)
                 .where(Run.snapshot["harness_check"].as_boolean().is_not(True))
                 .order_by(Run.created_at.desc())
-                .limit(100)
             )
         ]
 
@@ -1023,7 +1009,7 @@ def bootstrap(job_id: str, request: Request):
         db.commit()
         return {
             "job_id": job.id,
-            "config": job.config,
+            "config": {**job.config, "model_capacity": providers.model_capacity(job.config["model"])},
             "pr": {
                 "repo": run.repo,
                 "number": run.pr,
@@ -1049,7 +1035,7 @@ async def job_archive(job_id: str, request: Request):
         from .agent_checks import archive
 
         return Response(archive(), media_type="application/gzip")
-    return Response(await github.archive(run.repo, run.installation, run.head), media_type="application/gzip")
+    return github.ArchiveResponse(run.repo, run.installation, run.head)
 
 
 @app.post("/api/internal/jobs/{job_id}/start-review")
@@ -1116,8 +1102,8 @@ async def job_event(job_id: str, request: Request):
     body = await request.json()
     with Session() as db:
         job = db.get(Job, job_id)
-        event = {"time": time.time(), "message": str(body.get("message", ""))[:2000]}
-        job.logs = (job.logs + [event])[-200:]
+        event = {"time": time.time(), "message": str(body.get("message", ""))}
+        job.logs = job.logs + [event]
         db.commit()
     return {"ok": True}
 
@@ -1130,13 +1116,11 @@ async def job_artifact(job_id: str, request: Request):
         raw = base64.b64decode(body["data"], validate=True)
     except (ValueError, KeyError):
         raise HTTPException(400, "Invalid screenshot.") from None
-    if len(raw) > 2_000_000 or not raw.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise HTTPException(400, "Screenshots must be PNG files under 2 MB.")
+    if not raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise HTTPException(400, "Screenshots must be PNG files.")
     with Session() as db:
-        if db.scalar(select(func.count()).select_from(Artifact).where(Artifact.job_id == job_id)) >= 20:
-            raise HTTPException(413, "Screenshot storage limit reached.")
         artifact = Artifact(
-            id=uid(), job_id=job_id, name=str(body.get("name", "Screenshot"))[:150], content=raw
+            id=uid(), job_id=job_id, name=str(body.get("name", "Screenshot")), content=raw
         )
         db.add(artifact)
         db.commit()
@@ -1157,7 +1141,7 @@ async def finish(job_id: str, request: Request):
     try:
         result = ReviewResult.model_validate(await request.json()).model_dump()
     except ValidationError as exc:
-        fields = ", ".join(".".join(map(str, error["loc"])) for error in exc.errors()[:10])
+        fields = ", ".join(".".join(map(str, error["loc"])) for error in exc.errors())
         raise HTTPException(
             422,
             f"Invalid review result fields: {fields}. Follow the finish_review schema: findings and limitations must be arrays, and each finding needs title, severity, and explanation. Correct the result and submit again.",

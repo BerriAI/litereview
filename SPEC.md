@@ -85,7 +85,7 @@ V1 supports remote Streamable HTTP MCP servers. Arbitrary local stdio servers, p
 
 ### Skills
 
-An administrator can create a skill by pasting Markdown or uploading a skill folder as a ZIP containing `SKILL.md` and optional supporting files. Safely unpack archives with size limits and reject paths outside the skill directory.
+An administrator can create a skill by pasting Markdown or uploading a skill folder as a ZIP containing `SKILL.md` and optional supporting files. Unpack archives without application size or file-count caps; reject paths outside the skill directory.
 
 The agent editor has a multi-select list of workspace skills. At run start, materialize only the attached skills in that sandbox. Give the agent their names, descriptions, paths, and `SKILL.md` instructions; supporting files are available through repository/file-reading tools. Saved agent instructions define the task, scope, workflow, language, and voice; attached skills support them and yield when they conflict. Skills cannot expand tool permissions.
 
@@ -135,7 +135,7 @@ Use a small standalone implementation:
 - **API:** Python/FastAPI serving the built web app and handling configuration, GitHub events, and results.
 - **Database:** Postgres for configuration, runs, jobs, and artifact metadata.
 - **Execution:** one durable API dispatcher backed by Postgres, and one configurable review runner used by every Modal sandbox.
-- **Artifacts:** bounded private Postgres records for screenshots and logs, served through authenticated app routes. This avoids a separate storage service in v1.
+- **Artifacts:** private Postgres records for full screenshots and logs, served through authenticated app routes. This avoids a separate storage service in v1.
 
 Package the web/API as one application deployment. Provide Docker Compose for the application and Postgres during setup, plus guided GitHub App setup. Modal images and the named Modal app are created on demand; there is no separate runtime deployment command. No Redis, Celery, workflow engine, or managed-agent platform is required.
 
@@ -155,7 +155,7 @@ Jobs run concurrently subject to Modal capacity and a deployment concurrency lim
 
 Keep long-lived model and remote MCP credentials in the API service. Workers receive active-job-scoped access to small internal model/MCP relay endpoints, restricted to their configured model/tools and active-run limits. These are internal application endpoints, not a separately deployed gateway. Do not leave GitHub credentials in the staged checkout or worker environment.
 
-Do not impose default time or model-call budgets. Owners may select a maximum run time and/or maximum model calls per agent, independently of its minimum review time. Blank fields mean no LiteReview limit; reaching a selected cap produces an incomplete result. Modal still requires a sandbox lifetime of at most 24 hours. Keep tool output and artifact sizes bounded. Screenshot storage is capped at 20 PNGs of up to 2 MB per job.
+Do not impose default time or model-call budgets. Owners may select a maximum run time and/or maximum model calls per agent, independently of its minimum review time. Blank fields mean no LiteReview limit; reaching a selected cap produces an incomplete result. Modal still requires a sandbox lifetime of at most 24 hours. Do not impose application size or count caps on repository archives, PR diffs, skills, screenshots, logs, tool output, trace content, reviewer instructions, or review results. Preserve full content. Stream archives and extraction to keep memory use independent of repository size. Split long published results only to satisfy GitHub's per-comment limit. Model and MCP requests have no application deadline; user-selected run/command budgets and upstream platform capacities still apply.
 
 ## 9. Results and basic failure behavior
 

@@ -85,7 +85,7 @@ export function MCPToolSelector({
           >
             <span>
               {tool.name}
-              <small>{tool.description?.slice(0, 130)}</small>
+              <small>{tool.description}</small>
             </span>
           </Toggle>
         ))}

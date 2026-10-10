@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_allowed_domains: str = ""
-    sso_session_seconds: int = Field(default=43200, ge=300, le=86400)
+    sso_session_seconds: int = Field(default=43200, ge=1)
     public_url: str = ""
     gateway_url: str = ""
     gateway_api_key: str = ""
@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     modal_token_secret: str = ""
     modal_app_name: str = "litereview"
     concurrency: int = Field(default=0, ge=0)  # 0 launches on demand without an app-level cap.
-    max_review_minutes: int = Field(default=120, ge=1, le=1440)
     dispatcher_enabled: bool = True
     litereview_trace_endpoint: str = ""
     litereview_trace_api_key: str = ""

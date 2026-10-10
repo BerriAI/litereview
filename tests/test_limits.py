@@ -57,7 +57,6 @@ def test_agent_limits_snapshot_and_clear_independently(owner, monkeypatch):
         {"maximum_minutes": 1.5},
         {"maximum_minutes": "10"},
         {"maximum_minutes": True},
-        {"maximum_minutes": 1441},
         {"max_model_calls": 0},
         {"max_model_calls": -1},
         {"max_model_calls": 1.5},
@@ -72,7 +71,7 @@ def test_invalid_limits_cannot_be_saved(owner, changes):
     assert response.status_code == 422
 
 
-@pytest.mark.parametrize("changes", [{"maximum_minutes": 1440}, {"max_model_calls": 10000}])
+@pytest.mark.parametrize("changes", [{"maximum_minutes": 1441}, {"max_model_calls": 10000}])
 def test_each_limit_is_optional_independently(owner, changes):
     _, _, reviewer, _, _ = setup(owner)
     response = owner.put("/api/resources/agents/" + reviewer["id"], json={**reviewer, **changes})
@@ -119,8 +118,7 @@ def test_sandbox_uses_selected_timeout_or_full_platform_lifetime(monkeypatch, ti
 @pytest.mark.parametrize("limit,expected,status", [(None, 205, "completed"), (3, 3, "timed_out")])
 async def test_builtin_has_no_implicit_round_limit(monkeypatch, limit, expected, status):
     relay = AsyncMock()
-    relay.client.get.return_value = SimpleNamespace(raise_for_status=lambda: None, content=b"")
-    monkeypatch.setattr(agent, "extract_archive", lambda *_: None)
+    monkeypatch.setattr(agent, "prepare_repository", AsyncMock())
     monkeypatch.setattr(agent, "stage_skills", lambda *_: None)
     tools = SimpleNamespace(init=AsyncMock(), close=AsyncMock(), clock=Mock())
     tools.clock.instructions.return_value = ""

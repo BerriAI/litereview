@@ -10,7 +10,6 @@ from test_reviews import create, mock_github, payload, setup, webhook
 
 from app import reviews
 from app.db import Job, Resource, ReviewTiming, Run, Session
-from app.settings import settings
 from runner import harness
 from runner.bridge import Bridge
 from runner.timing import ReviewClock
@@ -81,21 +80,21 @@ def test_saved_times_apply_independently_to_direct_agents_and_group_instances(ow
         assert len(db.scalars(select(Job)).all()) == 5
 
 
-@pytest.mark.parametrize("minutes", [-1, 1.5, "5", True, 121])
-def test_saved_time_rejects_invalid_or_unbounded_values(owner, minutes):
+@pytest.mark.parametrize("minutes", [-1, 1.5, "5", True])
+def test_saved_time_rejects_invalid_values(owner, minutes):
     _, _, agent, _, _ = setup(owner)
     response = owner.put("/api/resources/agents/" + agent["id"], json={**agent, "minimum_minutes": minutes})
     assert response.status_code == 422
 
 
-def test_time_default_disabled_and_workspace_limit(owner, monkeypatch):
+def test_time_default_disabled_and_no_workspace_ceiling(owner, monkeypatch):
     _, _, agent, _, _ = setup(owner)
     assert agent["minimum_minutes"] == 0
-    monkeypatch.setattr(settings(), "max_review_minutes", 2)
-    assert owner.get("/api/setup").json()["max_review_minutes"] == 2
+    monkeypatch.setenv("MAX_REVIEW_MINUTES", "2")
+    assert "max_review_minutes" not in owner.get("/api/setup").json()
     assert (
-        owner.put("/api/resources/agents/" + agent["id"], json={**agent, "minimum_minutes": 3}).status_code
-        == 422
+        owner.put("/api/resources/agents/" + agent["id"], json={**agent, "minimum_minutes": 1500}).status_code
+        == 200
     )
     mock_github(monkeypatch)
     # Existing agents created before this field was introduced remain untimed.
