@@ -138,6 +138,40 @@ With Google SSO enabled, GitHub OAuth links a caller’s account after Google si
 
 ## Runtime and boundaries
 
+### Optional tracing with Lens
+
+LiteReview can send model-call traces to [Lens](https://github.com/BerriAI/lens) or an OTLP/HTTP collector.
+Tracing is off by default. You can run LiteReview without Lens or any Berri-hosted service.
+
+1. Deploy Lens and sign in. Open **Tracing key** and generate a key for LiteReview.
+2. Set these variables in the LiteReview API environment, then restart or redeploy it:
+
+   ```dotenv
+   LITEREVIEW_TRACE_ENDPOINT=https://YOUR-LENS-HOST/v1/traces
+   LITEREVIEW_TRACE_API_KEY=YOUR-LENS-TRACING-KEY
+   LITEREVIEW_TRACE_CONTENT=false
+   ```
+
+   Use the full OTLP/HTTP endpoint, including `/v1/traces`. The API server must be able to reach it.
+   Use a tracing key, not the Lens admin token. For a collector without authentication, leave the key empty.
+3. Run a review or use **Test agent** in the agent editor. In Lens, open **Traces** for that reviewer.
+   Each model call appears as a trace. Calls from the same review job share `session.id`.
+
+Traces include the reviewer, harness, model, job and run IDs, duration, status, and token counts when the
+provider supplies them. To also capture prompt and response text, set `LITEREVIEW_TRACE_CONTENT=true`.
+This can send private source code and text from a review to your collector. Text is limited to 8,192
+characters per input or output. Images, tool arguments, request headers, and stored credentials are
+not captured. Content capture does not redact secrets that appear inside prompt or response text.
+
+All supported harnesses export through the API. The collector key never enters a Modal sandbox.
+Exports run in the background with a bounded queue. If the collector is unavailable or the queue is
+full, traces can be lost; reviews continue. An API restart can also lose pending traces.
+
+If traces do not appear, check the endpoint and tracing key, then check the API logs for export errors.
+Keep `/v1/traces` in the endpoint. To turn tracing off, clear `LITEREVIEW_TRACE_ENDPOINT` and redeploy.
+
+### Review execution
+
 The FastAPI service serves the built React UI and runs a durable Postgres-backed dispatcher. Each job runs its selected harness in a separate Modal sandbox with Python 3.12, Node 22, Chromium, Playwright, and a Linux desktop. LLM inference happens at the configured provider.
 
 The checkout is a GitHub source archive at the PR's immutable head SHA, rather than a full Git clone. It does not include `.git` history, materialize submodules or Git LFS objects, or preserve symlinks. Repositories that depend on those features need additional support. Executable reviews use the repository's configured setup command, start command, and readiness URL; external services, private package registries, and test accounts still need their own configuration. Modal sandboxes have outbound internet access by default, including package installation and browser navigation. This does not grant access to private networks or credentials.

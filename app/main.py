@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
 
-from . import github, mcp_oauth, providers, reviews
+from . import github, mcp_oauth, providers, reviews, tracing
 from .access import bind_existing_people, initialize_access, people
 from .db import Artifact, Job, MCPOAuth, Resource, ReviewTiming, Run, Session, SSOIdentity, init_db, uid
 from .limits import count_model_call, job_timeout, model_rounds
@@ -64,12 +64,14 @@ async def lifespan(app):
                     )
                 )
         db.commit()
+    tracing.start()
     task = asyncio.create_task(reviews.dispatcher()) if settings().dispatcher_enabled else None
     yield
     if task:
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+    await asyncio.to_thread(tracing.shutdown)
 
 
 app = FastAPI(title="LiteReview", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -1072,12 +1074,21 @@ async def model_relay(job_id: str, request: Request):
     if not count_model_call(job):
         raise HTTPException(429, "Model round limit reached.")
     body = await request.json()
-    return await providers.complete(
-        providers.snapshot_connection(job.config["connection"]),
-        job.config["model"],
-        body["messages"],
-        body.get("tools", []),
-    )
+    trace = tracing.ModelTrace(job, body)
+    try:
+        result = await providers.complete(
+            providers.snapshot_connection(job.config["connection"]),
+            job.config["model"],
+            body["messages"],
+            body.get("tools", []),
+            trace=trace,
+        )
+        trace.result(result)
+        trace.end()
+        return result
+    except BaseException:
+        trace.end(error=True)
+        raise
 
 
 @app.post("/api/internal/jobs/{job_id}/mcp")

@@ -10,6 +10,14 @@ The private workspace is live at **https://litereview.onrender.com**.
 
 Both paid services stay running when idle; there is no free-tier wake-up delay. This does not imply zero downtime during maintenance or deployments. Sandboxes are created on demand in Modal, with 2 CPU cores and 4 GiB requested per agent. `CONCURRENCY=0` removes the app-level queue cap; a positive value sets an optional workspace-wide limit. Modal quotas and provider rate limits still apply. Runs have no application time or model-call cap unless one is selected in the agent editor’s **Optional limits**. `JOB_TIMEOUT` and `MAX_ROUNDS` are no longer read. Modal requires a maximum sandbox lifetime of 24 hours, which is used when no run time is selected; continuing across replacement sandboxes is not implemented.
 
+## Optional tracing
+
+For optional model-call tracing, follow [Optional tracing with Lens](../README.md#optional-tracing-with-lens).
+On Render, add the `LITEREVIEW_TRACE_ENDPOINT` and `LITEREVIEW_TRACE_API_KEY` variables in the web
+service's **Environment** page. Save and redeploy. These values belong to the API service; do not
+add them to Modal or repository test secrets. The Blueprint leaves tracing off unless you configure it.
+
+
 ## Google SSO
 
 Google sign-in was enabled and verified on October 9, 2026. The shared Internal OAuth client from `moyai-private` now includes `https://litereview.onrender.com/api/auth/google/callback`. LiteReview requires `berri.ai` membership. Every admitted Google member has the same workspace management access; `GOOGLE_ADMIN_EMAILS` is ignored. A real Google login succeeded, unauthenticated workspace APIs returned 401, and the old workspace key was rejected.

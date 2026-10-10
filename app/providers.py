@@ -35,7 +35,7 @@ def snapshot_connection(snapshot):
     return {**snapshot, "api_key": current["api_key"]}
 
 
-async def complete(conn, model, messages, tools):
+async def complete(conn, model, messages, tools, *, trace=None):
     provider = conn["type"]
     prefix = "anthropic" if provider == "anthropic" else "openai"
     model_name = model if model.startswith(prefix + "/") and provider != "gateway" else prefix + "/" + model
@@ -50,6 +50,8 @@ async def complete(conn, model, messages, tools):
             timeout=90,
             num_retries=1,
         )
+        if trace is not None:
+            trace.result(response.model_dump(exclude_none=True))
         return response.choices[0].message.model_dump(exclude_none=True)
     except Exception as exc:
         # Provider exceptions can include request headers; never expose their text.
