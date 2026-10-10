@@ -92,6 +92,8 @@ export function Documentation() {
                 Agent and group names must be unique, ignoring capitalization.
                 Repeating a name in one comment runs it once. An agent selected
                 directly and through a group runs separately for each selection.
+                Reviewers stay in command order as their activity updates; group
+                members and instances follow their saved order.
               </p>
               <p>
                 Set Minimum review time (minutes) in the reviewer’s PR agents

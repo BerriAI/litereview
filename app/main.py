@@ -930,7 +930,7 @@ def run_detail(run_id: str):
         run = db.get(Run, run_id)
         if not run:
             raise HTTPException(404)
-        jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
+        jobs = reviews.ordered_jobs(run, db.scalars(select(Job).where(Job.run_id == run_id)).all())
         result = run_public(run)
         result["jobs"] = []
         for job in jobs:
