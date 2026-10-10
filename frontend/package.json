@@ -2,10 +2,11 @@
   "name": "litereview-ui",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/write-licenses.mjs",
     "check": "tsc --noEmit"
   },
   "dependencies": {

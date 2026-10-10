@@ -1,12 +1,24 @@
 # LiteReview
 
-A private workspace for reusable PR reviewers. Configure each agent’s harness, model, instructions, skills, and tools. Call agents directly or use optional groups to bundle them, then comment on a PR:
+MIT-licensed PR review agents for trusted teams. Host a shared workspace, configure each agent’s harness, model, instructions, skills, and tools, then call reviewers from a GitHub PR comment:
 
 ```text
 @litereview frontend pentest security
 ```
 
 LiteReview acknowledges an accepted command with a 👀 reaction. Every instance runs in a separate Modal sandbox. When all agents finish, it posts their responses and findings in one comment, preserving each agent’s configured voice. Check details are collapsed and the footer links to the full run and reviewed commit. LiteReview never pushes fixes.
+
+## Get started
+
+- [Deploy a team workspace](docs/DEPLOYMENT.md): Render, Postgres, Google Workspace sign-in, and your GitHub App.
+- [Develop locally](#local-development): run the UI and API with SQLite and a local access key.
+- [Contribute](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+
+Reviews require a **Modal account**, a **model provider or gateway**, and a **publicly reachable HTTPS API URL**. GitHub PR integration requires a GitHub App that you create and install. Modal and model usage incur charges; there is no local sandbox backend. Render is the documented deployment path; Lens and BerriAI-hosted services are optional.
+
+This beta runs **one trusted workspace per deployment**. Every admitted member can manage the workspace and use its shared connections. Run time, model-call, and concurrency limits are optional; configure them and your providers' budgets for your deployment. See the [security boundary](SECURITY.md#intended-deployment-boundary) before connecting private repositories or privileged tools.
+
+## Configure reviewers
 
 The agent’s **Review instructions** define its task, scope, workflow, language, and voice. Attached skills support those instructions; the agent instructions take precedence when they conflict. The harness supplies tools and result delivery. An agent can produce a narrative response without bug findings. Credentials, enabled tools, and configured time limits still apply.
 
@@ -22,14 +34,14 @@ Every instance uses its reviewer's saved minimum, including when called through 
 
 The harness checks a monotonic clock, asks the agent to keep investigating and verifying, and rejects early completion. The API independently checks elapsed time. Codex continues the same thread if it returns without submitting; the other harnesses retain their sessions too. This does not invoke the interactive `/goal` slash command. Runs have no LiteReview time or model-call limit by default. To set one, expand **Optional limits** in the agent editor and enter **Maximum run time (minutes)**, **Maximum model calls**, or both. Leave a field blank to remove its limit. Maximum run time includes setup and must exceed the minimum; a minimum never creates a maximum. Groups use each agent’s saved limits, and accepted jobs keep their snapshots. Provider failures and reached limits produce an incomplete review, never a successful early completion. [Modal imposes a 24-hour sandbox lifetime](https://modal.com/docs/guide/sandboxes#timeouts); LiteReview uses that full lifetime when no maximum is selected. Runs do not yet resume across sandbox replacements. Existing MCP selections, skills, visual tools, models, and instructions are preserved.
 
-The private workspace is deployed at [litereview.onrender.com](https://litereview.onrender.com). See [deployment status and GitHub setup](docs/DEPLOYMENT.md) for the remaining organization setup.
-
 ## Deploy to Render
 
-1. Create a **Blueprint** in Render from this repository. `render.yaml` provisions one Docker web service and Postgres. If Render cannot see the BerriAI repo, an organization owner may need to approve Render’s GitHub access.
-2. Set `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`. The app automatically uses Render’s assigned HTTPS URL; set `PUBLIC_URL` explicitly if using a custom domain. Keep the generated `SECRET_KEY` stable across deploys. Configure Google sign-in as described below. Every admitted workspace member gets the same management access.
+Follow the [deployment guide](docs/DEPLOYMENT.md) to obtain credentials, deploy, and verify sign-in. The complete path to your first review is:
+
+1. Fork this repository, then create a **Blueprint** in Render from your fork. `render.yaml` provisions one paid Docker web service and Postgres. An organization owner may need to approve Render’s access to your repository.
+2. Set `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`, your Google OAuth client, and `GOOGLE_ALLOWED_DOMAINS` to domains you control. The Blueprint requires Google SSO. The app uses Render’s assigned HTTPS URL; set `PUBLIC_URL` for a custom domain. Keep the generated `SECRET_KEY` stable. Set `GITHUB_ORGANIZATION` to your GitHub organization, or leave it empty for account selection during setup.
 3. Sign in with Google. Link GitHub to request reviews, or choose **Workspace** to configure agents and connections first. Every member has the same interface.
-4. Open **Repositories → Connect GitHub** (or **Connect BerriAI** when `GITHUB_ORGANIZATION=BerriAI`). Use an App owned by the account that owns your repositories. Continue to GitHub in the same tab; the guided flow registers the App, stores its credentials encrypted, and opens installation. An organization owner or organization-wide App Manager can create the App; installation may need an owner’s approval. A private personal App cannot be installed in an organization.
+4. Open **Repositories → Connect GitHub** (the button names your organization when configured). Use an App owned by the account that owns your repositories. Continue to GitHub in the same tab; the guided flow registers the App, stores its credentials encrypted, and opens installation. An organization owner or organization-wide App Manager can create the App; installation may need an owner’s approval. A private personal App cannot be installed in an organization.
 5. Select repositories on GitHub and return to **Repositories**. LiteReview imports the selection automatically; installation IDs and a second repository picker are unnecessary. Public and private repositories are supported. New selections allow existing approved People to call their permitted reviewers. Open a repository’s **Review permissions** to narrow that access.
 6. If no model connection exists, add one under **Models**. Reuse an existing gateway or direct provider where possible. **Configure reviewer** asks for its name and model, then **Save and check reviewer** runs a private harness check using Modal and model credits. Codex is the default; a direct Anthropic connection uses Claude Code. Full instructions, capabilities, skills, and MCP tools remain in the agent editor.
 7. Each teammate chooses **Sign in with Google → Connect GitHub**. They appear in **People** automatically and can use all reviewers by default. Use **Edit access** for optional restrictions; no duplicate allowlist is required. The start page shows commands only for permitted repositories and checked reviewers, after verifying current GitHub access. Post the command in a PR; successful setup ends with an actual review result. Provider consent can require additional clicks.
@@ -52,9 +64,9 @@ An expired Google session opens **Sign in to continue**, then restores the previ
 
 ## Google Workspace SSO
 
-Use an **Internal** Google OAuth web client for your organization. You can reuse an existing client by adding `https://litereview.onrender.com/api/auth/google/callback` to its authorized redirect URIs; keep its other redirect URIs. A new client uses the same exact URI. For another deployment, replace the origin with `PUBLIC_URL`.
+Use an **Internal** Google OAuth web client for your Google Workspace organization. Register `https://YOUR-LITEREVIEW-HOST/api/auth/google/callback` as an authorized redirect URI, replacing the origin with your deployment's actual `PUBLIC_URL`. If reusing a client, keep its other redirect URIs. See the [credential setup steps](docs/DEPLOYMENT.md#prepare-your-accounts).
 
-In Render’s LiteReview environment settings, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_DOMAINS=berri.ai`, and `GOOGLE_SSO_REQUIRED=true`, then deploy. Register the callback before enabling SSO on an existing workspace: `redirect_uri_mismatch` means the URI is missing from that Google client. Never commit the client secret.
+In Render’s LiteReview environment settings, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_DOMAINS` to your domain (for example, `example.com`), and `GOOGLE_SSO_REQUIRED=true`, then deploy. Register the callback before enabling SSO on an existing workspace: `redirect_uri_mismatch` means the URI is missing from that Google client. Never commit the client secret.
 
 Verify that a workspace account can sign in, an outside account is denied, and the old workspace access key no longer works. Enabling SSO also invalidates existing access-key/GitHub-only sessions. Every admitted Google member can manage agents, groups, skills, shared model/MCP connections, repositories, review access settings, and run history. There is no separate LiteReview administrator role. Shared connections use their connected accounts’ permissions and shared model credits. `GOOGLE_ADMIN_EMAILS` is no longer used; `ADMIN_USERS` only controls legacy GitHub-only sign-in when SSO is disabled. GitHub still controls App installation permissions. Approved Google users appear in **People** automatically. Linked users can call all reviewers unless an explicit person restriction or repository permission disallows them. Existing restrictions are preserved.
 
@@ -73,6 +85,8 @@ Every reviewer includes terminal access to run tests and create reproducers in i
 Codex needs a Responses-compatible endpoint. Claude Code needs a Messages-compatible endpoint. A gateway can translate these protocols to compatible models, including Claude with Codex. Pi, OpenCode, and Deep Agents use Chat Completions for gateway/OpenAI connections and Messages for direct Anthropic connections. Browser and desktop checks require image-capable models. Model discovery alone does not establish compatibility: **Test agent** runs the actual selected harness against a sample project, without accessing a GitHub repo or posting comments. It checks sample skill loading and the enabled terminal/browser/desktop tools; it does not execute your review instructions or attached MCP tools. You can stop a test from the editor.
 
 Versions are pinned in `runner/catalog.py` and captured with every job. Runtime updates are application releases. See [harness validation](docs/VALIDATION.md#selectable-harness-validation) for the tested versions and combinations.
+
+Optional runtimes retain their upstream licenses. The Claude Agent SDK uses separate Anthropic terms; it is not covered by LiteReview's MIT license. See [third-party notices](THIRD_PARTY_NOTICES.md#optional-agent-runtimes-and-services).
 
 ## Capabilities
 
@@ -97,16 +111,36 @@ OAuth supports discovery, PKCE, automatic client registration where offered, and
 
 ## Local development
 
-Install Python 3.12, Node 22, and uv. Copy `.env.example` to `.env`, generate `SECRET_KEY` and `ADMIN_TOKEN`, then:
+Install [Python 3.12](https://www.python.org/downloads/), [Node 22](https://nodejs.org/), and [uv 0.10.9](https://docs.astral.sh/uv/getting-started/installation/). Clone the repository and install dependencies:
 
 ```sh
-uv sync --frozen
+git clone https://github.com/BerriAI/litereview.git
+cd litereview
+uv sync --frozen --python 3.12
 npm ci --prefix frontend
 npm run build --prefix frontend
+```
+
+In a new checkout, create a local configuration with independent random keys. This command refuses to overwrite an existing `.env`:
+
+```sh
+uv run python - <<'PY'
+from pathlib import Path
+import secrets
+
+text = Path('.env.example').read_text()
+for name in ('SECRET_KEY', 'ADMIN_TOKEN'):
+    text = text.replace(f'{name}=\n', f'{name}={secrets.token_urlsafe(32)}\n')
+with Path('.env').open('x') as output:
+    output.write(text)
+Path('.env').chmod(0o600)
+PY
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
-SQLite is supported for local development. Use Postgres in deployment. `docker compose up --build` runs both services locally. Use one API worker and one service instance in v1.
+Open `http://localhost:8000` and sign in with the generated `ADMIN_TOKEN` from `.env` in **Workspace access key**. In another terminal, `curl --fail http://localhost:8000/health` should return `{"status":"ok"}`. This starts the workspace; live reviews still need the external accounts listed above.
+
+SQLite is supported for local development. Use Postgres in deployment. After creating `.env`, `docker compose up --build` runs both services locally. Use one API worker and one service instance in v1.
 
 Modal must reach the API over HTTPS. For local live testing, expose port 8000 through a temporary HTTPS tunnel and set `PUBLIC_URL` to its address before starting the app. All configuration, results, and screenshots require sign-in; job relay endpoints require expiring per-job tokens. `PUBLIC_URL` must also match the origin you use in your browser.
 
@@ -122,7 +156,7 @@ npm run build --prefix frontend
 
 `uv run python -m scripts.modal_smoke` exercises browser and desktop tools in a real Modal sandbox and consumes Modal credits. Live review tests additionally consume model credits.
 
-For the full LiteReview app check, run `uv run python -m scripts.modal_app_smoke --repo BerriAI/litereview --pr 1` against the trusted test PR. This downloads its pinned source, verifies every extracted file, installs dependencies, builds and starts the application, exercises browser/desktop tools and internet access, and asks the configured gateway model to read a screenshot. It requires authenticated `gh` and local Modal/gateway credentials; evidence stays in ignored `.test-artifacts/` files. It executes the selected PR's code and consumes Modal/model credits.
+For the full LiteReview app check, run `uv run python -m scripts.modal_app_smoke --repo YOUR-OWNER/YOUR-LITEREVIEW-FORK --pr YOUR-PR-NUMBER` against a PR in your LiteReview fork. Replace both placeholders with a repository and trusted PR you control. This downloads its pinned source, verifies every extracted file, installs dependencies, builds and starts the application, exercises browser/desktop tools and internet access, and asks the configured gateway model to read a screenshot. It requires authenticated `gh` and local Modal/gateway credentials; evidence stays in ignored `.test-artifacts/` files. It executes the selected PR's code and consumes Modal/model credits.
 
 ## Existing GitHub App
 

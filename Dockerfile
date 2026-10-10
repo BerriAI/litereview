@@ -5,6 +5,7 @@ WORKDIR /web
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
+COPY LICENSE THIRD_PARTY_NOTICES.md /
 RUN npm run build
 
 FROM ${PYTHON_IMAGE}
@@ -15,6 +16,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 COPY app/ ./app/
 COPY runner/ ./runner/
+COPY LICENSE THIRD_PARTY_NOTICES.md ./
 COPY --from=web /web/dist ./frontend/dist/
 RUN useradd --create-home app && mkdir -p /app/data && chown -R app:app /app
 USER app

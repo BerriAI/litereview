@@ -2,7 +2,7 @@
 
 Requires authenticated gh, local Modal credentials, and a gateway in .env.
 Runs PR code, consumes Modal/model credits, and stores private local evidence.
-Usage: uv run python -m scripts.modal_app_smoke --repo BerriAI/litereview --pr 1
+Usage: uv run python -m scripts.modal_app_smoke --repo YOUR-OWNER/YOUR-LITEREVIEW-FORK --pr YOUR-PR-NUMBER
 """
 
 import argparse

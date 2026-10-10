@@ -2684,7 +2684,7 @@ function App() {
                   <input
                     value={appOwner}
                     onChange={(e) => setAppOwner(e.target.value)}
-                    placeholder="BerriAI"
+                    placeholder="your-organization"
                     required
                   />
                 </Field>

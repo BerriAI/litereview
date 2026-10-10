@@ -2,6 +2,9 @@
 name = "litereview"
 version = "0.1.0"
 description = "Independent, configurable PR reviewers in Modal"
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1",
@@ -12,6 +15,10 @@ dependencies = [
   "mcp>=1.30,<2", "python-dotenv>=1.0,<2",
   "opentelemetry-sdk>=1.36,<2", "opentelemetry-exporter-otlp-proto-http>=1.36,<2",
 ]
+
+[project.urls]
+Repository = "https://github.com/BerriAI/litereview"
+Issues = "https://github.com/BerriAI/litereview/issues"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.25", "ruff>=0.11", "playwright>=1.51"]
