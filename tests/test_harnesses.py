@@ -101,7 +101,7 @@ def test_harness_defaults_and_incompatible_connections(owner):
 
 
 @pytest.mark.asyncio
-async def test_shared_tools_enforce_capabilities_and_visual_completion():
+async def test_shared_tools_enforce_capabilities_without_inventing_visual_tasks():
     relay = AsyncMock()
     cfg = {"capabilities": [], "mcp_definitions": []}
     tools = Toolset({"config": cfg}, relay)
@@ -113,9 +113,6 @@ async def test_shared_tools_enforce_capabilities_and_visual_completion():
     visual = {"capabilities": ["computer"], "mcp_definitions": []}
     bridge = Bridge(tools, relay, visual)
     final = {"summary": "done", "findings": [], "limitations": []}
-    assert (await bridge.call("lr_finish_review", final))["isError"]
-    assert not bridge.finished.is_set()
-    tools.visual_calls = 1
     assert not (await bridge.call("lr_finish_review", final))["isError"]
     assert bridge.finished.is_set()
     assert (await bridge.call("lr_read_diff", {}))["isError"]

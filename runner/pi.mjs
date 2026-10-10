@@ -70,7 +70,7 @@ const loader = new DefaultResourceLoader({
   noPromptTemplates: true,
   noThemes: true,
   noContextFiles: true,
-  appendSystemPrompt: [instructions],
+  systemPrompt: instructions,
 });
 await loader.reload();
 const { session } = await createAgentSession({

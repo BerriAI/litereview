@@ -155,11 +155,28 @@ class Finding(BaseModel):
     evidence: list[str] = Field(default_factory=list, max_length=10)
 
 
+class ReviewCheck(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    status: Literal["passed", "failed", "not_run"]
+    required: bool
+    details: str = Field(max_length=2000)
+
+
 class ReviewResult(BaseModel):
     status: Literal["completed", "failed", "timed_out"]
     summary: str = Field(max_length=5000)
     findings: list[Finding] = Field(default_factory=list, max_length=30)
     limitations: list[str] = Field(default_factory=list, max_length=30)
+    checks: list[ReviewCheck] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="after")
+    def required_checks_are_blockers(self):
+        for check in self.checks:
+            if check.required and check.status == "not_run":
+                blocker = f"{check.name}: {check.details or 'Required check was not run.'}"
+                if blocker not in self.limitations:
+                    self.limitations.append(blocker)
+        return self
 
 
 SCHEMAS = {

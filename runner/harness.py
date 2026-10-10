@@ -9,7 +9,6 @@ from pathlib import Path
 
 from .bridge import Bridge
 from .catalog import HARNESS_LABELS, HARNESS_VERSIONS
-from .tools import REPO
 
 ROOT = Path("/opt/litereview")
 STATE = Path("/workspace/litereview-run")
@@ -106,7 +105,10 @@ def command(cfg, url, instructions, prompt, env, resume_id=None):
             prompt,
         ]
     if harness == "codex":
+        instructions_path = STATE / "agent-instructions.md"
+        instructions_path.write_text(instructions)
         config = {
+            "model_instructions_file": str(instructions_path),
             "model": cfg["model"],
             "model_provider": "litereview",
             "approval_policy": "never",
@@ -147,27 +149,15 @@ def command(cfg, url, instructions, prompt, env, resume_id=None):
 
         for key, value in config.items():
             args += ["-c", key + "=" + toml(value)]
-        return args + (["resume", resume_id, prompt] if resume_id else [instructions + "\n\n" + prompt])
+        return args + (["resume", resume_id, prompt] if resume_id else [prompt])
     raise ValueError("Unknown harness.")
 
 
 async def run_external(tools, relay, data, system, prompt):
-    from .agent import skill_context
-
     cfg = data["config"]
     harness = cfg["harness"]
     STATE.mkdir(parents=True, exist_ok=True)
-    instructions = (
-        system
-        + "\n\nAgent instructions:\n"
-        + cfg["instructions"]
-        + "\n\nAttached skills:\n"
-        + skill_context(cfg["skills"])
-        + f"\n\nRepository: {REPO}. Skills: /workspace/skills. Use these absolute paths with native tools."
-        + "\nLiteReview tools start with lr_ (MCP clients may add a server prefix)."
-        + " Submit with lr_finish_review as your last action; a prose answer does not submit the review."
-        + " Use the disposable checkout for tests and reproducers. Delegate when the configured instructions or skills request it; wait for results before submitting. Only the main reviewer calls lr_finish_review."
-    )
+    instructions = system
     bridge = Bridge(tools, relay, cfg)
     await relay.event(f"Starting {HARNESS_LABELS[harness]} {HARNESS_VERSIONS[harness]}")
     async with bridge.serve() as url:

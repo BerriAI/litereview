@@ -2054,7 +2054,7 @@ function App() {
                   </FormSection>
                   <FormSection
                     title="Review instructions"
-                    description="Define what to look for and the evidence you expect in a finding."
+                    description="These instructions define the agent’s task, scope, workflow, and voice. Attached skills support them."
                   >
                     <Field label="Review instructions">
                       <textarea

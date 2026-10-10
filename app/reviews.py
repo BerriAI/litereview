@@ -295,9 +295,11 @@ def render_comment(run, jobs, newer=False):
         visible, notes = [], []
         if incomplete:
             visible += ["**Review incomplete.**", ""]
-            if result.get("summary") and not result.get("limitations"):
-                visible += [md(result["summary"]), ""]
-        elif not result.get("findings"):
+        elif any(check["status"] == "not_run" for check in result.get("checks", [])):
+            visible += ["**Completed · Some checks not run.**", ""]
+        if result.get("summary"):
+            visible += [md(result["summary"]), ""]
+        elif not incomplete and not result.get("findings"):
             visible += ["**No issues found.**", ""]
         for finding in result.get("findings", []):
             location = ""
@@ -313,10 +315,13 @@ def render_comment(run, jobs, newer=False):
                 md(finding["explanation"]),
                 "",
             ]
-        for limit in result.get("limitations", []):
-            visible += [f"- {md(limit)}"]
-        if result.get("summary") and (not incomplete or result.get("limitations")):
-            notes += [md(result["summary"]), ""]
+        if result.get("limitations"):
+            visible += ["**Couldn’t complete**", ""]
+            visible += [f"- {md(limit)}" for limit in result["limitations"]]
+        for check in result.get("checks", []):
+            label = {"passed": "Passed", "failed": "Failed", "not_run": "Not run"}[check["status"]]
+            scope = "required" if check["required"] else "optional"
+            notes += [f"- **{label} · {md(check['name'])}** ({scope}): {md(check['details'])}"]
         if c.get("minimum_review_seconds"):
             notes += [f"Requested minimum: {c['minimum_review_seconds'] // 60} minutes."]
             if result.get("review_seconds") is not None:
@@ -333,7 +338,7 @@ def render_comment(run, jobs, newer=False):
             )
         lines += [section, ""]
         if note_text:
-            lines += ["<details>", "<summary>Review notes</summary>", "", note_text, "", "</details>", ""]
+            lines += ["<details>", "<summary>Checks and execution details</summary>", "", note_text, "", "</details>", ""]
     lines += [
         "---",
         f"[View review]({settings().public_url}/runs/{run.id}) · Reviewed [`{run.head[:12]}`](https://github.com/{run.repo}/commit/{run.head})",

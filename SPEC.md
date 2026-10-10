@@ -87,7 +87,7 @@ V1 supports remote Streamable HTTP MCP servers. Arbitrary local stdio servers, p
 
 An administrator can create a skill by pasting Markdown or uploading a skill folder as a ZIP containing `SKILL.md` and optional supporting files. Safely unpack archives with size limits and reject paths outside the skill directory.
 
-The agent editor has a multi-select list of workspace skills. At run start, materialize only the attached skills in that sandbox. Give the agent their names, descriptions, paths, and `SKILL.md` instructions; supporting files are available through repository/file-reading tools. Skills cannot expand permissions or change the review-only purpose.
+The agent editor has a multi-select list of workspace skills. At run start, materialize only the attached skills in that sandbox. Give the agent their names, descriptions, paths, and `SKILL.md` instructions; supporting files are available through repository/file-reading tools. Saved agent instructions define the task, scope, workflow, language, and voice; attached skills support them and yield when they conflict. Skills cannot expand tool permissions.
 
 No skill marketplace, dependency installer, or separate version-management UI is needed. Runs retain the skill contents they used.
 
@@ -125,7 +125,7 @@ Use a GitHub App installed on selected repositories, with repository contents re
 
 Check installation, repository, and actor permissions on every trigger. Run pages and artifacts require workspace administrator sign-in. Workspace administrators can see all connected repositories; the administrator allowlist must match that access. No team synchronization in v1.
 
-Under Connections → GitHub, each repository can optionally configure setup commands, an app start command, readiness URL, and references to test-only secrets. These are administrator-controlled settings, not executable instructions taken automatically from a PR. They support test, browser, and desktop reviews. A missing environment requirement produces an incomplete review, not a fabricated result.
+Each repository can optionally configure setup commands, an app start command, readiness URL, and references to test-only secrets. These are workspace settings, not executable instructions taken automatically from a PR. They support test, browser, and desktop reviews. Agents attempt relevant dependency setup using documented commands, manifests, and pinned versions before reporting environment blockers. Missing dependencies make a review incomplete only when they block work required by the configured task.
 
 ## 8. Implementation shape
 
@@ -164,13 +164,14 @@ Each job returns:
 ```text
 status: completed | failed | timed_out
 findings: [{ title, severity, explanation, file?, line?, evidence[] }]
-summary: short description of what was reviewed
-limitations: missing access, setup failures, or unfinished checks
+summary: the agent's primary response in its configured voice
+checks: [{ name, status: passed | failed | not_run, required, details }]
+limitations: blockers to completing the configured task
 ```
 
-Only a completed review with an empty findings list and no material coverage failure displays **No issues found**. Preserve useful partial findings from failed or timed-out jobs and label them incomplete.
+Show the agent's response directly. Use **No issues found** only as a fallback for a completed review with no response, findings, or blockers. Optional unrun checks remain visible without making the review incomplete. Required unrun checks become blockers. An executed failing test is evidence, not automatically unfinished work. Preserve useful partial findings from failed or timed-out jobs and label them incomplete.
 
-Post one GitHub summary with a section for each reviewer. Include a group label when called through a group and instance numbers only when multiple instances need distinguishing. Show actionable findings and incomplete coverage directly; collapse successful-review summaries and timing metadata under Review notes. Put the reviewed commit and full-run link in a compact footer. Put detailed logs and screenshots in the authenticated run page. Use deterministic formatting; no judge agent or automatic fusion stage.
+Post one GitHub summary with a section for each reviewer. Include a group label when called through a group and instance numbers only when multiple instances need distinguishing. Show each agent's response, findings, and blockers directly; collapse verification results and timing metadata under Checks and execution details. Put the reviewed commit and full-run link in a compact footer. Put detailed logs and screenshots in the authenticated run page. Preserve the agent's wording and Markdown without a judge agent or automatic rewriting stage.
 
 If the PR advances during a review, label the result with the reviewed SHA and indicate that newer commits exist. Never imply it covers the new head. Users rerun by posting another command.
 

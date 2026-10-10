@@ -30,11 +30,7 @@ try {
         cwd: "/workspace/repo",
         model: cfg.model,
         ...(sessionId ? { resume: sessionId } : {}),
-        systemPrompt: {
-          type: "preset",
-          preset: "claude_code",
-          append: instructions,
-        },
+        systemPrompt: instructions,
         tools: builtin,
         allowedTools: [...builtin, "mcp__litereview__*"],
         disallowedTools: ["AskUserQuestion"],

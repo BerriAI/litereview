@@ -132,9 +132,33 @@
 .review-incomplete > ul > li + li {
   margin-top: 12px;
 }
-.review-notes > .review-markdown,
 .review-evidence > ul {
   margin-top: 16px;
+}
+.review-response {
+  margin-bottom: 24px;
+}
+.review-checks {
+  margin: 18px 0 24px;
+}
+.review-checks > ul {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0;
+}
+.review-checks li + li {
+  margin-top: 16px;
+}
+.review-check-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.review-check-heading > span:last-child {
+  color: var(--muted);
 }
 .job .meta {
   margin: 6px 0 22px;
