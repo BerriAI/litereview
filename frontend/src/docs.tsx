@@ -27,6 +27,32 @@ export function Documentation() {
         </p>
 
         <section>
+          <h2>Before you connect a team</h2>
+          <p>
+            LiteReview is an MIT-licensed beta for one trusted workspace per
+            deployment. Every admitted member can manage shared connections,
+            repositories, permissions, and review history. Reviews require a
+            Modal account, a model provider or gateway, and a publicly reachable
+            HTTPS service. Modal and model usage incur charges; there is no local
+            sandbox backend.
+          </p>
+          <p>
+            Set optional run time and model-call limits in each reviewer’s
+            editor, and configure provider budgets and a deployment concurrency
+            cap for your team. Repository code runs with network access in the
+            sandbox; give it only disposable test credentials. See the{" "}
+            <a href="https://github.com/BerriAI/litereview/blob/main/docs/DEPLOYMENT.md">
+              deployment guide
+            </a>{" "}
+            to host your own workspace and the{" "}
+            <a href="https://github.com/BerriAI/litereview/blob/main/SECURITY.md">
+              security policy
+            </a>{" "}
+            for access and data boundaries.
+          </p>
+        </section>
+
+        <section>
           <h2>Start a review</h2>
           <ol className="docs-steps">
             <li>
@@ -247,6 +273,12 @@ export function Documentation() {
             and capabilities. Skills and MCP selections stay with the agent.
           </p>
           <p>
+            Optional runtimes retain their own licenses. The Claude Agent SDK
+            uses separate Anthropic terms and is not covered by LiteReview’s MIT
+            license. Review the <a href="/THIRD_PARTY_NOTICES.md">third-party notices</a>
+            {" "}when enabling or redistributing a runtime.
+          </p>
+          <p>
             In <a href="/groups">Agent groups</a>, bundle existing agents and
             choose how many instances to run. Groups are optional; you can call
             one agent directly for your first review.
@@ -333,6 +365,16 @@ export function Documentation() {
             agent. Your agent draft is preserved when you navigate away or
             return from OAuth in the same tab. Choose Resume editing to continue
             with the new resources.
+          </p>
+        </section>
+        <section>
+          <h2>License and contributions</h2>
+          <p>
+            <a href="/LICENSE.txt">MIT license</a> ·{" "}
+            <a href="/third-party-licenses.txt">Browser dependency licenses</a> ·{" "}
+            <a href="https://github.com/BerriAI/litereview/blob/main/CONTRIBUTING.md">
+              Contributing
+            </a>
           </p>
         </section>
       </main>

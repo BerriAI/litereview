@@ -1,56 +1,98 @@
-# Deployment
+# Deploy a LiteReview workspace
 
-The private workspace is live at **https://litereview.onrender.com**.
+Deploy one workspace for a trusted team, connect a GitHub repository, and get a review posted on a PR. This guide uses the included Render Blueprint: one Docker service, one PostgreSQL database, and on-demand Modal sandboxes.
 
-- [Render web service](https://dashboard.render.com/web/srv-datfmkk9v7es738hgv90): Docker, Starter, Oregon, one instance. Deploys `main` after CI passes; health check `/health`.
-- Database: `litereview-db`, paid Basic PostgreSQL 16, 256 MB, 5 GB storage, Oregon. The service uses the internal connection string; external access is disabled with an empty IP allowlist.
-- [Environment settings](https://dashboard.render.com/web/srv-datfmkk9v7es738hgv90/env): Modal credentials, the LiteLLM gateway connection, encryption key, and workspace access key are configured. Google SSO is required; the workspace access-key login is disabled. Keep the encryption key and all existing credentials stable between deployments.
-- `ADMIN_USERS` is `moe-berri`. Gateway base URL is `https://gateway.litellm-sandbox.ai/v1`; the replacement key supplied by the owner is configured. Change the existing model connection through the UI after initial bootstrap.
-- No development GitHub token is configured. No demo agents, test runs, or local screenshots were copied to production.
+- [Prepare your accounts](#prepare-your-accounts)
+- [Deploy on Render](#deploy-on-render)
+- [Get your first review](#get-your-first-review)
+- [Operate and update](#operate-and-update)
+- [Troubleshoot](#troubleshoot)
 
-Both paid services stay running when idle; there is no free-tier wake-up delay. This does not imply zero downtime during maintenance or deployments. Sandboxes are created on demand in Modal, with 2 CPU cores and 4 GiB requested per agent. `CONCURRENCY=0` removes the app-level queue cap; a positive value sets an optional workspace-wide limit. Modal quotas and provider rate limits still apply. Runs have no application time or model-call cap unless one is selected in the agent editor’s **Optional limits**. `JOB_TIMEOUT`, `MAX_ROUNDS`, and `MAX_REVIEW_MINUTES` are no longer read. Repository/PR size, uploads, artifacts, activity logs, tool output, and review results have no LiteReview size or count cap. Requests have no application deadline unless a user selected a run or command budget. Modal requires a maximum sandbox lifetime of 24 hours, which is used when no run time is selected; continuing across replacement sandboxes is not implemented.
+Every admitted member can manage shared connections, agents, repository access, and run history. Review code runs on Modal and goes to your selected model provider. Review the [security boundary](../SECURITY.md) before inviting teammates. Render's service and database incur ongoing charges; Modal and models charge for usage. Review time, model-call, and concurrency limits are optional.
 
-## Optional tracing
+## Prepare your accounts
 
-For optional model-call tracing, follow [Optional tracing with Lens](../README.md#optional-tracing-with-lens).
-On Render, add the `LITEREVIEW_TRACE_ENDPOINT` and `LITEREVIEW_TRACE_API_KEY` variables in the web
-service's **Environment** page. Save and redeploy. These values belong to the API service; do not
-add them to Modal or repository test secrets. The Blueprint leaves tracing off unless you configure it.
+You need a Render account, a Modal account with sandbox capacity, a Google Workspace organization, a model provider or compatible gateway, and permission to create/install a GitHub App for your target repositories. The hosted path uses Google Workspace SSO. For a local UI/API trial without SSO, use [local development](../README.md#local-development).
 
+1. **Modal:** create a token for the account/workspace that will run reviews. Follow [Modal's token setup](https://modal.com/docs/reference/cli/token). With uv installed, the command is:
 
-## Google SSO
+   ```sh
+   uvx --from 'modal==1.5.5' modal token new
+   ```
 
-Google sign-in was enabled and verified on October 9, 2026. The shared Internal OAuth client from `moyai-private` now includes `https://litereview.onrender.com/api/auth/google/callback`. LiteReview requires `berri.ai` membership. Every admitted Google member has the same workspace management access; `GOOGLE_ADMIN_EMAILS` is ignored. A real Google login succeeded, unauthenticated workspace APIs returned 401, and the old workspace key was rejected.
+   Complete the browser flow. The CLI stores `token_id` and `token_secret` in `~/.modal.toml`; enter them privately as `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` in Render. Do not commit that file. LiteReview creates its Modal app and sandbox images on demand; there is no separate Modal app deployment.
+2. **Google:** in [Google Auth Platform](https://console.cloud.google.com/auth/overview), select a project owned by your Workspace organization. Configure the app branding and an **Internal** audience, then create an OAuth client with application type **Web application** under **Clients**. Save the client ID and secret for Render. You will add the exact callback URL once Render assigns your deployment URL.
+3. **Model:** obtain an API key from your provider or gateway. Add it through LiteReview's **Models** page after signing in. Codex requires a Responses-compatible endpoint; a direct Anthropic connection uses Claude Code and its [separate terms](../THIRD_PARTY_NOTICES.md#optional-agent-runtimes-and-services). Other harnesses are available in the agent editor. Model discovery alone does not establish compatibility.
+4. **GitHub:** identify the account that owns the repositories. For organization repositories, an organization owner or organization-wide App Manager must create the App; installation can require an owner's approval. A private personal App cannot be installed into an organization. LiteReview's guided setup creates the App after deployment.
 
-Keep `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_DOMAINS=berri.ai`, and `GOOGLE_SSO_REQUIRED=true`. The Google consent screen uses the shared client’s “Moyai Devin” name. A dedicated LiteReview client can improve that branding later; do not rename the shared client in place.
+## Deploy on Render
 
-Teammates sign in with Google and connect their GitHub identity once. People lists Google sign-ins automatically. Linked users can use all reviewers unless a person restriction or repository permission disallows it; a second People allowlist is unnecessary. A 12-hour session expiry requires Google sign-in again and preserves the GitHub link. The start page checks access and shows only permitted, verified reviewer commands.
+1. Fork this repository. In the [Render dashboard](https://dashboard.render.com/), choose **New → Blueprint**, connect your fork, select its deployment branch, and use `render.yaml`. The Blueprint provisions a paid Starter Docker service and Basic Postgres database in Oregon, with one service instance. Grant Render access only to the repository needed for deployment.
+2. Set the requested environment values:
 
-## GitHub setup
+   | Variable | Value |
+   | --- | --- |
+   | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | Token from your Modal workspace |
+   | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Your Google web OAuth client |
+   | `GOOGLE_ALLOWED_DOMAINS` | Comma-separated Workspace domains you control, for example `example.com` |
+   | `GITHUB_ORGANIZATION` | Your GitHub organization slug, or blank to choose the owner during setup |
 
-Render's existing GitHub installation now has access to `BerriAI/litereview`. That allows deployment; review comments need a separate LiteReview GitHub App.
+   The Blueprint sets `GOOGLE_SSO_REQUIRED=true`, generates `SECRET_KEY` and `ADMIN_TOKEN`, and wires `DATABASE_URL` to Postgres. The access key cannot bypass required SSO. Keep the encryption key stable across deploys. Existing Blueprint users must keep their own domain and organization values when syncing this configuration.
+3. Deploy and copy the service's assigned HTTPS URL. LiteReview automatically uses `RENDER_EXTERNAL_URL`. If using a custom domain, configure it in Render and set `PUBLIC_URL` to that HTTPS origin without a path.
+4. In your Google OAuth client's **Authorized redirect URIs**, add exactly `https://YOUR-LITEREVIEW-HOST/api/auth/google/callback`, replacing the origin with your service URL. Keep any redirect URIs used by other applications. Open the same origin in your browser and choose **Sign in with Google**.
+5. Verify the service and sign-in:
 
-The saved App is https://github.com/apps/litereview-72beb5. The October 9, 2026 walkthrough found the App restored and the Google account linked to GitHub as `moe-berri`, with no connected repositories or saved agents. The App belongs to the personal account `moe-berri`; a private App can only be installed on its owning account, so it cannot connect BerriAI repositories. GitHub reports `moe-berri` as an active BerriAI member. An organization owner or organization-wide App Manager must create a BerriAI-owned App, then someone with installation permission must select repositories.
+   ```sh
+   # Replace this with the URL assigned to your service.
+   LITEREVIEW_URL=https://YOUR-LITEREVIEW-HOST
+   curl --fail "$LITEREVIEW_URL/health"
+   ```
 
-An organization owner can finish either way:
+   Expect `{"status":"ok"}`. Sign in with an allowed Workspace account and confirm that an outside account is denied. In a private browser window, workspace data must require sign-in. A healthy API is an intermediate check; the next section verifies an actual review.
 
-1. On plans that offer the organization-wide App Manager role, open **BerriAI → Settings → Organization roles → Role assignments → New role assignment**, select `moe-berri` and **App Manager**, then click **Add new assignment**. This grants creation and management of all BerriAI-owned Apps, not installation permission. The workspace member can retry **Repositories → Connect BerriAI repositories**. See [GitHub’s role assignment steps](https://docs.github.com/en/organizations/managing-peoples-access-to-your-organization-with-roles/using-organization-roles) and [App Manager permissions](https://docs.github.com/en/organizations/managing-peoples-access-to-your-organization-with-roles/permissions-of-predefined-organization-roles). If the role is unavailable, the organization owner can use the same guided flow with authorized LiteReview workspace access. It registers the App, stores credentials encrypted, and opens installation automatically.
-2. Alternatively, register a private App under [BerriAI's App settings](https://github.com/organizations/BerriAI/settings/apps) and provide its credentials through **Settings → GitHub App → App credentials**. Use the following settings:
+Modal workers must reach this public HTTPS origin. Keep one API worker and one service instance. PostgreSQL external access is disabled by the Blueprint's empty IP allowlist. The first review builds a sandbox image and can take several minutes.
 
-| Setting | Value |
+## Get your first review
+
+1. Open **Repositories → Connect GitHub**. Choose the account that owns your repositories. Follow the same-tab GitHub registration and installation flow; LiteReview saves App credentials encrypted. Select one repository you control for the initial review. Return to Repositories to import the installation automatically.
+2. If you cannot create or install the App, use **Copy setup request** for the appropriate organization owner. Wait for approval, then return and use **Check installation** or **GitHub connection options → Sync repositories**. A private personal App cannot stand in for an organization-owned App.
+3. Open **Models → Add connection**, choose your provider or gateway, and enter its API key. For a gateway, use the API base URL supplied by its operator. Save and test the connection.
+4. In Repositories, choose **Configure reviewer**, name it `review`, choose a model, and use **Save and check reviewer**. This executes a sample project in a real Modal sandbox and consumes model/Modal credits. It does not post to GitHub. Resolve any reported compatibility or credential error before proceeding.
+5. Open the reviewer under **PR agents** to set its instructions and optional maximum run time/model-call limits. Set `CONCURRENCY` in the deployment environment if you want a workspace-wide sandbox cap; `0` leaves concurrency to Modal quotas. Configure provider and Modal budgets in those services.
+6. Choose **Start a review**, link your GitHub identity, and copy the permitted command. Post it as a new comment on an open PR in your connected repository:
+
+   ```text
+   @litereview review
+   ```
+
+   An accepted request gets a 👀 reaction. **Runs** shows progress; completion posts a PR comment with the reviewed commit and a link to the full result. An incomplete result lists the work that could not finish. Read the result before accepting findings as correct.
+7. Invite trusted colleagues to your deployment URL. They sign in with Google and link GitHub. **People → Edit access** and each repository's **Review permissions** can restrict who invokes which reviewers; these controls do not remove workspace management access.
+
+For an existing App, see [manual credentials and permissions](../README.md#existing-github-app). For repository-specific build commands, browser checks, skills, and MCP tools, use the in-app **Documentation** page. Add only disposable test credentials to review environments.
+
+## Operate and update
+
+Retain the database, environment settings, and the same `SECRET_KEY`. Losing the database loses configuration and review history. Losing or replacing `SECRET_KEY` prevents decryption of saved connections and invalidates signed sessions. Key rotation with re-encryption is not automated.
+
+- Enable database backups in your hosting provider and verify a restore into a separate, access-restricted deployment using the matching encryption key. Keep `DISPATCHER_ENABLED=false` there while inspecting data so restored queued jobs cannot launch or publish reviews.
+- Monitor database size, service memory, provider spend, and Modal usage. Screenshots, activity logs, uploads, and review results have no automatic retention policy or application size cap. Choose per-agent limits and a concurrency cap to suit your budget.
+- Offboard people explicitly in LiteReview: an expired browser session or suspended Google account does not automatically revoke their linked GitHub review access. See [offboarding](../SECURITY.md#intended-deployment-boundary).
+- Update provider/MCP credentials through their connection settings. Follow your provider's revocation procedure for compromised credentials. Preserve working authorization until a replacement has been tested where possible.
+
+During beta, deploy a reviewed commit from your fork. Before updating, record the current commit and configuration and take a database backup. Wait for active reviews to finish, run CI on the target commit, then use Render's **Manual Deploy → Deploy a specific commit** or merge into the configured auto-deploy branch. The Blueprint deploys after checks pass. Keep one worker/instance and retain existing environment values.
+
+After deployment, check `/health`, sign-in, saved connections/repositories, and a representative review. Startup applies the schema adjustments implemented in `app/db.py`; there is no general downgrade migration framework. If recovery requires an older schema, restore the matching database backup and application commit together in an isolated deployment before routing traffic to it. Rolling back application code alone does not prove database compatibility.
+
+## Troubleshoot
+
+| Symptom | Check and recovery |
 | --- | --- |
-| Homepage | `https://litereview.onrender.com` |
-| User authorization callback | `https://litereview.onrender.com/api/auth/github/callback` |
-| Webhook URL | `https://litereview.onrender.com/api/webhook/github` |
-| Setup URL | `https://litereview.onrender.com/repositories` |
-| Visibility | Only this account (private, BerriAI-owned) |
-| Repository permissions | Contents: read; Metadata: read; Pull requests: write; Issues: write |
-| Events | Issue comment |
+| `redirect_uri_mismatch` | Register the exact browser origin plus `/api/auth/google/callback` in the configured Google client. Check for a stale client ID or hostname. |
+| Google sign-in is unavailable or denied | Check the client ID/secret, Internal audience, `GOOGLE_ALLOWED_DOMAINS`, and the account's Workspace domain. Required but incomplete SSO fails closed. |
+| Request origin does not match | Make `PUBLIC_URL` match the HTTPS origin used in your browser. Restart after changing the environment. |
+| GitHub App exists but no repositories appear | Check the App owner, pending organization approval, and installed repository selection; then sync in Repositories. |
+| Reviewer check fails before execution | Check Modal credentials, account capacity, and whether Modal can reach `PUBLIC_URL` over HTTPS. Retry the saved reviewer check. |
+| Model discovery works but review fails | Check the selected harness's protocol, tool/image support, provider credits, and the failure details under Runs. |
+| Work is incomplete or expensive | Inspect Checks and execution details, narrow instructions/tools, and configure optional limits and upstream budgets. |
 
-For manual registration, generate a webhook secret, client secret, and private key. Enter the App ID, PEM private key, webhook secret, client ID, client secret, and App URL into LiteReview's existing-App form. Share credentials through a private channel; never commit them.
-
-To let `moe-berri` install the App and add repositories without repeated owner approval, an organization owner can enable **Settings → Member privileges → GitHub Apps → Allow repository admins to install GitHub Apps for their repositories**. This policy applies to all repository admins. `moe-berri` already has Admin access on `BerriAI/litereview`; grant Admin only on other repositories they should manage. The App requests no organization or repository-administration permissions. See [GitHub’s installation policy](https://docs.github.com/en/organizations/managing-programmatic-access-to-your-organization/limiting-oauth-app-and-github-app-access-requests-and-installations).
-
-Install the App on **only `BerriAI/litereview`** for the first test. Return to **Repositories**, where the selection syncs automatically. Use **Add repositories** for later selections on the same installation. Configure and check a reviewer, then verify `moe-berri` in **People** and the repository’s **Review permissions**. New imports require approved Google sign-in and linked GitHub; explicit person restrictions and repository permissions are preserved. Then trigger it on the authorized [draft test PR](https://github.com/BerriAI/litereview/pull/1). Do not merge that test PR.
-
-The web app, gateway, and Modal connectivity are verified. Production shows the linked GitHub identity, but the first production review through a BerriAI-owned App still needs verification after installation. Full evidence is in [VALIDATION.md](VALIDATION.md).
+See [validation scope](VALIDATION.md) for the distinction between automated checks and live integration evidence.

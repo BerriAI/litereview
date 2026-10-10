@@ -16,18 +16,16 @@ services:
         generateValue: true
       - key: ADMIN_TOKEN
         generateValue: true
-      - key: ADMIN_USERS
-        sync: false
       - key: GOOGLE_SSO_REQUIRED
-        sync: false
+        value: "true"
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
       - key: GOOGLE_ALLOWED_DOMAINS
-        value: berri.ai
+        sync: false
       - key: GITHUB_ORGANIZATION
-        value: BerriAI
+        sync: false
       - key: MODAL_TOKEN_ID
         sync: false
       - key: MODAL_TOKEN_SECRET

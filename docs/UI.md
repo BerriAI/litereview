@@ -2,14 +2,11 @@
 
 The interface follows the LiteLLM family of products rather than introducing a separate visual identity.
 
-## References
+## Visual identity
 
-- [LiteLLM brand visuals, internal-skills PR #86](https://github.com/BerriAI/litellm-internal-skills/pull/86), read at commit `1fea7d4dc630f011fd9a3282c657ca4c39bd1366`: `SKILL.md`, `references/brand.md`, `references/quality-bar.md`, and `assets/brand.css`.
-- LiteLLM dashboard: shared sidebar and page-header patterns under `ui/litellm-dashboard/src/components/shared/`.
-- [LiteLLM ROI Calculator](https://github.com/BerriAI/litellm-roi-calculator): compact navigation, neutral data tables, and settings sections.
-- LiteLLM Learn: the local gateway-course website source that produces the `BerriAI/litellm-learn` site, including its navigation, content hierarchy, and mobile treatment.
+Use the [LiteLLM dashboard](https://github.com/BerriAI/litellm/tree/main/ui/litellm-dashboard) as a reference for compact navigation, neutral data tables, and settings sections. This guide and the existing frontend components contain the conventions needed to contribute; no private design repository is required.
 
-The train, favicon, and OpenAI/Anthropic/GitHub SVGs in `frontend/public/brand/` are unchanged assets from PR #86. Geist and Geist Mono are served locally through the existing font packages. Generic gateways use a generic network icon; they are not assumed to be LiteLLM gateways.
+Use Geist/Geist Mono typography, ink `#272B37`, restrained violet `#5B3FD1`, neutral surfaces, and thin borders. The train and favicon in `frontend/public/brand/` are LiteLLM project branding. OpenAI/Anthropic/GitHub SVGs identify their integrations. See [branding and licenses](../THIRD_PARTY_NOTICES.md). Geist and Geist Mono are served locally with their license texts included in the production build. Generic gateways use a generic network icon; they are not assumed to be LiteLLM gateways.
 
 ## Layout and behavior
 

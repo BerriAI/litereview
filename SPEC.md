@@ -1,6 +1,6 @@
 # LiteReview v1
 
-Status: implemented v1 · 28 September 2026. See README.md for deployment and docs/VALIDATION.md for tested behavior and remaining external setup.
+Status: beta · 10 October 2026. This document records product behavior and design constraints. See [README.md](README.md) for setup and [validation](docs/VALIDATION.md) for the scope of test evidence.
 
 ## 1. What we are building
 
@@ -24,10 +24,10 @@ GitHub commands accept **agents and groups** together. Their command names share
 
 ## 3. The user flow
 
-1. An administrator connects GitHub, selects repositories, and adds a model connection.
+1. A workspace member connects GitHub, selects repositories, and adds a model connection.
 2. They optionally add reusable MCP connections and skills.
 3. They create PR agents, choosing a harness, model, instructions, capabilities, and attachments for each.
-4. They optionally create groups by selecting existing agents and instance counts, then use Access to configure people and repository grants.
+4. They optionally create groups by selecting existing agents and instance counts, then use People and each repository's Review permissions to configure invocation grants.
 5. An allowed user comments on a PR:
 
    ```text
@@ -40,18 +40,18 @@ If `frontend` and `pentest` are individual agents and `security` contains five i
 
 Names are case-insensitive. Ignore repeated agent or group names within one command. A directly selected agent runs one instance; if it is also included through a group, both selections run independently. Expand different groups independently: an agent referenced in two selected groups runs once for each membership, including its configured instance count. Label results with the group, agent, and instance so this is visible.
 
-V1 accepts a command at the start of a new top-level PR comment. Unknown names or denied access reject the whole invocation with a short explanation. Only authorized callers receive configuration details. Ignore bot comments and ordinary issue comments. Edited comments and automatic reviews on pushes are outside v1.
+V1 accepts a command as the entire content of a new top-level PR comment. Unknown names or denied access reject the whole invocation with a short explanation. Only authorized callers receive configuration details. Ignore bot comments and ordinary issue comments. Edited comments and automatic reviews on pushes are outside v1.
 
 ## 4. Agent capabilities
 
 **Every agent instance runs in a Modal sandbox. There is no “code only versus sandbox” selector.** Models run at the selected provider or gateway; Modal runs the selected harness and its tools. Built-in, Pi, OpenCode V1/V2, Codex, Claude Code, and Deep Agents are available; only the selected package/process is installed and launched in that job. The model endpoint must support the harness protocol.
 
-The agent editor exposes these built-in capabilities as independent choices:
+Repository and terminal access are included for every reviewer. The agent editor offers browser and computer use as additional capabilities:
 
 | Capability | Behavior |
 | --- | --- |
 | **Repository — always included** | Read the PR diff, list/read files, and search the checked-out repository |
-| **Terminal** | Run commands, install dependencies, execute tests, and start the app inside the sandbox |
+| **Terminal — always included** | Run commands, install dependencies, execute tests, and start the app inside the sandbox |
 | **Browser** | Use Playwright to navigate, inspect page structure, click, fill forms, and see screenshots of the rendered page |
 | **Computer use** | See the virtual desktop through screenshots and operate it through mouse clicks, dragging, typing, keyboard shortcuts, and scrolling |
 
@@ -63,7 +63,7 @@ Computer use starts with a desktop screenshot and follows a see → act → see 
 
 When Browser and Computer use are both enabled, they operate the same Chromium session. Both require a model that accepts images and tool calls. Validate this before a review starts and report an actionable configuration error if it is unsupported. Do not silently substitute a text-only model. Pass screenshots through the provider/gateway image-input format and retain useful screenshots as review evidence. Continuous video or a live desktop viewer is not required in v1.
 
-A reviewer with only repository tools can inspect code without installing or running the project. Adding skills does not grant tools. Enforce tool access in the runner, including the tools exposed by each MCP connection.
+A reviewer can inspect code without running the project, but terminal access remains available. Adding skills does not grant extra tools. Enforce configured browser, computer, and MCP tool access in the runner.
 
 The agent’s job is to review. It can create temporary test files and build artifacts inside its disposable sandbox when execution is enabled. It does not commit, push, open fix PRs, or modify the source PR. GitHub publishing credentials stay outside the agent sandbox.
 
@@ -85,7 +85,7 @@ V1 supports remote Streamable HTTP MCP servers. Arbitrary local stdio servers, p
 
 ### Skills
 
-An administrator can create a skill by pasting Markdown or uploading a skill folder as a ZIP containing `SKILL.md` and optional supporting files. Unpack archives without application size or file-count caps; reject paths outside the skill directory.
+A workspace member can create a skill by pasting Markdown or uploading a skill folder as a ZIP containing `SKILL.md` and optional supporting files. Unpack archives without application size or file-count caps; reject paths outside the skill directory.
 
 The agent editor has a multi-select list of workspace skills. At run start, materialize only the attached skills in that sandbox. Give the agent their names, descriptions, paths, and `SKILL.md` instructions; supporting files are available through repository/file-reading tools. Saved agent instructions define the task, scope, workflow, language, and voice; attached skills support them and yield when they conflict. Skills cannot expand tool permissions.
 
@@ -93,37 +93,40 @@ No skill marketplace, dependency installer, or separate version-management UI is
 
 ## 6. Web app and UI standard
 
-Use the shared patterns from the [LiteLLM dashboard](https://github.com/BerriAI/litellm/tree/main/ui/litellm-dashboard), [LiteLLM Learn](https://github.com/BerriAI/litellm-learn), and [LiteLLM ROI Calculator](https://github.com/BerriAI/litellm-roi-calculator), plus the brand guidance in [internal-skills PR #86](https://github.com/BerriAI/litellm-internal-skills/pull/86).
+Use the shared patterns from the [LiteLLM dashboard](https://github.com/BerriAI/litellm/tree/main/ui/litellm-dashboard) and the self-contained [UI guide](docs/UI.md).
 
 - Compact left sidebar, clear page titles, simple tables, and ordinary labeled forms.
 - Reuse the LiteLLM dashboard’s shared component patterns and primitives; no new component system.
-- Apply PR #86’s Geist/Geist Mono typography, ink `#272B37`, restrained violet `#5B3FD1`, neutral surfaces, and thin borders. Follow system appearance with corresponding dark tokens.
+- Use Geist/Geist Mono typography, ink `#272B37`, restrained violet `#5B3FD1`, neutral surfaces, and thin borders. The current interface is light-only.
 - No overview dashboard, command composer, oversized metric cards, or diagram editor.
 
-The five navigation areas are:
+The workspace navigation is:
 
 | Page | Main interaction |
 | --- | --- |
 | **PR agents** | List saved agents; create/edit command name, instructions, model, capabilities, MCPs, and skills; show which groups use an agent |
 | **Agent groups** | Create/edit a group; choose existing agents and instance counts; show its GitHub command |
-| **Connections** | Manage GitHub/repositories, model connections, and MCP connections in three tabs |
+| **Models** | Manage shared model-provider and gateway connections |
+| **MCP servers** | Connect remote tools with OAuth, bearer tokens, or no authentication |
 | **Skills** | Create, upload, inspect, and edit reusable skills; show which agents use them |
-| **Access** | Manage people and repository grants centrally; all targets or selected agents/groups |
+| **Repositories** | Connect GitHub, configure review environments, and manage repository Review permissions |
+| **People** | Inspect linked identities and restrict review invocation |
+| **Settings** | Recover GitHub credentials or reset/undo setup |
 | **Runs** | List PR reviews; open per-agent status, findings, logs, and screenshots |
 
-The home page is **PR agents**. Selecting an agent opens its editor. Selecting a group opens its member list and settings. Group membership controls selection and count; editing a shared agent clearly states which groups will be affected.
+Linked members open **PR agents**; unlinked Google members start with GitHub linking and can still open the workspace. Selecting an agent opens its editor. Selecting a group opens its member list and settings. Group membership controls selection and count; editing a shared agent clearly states which groups will be affected.
 
 Creation and editing must save real configuration, show validation errors, and support cancellation. Empty states lead directly to the next useful action. GitHub remains the place where users trigger reviews.
 
-Initial setup is one workspace per deployment. Administrators sign in with GitHub and manage that workspace. A deployment owner access key supports initial setup and recovery; GitHub sign-in uses a deployment-configured administrator allowlist; no invitations, SSO, billing, or organization-management UI in v1.
+Initial setup is one trusted workspace per deployment. Hosted teams sign in with Google Workspace SSO, then link GitHub for review invocation. Every admitted member has the same management access. Local development can use an access key and a legacy GitHub sign-in allowlist when SSO is disabled. An access key cannot bypass required SSO. There is no separate administrator role, tenant isolation, billing, or organization-management UI.
 
 ## 7. Repository and caller setup
 
 Use a GitHub App installed on selected repositories, with repository contents read, metadata read, pull requests write, and issues write permissions. A private GitHub App must be owned by the account or organization where it is installed; organization-owner involvement may be required for setup. Subscribe to issue-comment events. The API uses installation credentials for PR inspection and comment publishing; workers receive repository data without those credentials. Verify the exact comment and collaborator-access endpoints against these permissions during the first integration step.
 
-**Access** has People and Repositories views. Add GitHub usernames and grant each person and connected repository either All agents/groups (including future additions) or a set of specific target IDs. Both grants must permit every requested name. GitHub repository access is verified independently; being a repository collaborator alone does not grant LiteReview access. Newly connected repositories start with All access. Workspace administrators are seeded into People on first setup only; subsequent revocations are not recreated. Editing web-app administration remains separate from review-trigger access.
+With SSO, **People** derives membership from approved Google sign-ins and verified GitHub links. Members can invoke all reviewers unless a person restriction or repository permission disallows it. Local access-key mode uses a manual People allowlist. Each connected repository's **Review permissions** allows all agents/groups or selected targets. Both the person and repository grants must permit every requested name. GitHub repository access is checked independently. Newly connected repositories start with All access; explicit restrictions survive syncing and relinking. Review-trigger restrictions do not remove workspace management access.
 
-Check installation, repository, and actor permissions on every trigger. Run pages and artifacts require workspace administrator sign-in. Workspace administrators can see all connected repositories; the administrator allowlist must match that access. No team synchronization in v1.
+Check installation, repository, and actor permissions on every trigger. Run pages and artifacts require workspace sign-in, and all admitted members can see them. A linked GitHub identity can request reviews after the browser session expires. Google account suspension does not automatically revoke that link; offboarding must explicitly restrict the person or unlink GitHub. No Google Directory synchronization is implemented.
 
 Each repository can optionally configure setup commands, an app start command, readiness URL, and references to test-only secrets. These are workspace settings, not executable instructions taken automatically from a PR. They support test, browser, and desktop reviews. Agents attempt relevant dependency setup using documented commands, manifests, and pinned versions before reporting environment blockers. Missing dependencies make a review incomplete only when they block work required by the configured task.
 
@@ -190,7 +193,7 @@ The build is ready to try when all of these work against a real test repository:
 7. Reject an unauthorized caller, handle a duplicated webhook once, and clean up sandboxes after completion and timeout.
 8. Verify the create/edit/reuse flows and run results on desktop and narrow screens using the specified UI standard.
 
-No auto-fixes, pushes, scheduled reviews, persistent chat sessions, agent-to-agent planning, custom runtime selection, TOML import/export, or enterprise administration in this version.
+No auto-fixes, pushes, scheduled reviews, persistent chat sessions, custom runtime packages beyond the listed harnesses, TOML import/export, or enterprise administration in this version. Native subagents are available in harnesses that support them; the main reviewer submits the combined result.
 
 ## 11. Build order
 
