@@ -617,7 +617,7 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
         <LockKeyhole size={14} />
         <span>
           {p.ssoRequired
-            ? "Public and private repositories are supported. People with current Google sign-in and linked GitHub can use their permitted reviewers."
+            ? "Public and private repositories are supported. Sign in with Google and link GitHub once to request reviews with your permitted reviewers."
             : "Public and private repositories are supported. New selections allow approved People to use their permitted reviewers."}{" "}
           <button className="text-button" onClick={p.onPeople}>
             Manage people

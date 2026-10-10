@@ -55,7 +55,7 @@ def bind_linked_person(db, identity):
 
 def people(db, grants):
     """Derive membership from verified sign-ins; grants are optional overrides."""
-    from .sso import eligible
+    from .sso import approved_identity
 
     rows, used = [], set()
     for identity in db.scalars(select(SSOIdentity).order_by(SSOIdentity.email)):
@@ -76,7 +76,7 @@ def people(db, grants):
                 "inherited": override is None,
                 "sso": True,
                 "status": "sign_in_required"
-                if not eligible(identity)
+                if not approved_identity(identity)
                 else "ready"
                 if login
                 else "github_required",

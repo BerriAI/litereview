@@ -59,15 +59,20 @@ def configured():
     return bool(s.google_client_id and s.google_client_secret and s.google_domains)
 
 
-def eligible(identity):
+def approved_identity(identity):
+    """A verified workspace identity remains approved after its browser session ends."""
     s = settings()
     return bool(
         identity
-        and identity.expires_at > time.time()
         and identity.audience == s.google_client_id
         and identity.domain in s.google_domains
         and identity.email.rpartition("@")[2] == identity.domain
     )
+
+
+def eligible(identity):
+    """Interactive workspace access requires a current browser session."""
+    return bool(approved_identity(identity) and identity.expires_at > time.time())
 
 
 def current_user(request):
@@ -100,7 +105,7 @@ def caller_identity(user):
     # Both stable ID and login must match: a renamed/recycled GitHub login must relink.
     return (
         identity
-        if eligible(identity) and identity.github_login.lower() == user.get("login", "").lower()
+        if approved_identity(identity) and identity.github_login.lower() == user.get("login", "").lower()
         else None
     )
 

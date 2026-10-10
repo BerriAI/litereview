@@ -168,9 +168,11 @@ export function Documentation() {
               <p>
                 New repositories allow all reviewers; narrow access under
                 Repositories → repository options → Review permissions. Callers
-                still need current Google authorization and GitHub access to the
-                repository, including public repositories. Without SSO, add
-                approved GitHub usernames in People manually.
+                need a GitHub account linked after Google sign-in and GitHub
+                access to the repository, including public repositories. The
+                account link keeps working after signing out or browser session
+                expiry. Without SSO, add approved GitHub usernames in People
+                manually.
               </p>
             </li>
             <li>
@@ -198,7 +200,8 @@ export function Documentation() {
             GitHub. If approval is pending, use Check installation after an
             owner approves it. A failed check keeps your settings and offers a
             retry. An expired LiteReview session asks you to sign in again and
-            returns you to the page you were using.
+            returns you to the page you were using. It does not interrupt review
+            requests from your linked GitHub account.
           </p>
           <p>
             To start GitHub setup over, open Settings → GitHub App → Reset
