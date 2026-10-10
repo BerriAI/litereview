@@ -140,7 +140,7 @@ With Google SSO enabled, GitHub OAuth links a caller’s account after Google si
 
 ### Optional tracing with Lens
 
-LiteReview can send model-call traces to [Lens](https://github.com/BerriAI/lens) or an OTLP/HTTP collector.
+LiteReview can send review traces to [Lens](https://github.com/BerriAI/lens) or an OTLP/HTTP collector.
 Tracing is off by default. You can run LiteReview without Lens or any Berri-hosted service.
 
 1. Deploy Lens and sign in. Open **Tracing key** and generate a key for LiteReview.
@@ -155,16 +155,22 @@ Tracing is off by default. You can run LiteReview without Lens or any Berri-host
    Use the full OTLP/HTTP endpoint, including `/v1/traces`. The API server must be able to reach it.
    Use a tracing key, not the Lens admin token. For a collector without authentication, leave the key empty.
 3. Run a review or use **Test agent** in the agent editor. In Lens, open **Traces** for that reviewer.
-   Each model call appears as a trace. Calls from the same review job share `session.id`.
+   Each agent's review appears as one run. Open it and select **Thread** to read its messages,
+   tool calls, tool results, and final review when content capture is enabled. **Steps** shows
+   the individual model calls under the review. Agents in a group have separate runs.
 
 Traces include the reviewer, harness, model, job and run IDs, duration, status, and token counts when the
-provider supplies them. To also capture prompt and response text, set `LITEREVIEW_TRACE_CONTENT=true`.
-This can send private source code and text from a review to your collector. Full prompt and response text is exported. Images, tool arguments, request headers, and stored credentials are
-not captured. Content capture does not redact secrets that appear inside prompt or response text.
+provider supplies them. To capture the conversation, set `LITEREVIEW_TRACE_CONTENT=true`.
+This exports full prompts, responses, tool arguments, tool results sent back to the model, and the
+submitted review. It can include private source code and command output. Images, encrypted reasoning,
+request headers, and stored credentials are not captured. Secrets inside conversation text or tool
+arguments and results are not redacted.
 
 All supported harnesses export through the API. The collector key never enters a Modal sandbox.
 Exports run in the background without a queue-size cap. Failed exports are logged; reviews continue.
-An API restart can lose pending traces.
+An API restart can lose pending exports; later calls still join the same review. The parent span and
+final review appear when the run finishes. Unfinished required checks mark the review incomplete.
+Previously recorded traces keep their original structure; content omitted from old exports cannot be recovered.
 
 If traces do not appear, check the endpoint and tracing key, then check the API logs for export errors.
 Keep `/v1/traces` in the endpoint. To turn tracing off, clear `LITEREVIEW_TRACE_ENDPOINT` and redeploy.

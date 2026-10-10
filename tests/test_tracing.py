@@ -15,20 +15,23 @@ from opentelemetry.trace import StatusCode
 
 from app import harnesses, providers, tracing
 from app.settings import Settings, settings
+from app.trace_messages import message_attributes, messages
 
 
 @pytest.fixture
 def captured(client, monkeypatch):
     exporter = InMemorySpanExporter()
     provider = TracerProvider(resource=Resource({'service.name': 'litereview'}), shutdown_on_exit=False)
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    processor = SimpleSpanProcessor(exporter)
+    provider.add_span_processor(processor)
     monkeypatch.setattr(tracing, '_provider', provider)
+    monkeypatch.setattr(tracing, '_processor', processor)
     return exporter
 
 
 def job():
     return SimpleNamespace(id='job-1', run_id='run-1', config={
-        'name': 'Reviewer', 'model': 'model', 'harness': 'codex',
+        'name': 'Reviewer', 'model': 'model', 'harness': 'codex', 'target_kind': 'agent',
         'connection': {'type': 'gateway', 'api_key': 'must-not-export'},
     })
 
@@ -47,16 +50,27 @@ def test_disabled_by_default(monkeypatch):
     exporter.assert_not_called()
 
 
-def test_metadata_only_and_session_grouping(captured):
-    for _ in range(2):
+def test_one_review_thread_for_19_calls_and_parent(captured):
+    review = job()
+    for _ in range(19):
         span = tracing.ModelTrace(job(), {'messages': [{'content': 'private input'}]})
         span.result({'choices': [{'message': {'content': 'private output'}}],
                      'usage': {'prompt_tokens': 10, 'completion_tokens': 4}})
         span.end()
-    spans = captured.get_finished_spans()
-    assert len(spans) == 2
-    assert spans[0].context.trace_id != spans[1].context.trace_id
+    review.started_at, review.finished_at = 100.5, 200.5
+    review.status, review.model_calls, review.result = 'completed', 19, {'summary': 'private result'}
+    tracing.finish_job(review, SimpleNamespace(id='run-1', status='completed', repo='org/repo', pr=1, head='abc', created_at=90))
+    *spans, root = captured.get_finished_spans()
+    assert len(spans) == 19
+    assert len({span.context.span_id for span in spans}) == 19
+    assert root.parent is None
+    assert root.attributes['openinference.span.kind'] == 'AGENT'
+    assert root.start_time == 100_500_000_000
+    assert root.end_time == 200_500_000_000
+    assert 'private' not in str(dict(root.attributes))
     for span in spans:
+        assert span.context.trace_id == root.context.trace_id
+        assert span.parent.span_id == root.context.span_id
         assert span.attributes['session.id'] == 'job-1'
         assert span.attributes['gen_ai.agent.name'] == 'Reviewer'
         # Lens uses OpenInference model metadata when span.kind selects that format.
@@ -84,7 +98,7 @@ def test_fragmented_stream_content_is_opt_in(captured, monkeypatch, protocol, ev
         span.feed(bytes([char]), sse=True)
     span.end()
     attrs = dict(captured.get_finished_spans()[0].attributes)
-    assert attrs['output.value'] == 'answer'
+    assert attrs['llm.output_messages.0.message.content'] == 'answer'
     assert 'review' in attrs['input.value']
     assert 'private-image' not in str(attrs)
     assert 'private-key' not in str(attrs)
@@ -104,7 +118,7 @@ def test_full_trace_content_and_bad_events_do_not_break_stream(captured, monkeyp
     spans = captured.get_finished_spans()
     assert len(spans) == 1
     assert 'x' * 100_000 in spans[0].attributes['input.value']
-    assert spans[0].attributes['output.value'] == 'y' * 20_000
+    assert spans[0].attributes['llm.output_messages.0.message.content'] == 'y' * 20_000
     assert spans[0].status.status_code == StatusCode.ERROR
 
 
@@ -228,3 +242,175 @@ def test_export_failure_cannot_fail_model_request(client, monkeypatch):
         assert response.status_code == 200
         assert response.json() == {'content': 'ok'}
         assert failed.wait(3)
+
+
+def test_job_context_survives_restart_and_separates_agents(captured, monkeypatch):
+    first = tracing.ModelTrace(job(), {})
+    first.end()
+    provider = TracerProvider(shutdown_on_exit=False)
+    provider.add_span_processor(SimpleSpanProcessor(captured))
+    monkeypatch.setattr(tracing, '_provider', provider)
+    second = tracing.ModelTrace(job(), {})
+    second.end()
+    other = job()
+    other.id = 'job-2'
+    third = tracing.ModelTrace(other, {})
+    third.end()
+    a, b, c = captured.get_finished_spans()
+    assert a.context.trace_id == b.context.trace_id
+    assert a.parent.span_id == b.parent.span_id
+    assert c.context.trace_id != b.context.trace_id
+
+
+@pytest.mark.parametrize('status,limitations', [('completed', []), ('completed', ['Required check failed']),
+                                               ('failed', []), ('timed_out', [])])
+def test_review_root_contains_final_result_and_actual_status(captured, monkeypatch, status, limitations):
+    monkeypatch.setattr(settings(), 'litereview_trace_content', True)
+    review = job()
+    review.started_at, review.finished_at, review.model_calls = 100, 220, 3
+    review.status = status
+    review.config['instructions'] = 'Review this code'
+    review.result = {'summary': 'Verified the regression', 'findings': [{'title': 'The bug', 'severity': 'high', 'explanation': 'Verified failure'}],
+                     'limitations': limitations}
+    tracing.finish_job(review, SimpleNamespace(id='run-1', status='completed', repo='org/repo', pr=1, head='abc', created_at=90))
+    root, = captured.get_finished_spans()
+    assert root.status.status_code == (StatusCode.OK if status == 'completed' and not limitations else StatusCode.ERROR)
+    assert 'Review this code' in root.attributes['input.value']
+    assert 'Verified the regression' in root.attributes['llm.output_messages.0.message.content']
+    assert '**High · The bug**' in root.attributes['llm.output_messages.0.message.content']
+    assert json.loads(root.attributes['litereview.result']) == review.result
+
+
+def test_responses_tool_only_stream_and_tool_result_input(captured, monkeypatch):
+    monkeypatch.setattr(settings(), 'litereview_trace_content', True)
+    call = {'type': 'function_call', 'id': 'item1', 'call_id': 'call1', 'name': 'shell', 'arguments': ''}
+    trace = tracing.ModelTrace(job(), {'input': 'Run tests'})
+    events = [
+        {'type': 'response.output_item.added', 'output_index': 0, 'item': call},
+        {'type': 'response.function_call_arguments.delta', 'output_index': 0, 'delta': '{"cmd":'},
+        {'type': 'response.function_call_arguments.delta', 'output_index': 0, 'delta': '"pytest"}'},
+        {'type': 'response.output_item.done', 'output_index': 0,
+         'item': {**call, 'arguments': '{"cmd":"pytest"}'}},
+        {'type': 'response.completed', 'response': {'id': 'resp1', 'output': [{**call, 'arguments': '{"cmd":"pytest"}'}]}},
+    ]
+    for event in events:
+        wire = ('data: ' + json.dumps(event) + '\n\n').encode()
+        for byte in wire:
+            trace.feed(bytes([byte]), sse=True)
+    trace.end()
+    attrs = captured.get_finished_spans()[0].attributes
+    assert json.loads(attrs['output.value'])['id'] == 'resp1'
+    assert attrs['llm.output_messages.0.message.tool_calls.0.tool_call.function.name'] == 'shell'
+    assert attrs['llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments'] == '{"cmd":"pytest"}'
+    assert len(json.loads(attrs['output.value'])['messages']) == 1
+    followup = tracing.ModelTrace(job(), {'input': [
+        {**call, 'arguments': '{"cmd":"pytest"}'},
+        {'type': 'function_call_output', 'call_id': 'call1', 'output': '2 tests passed'},
+    ]})
+    followup.result({'output': [{'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Done'}]}]})
+    followup.end()
+    attrs = captured.get_finished_spans()[1].attributes
+    assert attrs['llm.input_messages.1.message.role'] == 'tool'
+    assert attrs['llm.input_messages.1.message.name'] == 'shell'
+    assert attrs['llm.input_messages.1.message.content'] == '2 tests passed'
+    assert attrs['llm.output_messages.0.message.content'] == 'Done'
+
+
+def test_chat_parallel_tool_deltas_and_builtin_double_observation(captured, monkeypatch):
+    monkeypatch.setattr(settings(), 'litereview_trace_content', True)
+    trace = tracing.ModelTrace(job(), {})
+    for calls in [
+        [{'index': 0, 'id': 'c1', 'function': {'name': 'shell', 'arguments': '{"cmd":'}},
+         {'index': 1, 'id': 'c2', 'function': {'name': 'read', 'arguments': '{"path":'}}],
+        [{'index': 1, 'function': {'arguments': '"README"}'}},
+         {'index': 0, 'function': {'arguments': '"pwd"}'}}],
+    ]:
+        trace.result({'choices': [{'index': 0, 'delta': {'tool_calls': calls}}]})
+    trace.end()
+    attrs = captured.get_finished_spans()[0].attributes
+    assert attrs['llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments'] == '{"cmd":"pwd"}'
+    assert attrs['llm.output_messages.0.message.tool_calls.1.tool_call.function.arguments'] == '{"path":"README"}'
+    trace = tracing.ModelTrace(job(), {})
+    result = {'role': 'assistant', 'content': None, 'tool_calls': [
+        {'id': 'c3', 'function': {'name': 'finish_review', 'arguments': '{"summary":"Done"}'}}]}
+    trace.result({'id': 'chat1', 'choices': [{'message': result}]})
+    trace.result(result)
+    trace.end()
+    output = json.loads(captured.get_finished_spans()[1].attributes['output.value'])
+    assert output['id'] == 'chat1'
+    assert len(output['messages'][0]['tool_calls']) == 1
+
+
+def test_anthropic_tool_arguments_and_results(captured, monkeypatch):
+    monkeypatch.setattr(settings(), 'litereview_trace_content', True)
+    trace = tracing.ModelTrace(job(), {'messages': [
+        {'role': 'assistant', 'content': [{'type': 'tool_use', 'id': 'a1', 'name': 'Bash', 'input': {'command': 'pwd'}}]},
+        {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'a1', 'content': [
+            {'type': 'text', 'text': '/workspace/repo'}, {'type': 'image', 'source': {'data': 'private-image'}},
+        ]}]},
+    ]})
+    trace.result({'type': 'message_start', 'message': {'id': 'msg1', 'usage': {'input_tokens': 10}}})
+    trace.result({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'tool_use', 'id': 'a2', 'name': 'Bash', 'input': {}}})
+    for delta in ['{"command":', '"pytest"}']:
+        trace.result({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'input_json_delta', 'partial_json': delta}})
+    trace.result({'type': 'message_delta', 'delta': {'stop_reason': 'tool_use'}, 'usage': {'output_tokens': 12}})
+    trace.end()
+    attrs = captured.get_finished_spans()[0].attributes
+    assert attrs['llm.input_messages.1.message.role'] == 'tool'
+    assert attrs['llm.input_messages.1.message.content'] == '/workspace/repo'
+    assert attrs['llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments'] == '{"command":"pytest"}'
+    assert attrs['gen_ai.usage.input_tokens'] == 10
+    assert attrs['gen_ai.usage.output_tokens'] == 12
+    assert 'private-image' not in str(dict(attrs))
+
+
+def test_custom_tools_and_encrypted_reasoning():
+    conversation = messages([
+        {'type': 'custom_tool_call', 'call_id': 'c1', 'name': 'apply_patch', 'input': '*** patch'},
+        {'type': 'custom_tool_call_output', 'call_id': 'c1', 'output': 'Done'},
+        {'type': 'reasoning', 'summary': [{'type': 'summary_text', 'text': 'Checking tests'}], 'encrypted_content': 'private-ciphertext'},
+    ])
+    attrs = message_attributes('input', conversation)
+    assert attrs['llm.input_messages.0.message.tool_calls.0.tool_call.function.arguments'] == '*** patch'
+    assert attrs['llm.input_messages.1.message.content'] == 'Done'
+    assert 'private-ciphertext' not in str(attrs)
+
+
+@pytest.mark.asyncio
+async def test_private_check_publication_exports_root_once(client, captured, monkeypatch):
+    from test_harnesses import seed_job
+
+    from app import reviews
+    from app.db import Job, Run, Session
+
+    seed_job()
+    with Session() as db:
+        review = db.get(Job, 'test-job')
+        review.status, review.finished_at = 'failed', 220
+        review.config = {**review.config, 'name': 'Check', 'target_kind': 'agent'}
+        review.result = {'summary': 'Sandbox failed', 'limitations': ['Missing dependency']}
+        run = db.get(Run, review.run_id)
+        run.snapshot = {'harness_check': True}
+        run_id = run.id
+        db.commit()
+    github = AsyncMock()
+    monkeypatch.setattr(reviews.github, 'repo_request', github)
+    await reviews.publish(run_id)
+    await reviews.publish(run_id)
+    assert len(captured.get_finished_spans()) == 1
+    github.assert_not_called()
+
+
+@pytest.mark.parametrize('response', [
+    {'choices': [{'message': {'role': 'assistant', 'content': 'Done', 'tool_calls': None}}]},
+    {'role': 'assistant', 'content': [{'type': 'text', 'text': 'Done'}]},
+    {'output': [{'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Done'}]}]},
+])
+def test_nonstreaming_content_with_nullable_fields(captured, monkeypatch, response):
+    monkeypatch.setattr(settings(), 'litereview_trace_content', True)
+    trace = tracing.ModelTrace(job(), {'messages': [{'role': 'user', 'content': 'Review', 'tool_calls': None}]})
+    trace.feed(json.dumps(response).encode())
+    trace.end()
+    attrs = captured.get_finished_spans()[0].attributes
+    assert attrs['llm.input_messages.0.message.content'] == 'Review'
+    assert attrs['llm.output_messages.0.message.content'] == 'Done'

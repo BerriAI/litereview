@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from runner.catalog import HARNESS_VERSIONS, review_capabilities
 
-from . import github
+from . import github, tracing
 from .access import caller_grant, caller_permits, permits
 from .db import Job, Resource, Run, Session, uid
 from .limits import job_timeout, timing_limits
@@ -351,6 +351,9 @@ async def publish(run_id):
         done = all(j.status in TERMINAL for j in jobs)
         if run.published == 2 or (run.published == 1 and not done):
             return
+        if done:
+            for job in jobs:
+                tracing.finish_job(job, run)
         if run.snapshot.get("harness_check"):
             run.status = (
                 "completed"

@@ -1,5 +1,6 @@
 """Optional OTLP export. Collector credentials stay in the API process."""
 
+import hashlib
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -8,14 +9,26 @@ from urllib.parse import urlsplit
 import httpx
 from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import SpanLimits, SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, SpanLimits, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
-from opentelemetry.trace import INVALID_SPAN, SpanKind, StatusCode
+from opentelemetry.sdk.util.instrumentation import InstrumentationScope
+from opentelemetry.trace import (
+    INVALID_SPAN,
+    NonRecordingSpan,
+    SpanContext,
+    SpanKind,
+    Status,
+    StatusCode,
+    TraceFlags,
+    set_span_in_context,
+)
 
 from .settings import settings
+from .trace_messages import ResponseMessages, message_attributes, messages, request_messages
 
 logger = logging.getLogger(__name__)
 _provider = None
+_processor = None
 
 
 class TraceProcessor(SpanProcessor):
@@ -52,7 +65,7 @@ class TraceProcessor(SpanProcessor):
 
 
 def start():
-    global _provider
+    global _provider, _processor
     config = settings()
     if not config.litereview_trace_endpoint:
         return
@@ -74,11 +87,13 @@ def start():
             ),
             shutdown_on_exit=False,
         )
-        provider.add_span_processor(TraceProcessor(
+        processor = TraceProcessor(
             config.litereview_trace_endpoint,
             {"Authorization": "Bearer " + config.litereview_trace_api_key}
             if config.litereview_trace_api_key else {},
-        ))
+        )
+        provider.add_span_processor(processor)
+        _processor = processor
         _provider = provider
     except Exception:
         # Configuration failures must not prevent reviews or disclose credentials.
@@ -86,33 +101,81 @@ def start():
 
 
 def shutdown():
-    global _provider
+    global _provider, _processor
     provider, _provider = _provider, None
+    _processor = None
     if provider:
         provider.shutdown()
 
 
-def text_content(value):
-    """Only explicit text fields; never images, headers, tools, or arbitrary objects."""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        return "\n".join(text_content(item) for item in value)
-    if isinstance(value, dict):
-        for key in ("text", "content"):
-            if key in value:
-                return text_content(value[key])
-    return ""
+def job_context(job):
+    # Stable across API restarts and publication retries. Never derive IDs from tokens.
+    identity = hashlib.sha256(("litereview.review.v1:" + job.id).encode()).digest()
+    return SpanContext(
+        trace_id=int.from_bytes(identity[:16], "big") or 1,
+        span_id=int.from_bytes(identity[16:24], "big") or 1,
+        is_remote=False, trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    )
+
+
+def job_attributes(job):
+    cfg = job.config
+    return {
+        "agent.name": cfg.get("name", "LiteReview"),
+        "gen_ai.agent.name": cfg.get("name", "LiteReview"),
+        "session.id": job.id,
+        "litereview.run_id": job.run_id,
+        "litereview.job_id": job.id,
+        "litereview.harness": cfg.get("harness", "builtin"),
+    }
+
+
+def finish_job(job, run):
+    """Export the review parent from durable state, including infrastructure failures.
+
+    Children can arrive before the parent. Repeated publication attempts export the
+    same span identity, so Lens can upsert it instead of creating another run.
+    """
+    if _provider is None or _processor is None or not job.finished_at:
+        return
+    try:
+        complete = job.status == "completed" and not job.result.get("limitations")
+        attrs = job_attributes(job) | {
+            "openinference.span.kind": "AGENT",
+            "litereview.repo": run.repo,
+            "litereview.pr": run.pr,
+            "litereview.head": run.head,
+            "litereview.status": "completed" if complete else "incomplete",
+            "litereview.model_calls": job.model_calls,
+        }
+        if settings().litereview_trace_content:
+            from .reviews import render_comment
+
+            attrs.update(message_attributes("input", messages(job.config.get("instructions", ""))))
+            attrs["litereview.result"] = json.dumps(job.result, ensure_ascii=False)
+            attrs.update(message_attributes("output", messages(render_comment(run, [job]), "assistant")))
+        _processor.on_end(ReadableSpan(
+            name=job.config.get("name", "LiteReview"),
+            context=job_context(job),
+            resource=_provider.resource,
+            attributes=attrs,
+            status=Status(StatusCode.OK if complete else StatusCode.ERROR),
+            start_time=int((job.started_at or run.created_at) * 1_000_000_000),
+            end_time=int(job.finished_at * 1_000_000_000),
+            instrumentation_scope=InstrumentationScope("litereview.review"),
+        ))
+    except Exception:
+        logger.warning("Review trace export failed; review publication will continue.")
 
 
 class ModelTrace:
-    """One trace per model call, grouped by review job through session.id."""
+    """One model span under the review's stable parent, with optional conversation content."""
 
     def __init__(self, job, body, enabled=True):
         self.span = INVALID_SPAN
         self.capture = False
         self.buffer = bytearray()
-        self.output = ""
+        self.response = ResponseMessages()
         self.ended = False
         self.failed = False
         if _provider is None or not enabled:
@@ -121,27 +184,28 @@ class ModelTrace:
         self.capture = settings().litereview_trace_content
         self.span = _provider.get_tracer("litereview.model").start_span(
             "chat " + cfg["model"], kind=SpanKind.CLIENT,
-            attributes={
+            context=set_span_in_context(NonRecordingSpan(job_context(job))),
+            attributes=job_attributes(job) | {
                 "openinference.span.kind": "LLM",
                 "llm.model_name": cfg["model"],
-                "agent.name": cfg.get("name", "LiteReview"),
                 "gen_ai.operation.name": "chat",
                 "gen_ai.request.model": cfg["model"],
                 "gen_ai.provider.name": cfg["connection"]["type"],
-                "gen_ai.agent.name": cfg.get("name", "LiteReview"),
-                "session.id": job.id,
-                "litereview.run_id": job.run_id,
-                "litereview.job_id": job.id,
-                "litereview.harness": cfg.get("harness", "builtin"),
             },
         )
         if self.capture:
-            self.span.set_attribute("input.value", text_content([
-                body.get("system", ""), body.get("instructions", ""),
-                body.get("messages", body.get("input", "")),
-            ]))
+            try:
+                self.span.set_attributes(message_attributes("input", request_messages(body)))
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
+                pass
 
     def result(self, data):
+        try:
+            self._result(data)
+        except (ValueError, TypeError, KeyError, AttributeError, IndexError, RecursionError):
+            pass  # A malformed telemetry event must never change the model response.
+
+    def _result(self, data):
         if not isinstance(data, dict):
             return
         if data.get("error") or data.get("type") in ("error", "response.failed"):
@@ -159,19 +223,7 @@ class ModelTrace:
                         break
         if not self.capture:
             return
-        delta = data.get("delta", {})
-        content = ""
-        if data.get("type") == "response.output_text.delta" and isinstance(delta, str):
-            content = delta
-        elif isinstance(delta, dict):
-            content = text_content(delta)
-        choices = data.get("choices") or []
-        if choices and isinstance(choices, list) and isinstance(choices[0], dict):
-            content = text_content(choices[0].get("delta") or choices[0].get("message", {}))
-        # Final Responses events repeat the deltas; do not append the full response again.
-        if not content and not self.output:
-            content = text_content(response.get("content") or response.get("output", []))
-        self.output += content
+        self.response.add(data)
 
     def feed(self, chunk, sse=False):
         if not self.span.is_recording():
@@ -194,10 +246,13 @@ class ModelTrace:
             return
         self.ended = True
         if self.buffer:
-            self._parse(self.buffer)
+            self._parse(self.buffer[5:] if self.buffer.startswith(b"data:") else self.buffer)
         self.buffer.clear()
         if self.capture:
-            self.span.set_attribute("output.value", self.output)
+            try:
+                self.span.set_attributes(message_attributes("output", self.response.conversation(), self.response.response_id))
+            except (ValueError, TypeError, KeyError, AttributeError, IndexError, RecursionError):
+                pass
         if status is not None:
             self.span.set_attribute("http.response.status_code", status)
         self.span.set_status(StatusCode.ERROR if error or self.failed else StatusCode.OK)
