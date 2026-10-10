@@ -59,6 +59,9 @@ def test_metadata_only_and_session_grouping(captured):
     for span in spans:
         assert span.attributes['session.id'] == 'job-1'
         assert span.attributes['gen_ai.agent.name'] == 'Reviewer'
+        # Lens uses OpenInference model metadata when span.kind selects that format.
+        assert span.attributes['llm.model_name'] == 'model'
+        assert span.attributes['agent.name'] == 'Reviewer'
         assert span.attributes['gen_ai.usage.input_tokens'] == 10
         assert span.attributes['gen_ai.usage.output_tokens'] == 4
         assert span.status.status_code == StatusCode.OK

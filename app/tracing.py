@@ -96,6 +96,8 @@ class ModelTrace:
             "chat " + cfg["model"], kind=SpanKind.CLIENT,
             attributes={
                 "openinference.span.kind": "LLM",
+                "llm.model_name": cfg["model"],
+                "agent.name": cfg.get("name", "LiteReview"),
                 "gen_ai.operation.name": "chat",
                 "gen_ai.request.model": cfg["model"],
                 "gen_ai.provider.name": cfg["connection"]["type"],
