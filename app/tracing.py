@@ -130,6 +130,25 @@ def job_attributes(job):
     }
 
 
+def review_output(result):
+    """Render the submitted review as Markdown without GitHub-only HTML wrappers."""
+    sections = [result.get("summary", "")]
+    for finding in result.get("findings", []):
+        sections += [
+            f"### {finding['severity'].capitalize()} · {finding['title']}",
+            finding["explanation"],
+        ]
+        if finding.get("file"):
+            location = finding["file"] + (f":{finding['line']}" if finding.get("line") else "")
+            sections.append(f"Location: `{location}`")
+        sections.extend("- " + item for item in finding.get("evidence", []))
+    if result.get("limitations"):
+        sections += ["### Couldn’t complete", "\n".join("- " + item for item in result["limitations"])]
+    for check in result.get("checks", []):
+        sections += [f"### {check['name']} · {check['status'].replace('_', ' ')}", check["details"]]
+    return "\n\n".join(section for section in sections if section)
+
+
 def finish_job(job, run):
     """Export the review parent from durable state, including infrastructure failures.
 
@@ -149,11 +168,9 @@ def finish_job(job, run):
             "litereview.model_calls": job.model_calls,
         }
         if settings().litereview_trace_content:
-            from .reviews import render_comment
-
             attrs.update(message_attributes("input", messages(job.config.get("instructions", ""))))
             attrs["litereview.result"] = json.dumps(job.result, ensure_ascii=False)
-            attrs.update(message_attributes("output", messages(render_comment(run, [job]), "assistant")))
+            attrs.update(message_attributes("output", messages(review_output(job.result), "assistant")))
         _processor.on_end(ReadableSpan(
             name=job.config.get("name", "LiteReview"),
             context=job_context(job),
