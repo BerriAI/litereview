@@ -7,12 +7,14 @@ import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from test_reviews import mock_github, payload, setup, webhook
 
 from app import github, sso
-from app.db import Job, Run, Session, SSOIdentity
-from app.security import signed
+from app.db import Job, Run, Session, SSOIdentity, SSOSession, init_db
+from app.main import app
+from app.security import digest, signed
 from app.settings import settings
 
 
@@ -39,7 +41,16 @@ def identity(client=None, **overrides):
     )
     data.update(overrides)
     with Session() as db:
-        db.add(SSOIdentity(**data))
+        db.add(SSOIdentity(**{**data, "expires_at": 0, "session_id": ""}))
+        if client:
+            db.add(
+                SSOSession(
+                    token_hash=digest(data["session_id"]),
+                    identity_sub=data["sub"],
+                    audience=data["audience"],
+                    expires_at=data["expires_at"],
+                )
+            )
         db.commit()
     if client:
         client.cookies.set(
@@ -153,13 +164,27 @@ def test_legacy_sessions_cannot_bypass_sso_and_members_get_workspace_access(owne
     assert sso.eligible_caller({"id": 42, "login": "trusted"})
 
 
-@pytest.mark.parametrize("changed", ["domain", "audience", "expires_at", "session_id"])
+@pytest.mark.parametrize(
+    "changed", ["domain", "audience", "expires_at", "revoked", "identity_sub", "new-client"]
+)
 def test_identity_policy_and_session_changes_take_effect_immediately(client, monkeypatch, changed):
     enable(monkeypatch)
     identity(client, email="admin@berri.ai")
     assert client.get("/api/resources/agents").status_code == 200
     with Session() as db:
-        setattr(db.get(SSOIdentity, "google-sub"), changed, 0 if changed == "expires_at" else "changed")
+        if changed == "new-client":
+            # Reauthorizing the identity with a changed Google client must not
+            # revive browser sessions issued for the previous client.
+            monkeypatch.setattr(settings(), "google_client_id", "new-client")
+            db.get(SSOIdentity, "google-sub").audience = "new-client"
+        elif changed in ("domain", "audience"):
+            setattr(db.get(SSOIdentity, "google-sub"), changed, "changed")
+        else:
+            browser = db.get(SSOSession, digest("test-session"))
+            if changed == "revoked":
+                db.delete(browser)
+            else:
+                setattr(browser, changed, 0 if changed == "expires_at" else "changed")
         db.commit()
     assert client.get("/api/resources/agents").status_code == 401
 
@@ -169,6 +194,110 @@ def test_incomplete_sso_config_fails_closed(client, monkeypatch):
     assert client.post("/api/login", json={"token": settings().admin_token}).status_code == 403
     assert client.get("/api/auth/google").status_code == 503
     assert not sso.eligible_caller({"id": 42, "login": "trusted"})
+
+
+def test_google_browsers_keep_independent_sessions_and_return_to_run(client, signing, monkeypatch):
+    run_id = "a" * 32
+    destination = "/runs/" + run_id
+    with Session.begin() as db:
+        db.add(
+            Run(
+                id=run_id,
+                delivery="session-check",
+                repo="org/repo",
+                pr=1,
+                actor="trusted",
+                head="a" * 40,
+                base="b" * 40,
+                snapshot={},
+            )
+        )
+    real_client = httpx.AsyncClient
+
+    def login(browser):
+        start = browser.get("/api/auth/google", params={"next": destination}, follow_redirects=False)
+        query = parse_qs(urlparse(start.headers["location"]).query)
+        monkeypatch.setattr(
+            sso.httpx,
+            "AsyncClient",
+            lambda **kw: real_client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(200, json={"id_token": signing(nonce=query["nonce"][0])})
+                )
+            ),
+        )
+        result = browser.get(
+            "/api/auth/google/callback",
+            params={"state": query["state"][0], "code": "ok"},
+            follow_redirects=False,
+        )
+        assert result.status_code == 303
+        assert result.headers["location"] == destination
+        assert "HttpOnly" in result.headers["set-cookie"]
+        assert f"Max-Age={settings().sso_session_seconds}" in result.headers["set-cookie"]
+        return browser.cookies.get("lr_session")
+
+    with TestClient(app) as second:
+        first_cookie = login(client)
+        first_expiry = client.get("/api/session").json()["user"]["expires_at"]
+        second_cookie = login(second)
+        assert first_cookie != second_cookie
+        for browser in (client, second):
+            assert browser.get("/api" + destination).json()["id"] == run_id
+        assert client.get("/api/session").json()["user"]["expires_at"] == first_expiry
+        assert second.post("/api/logout").status_code == 200
+        second.cookies.set("lr_session", second_cookie)
+        assert second.get("/api" + destination).status_code == 401
+        assert client.get("/api" + destination).status_code == 200
+        # Repeated login and application startup leave the first browser valid.
+        second.cookies.clear()
+        login(second)
+        init_db()
+        for browser in (client, second):
+            assert browser.get("/api" + destination).status_code == 200
+        with Session.begin() as db:
+            sessions = db.scalars(select(SSOSession).order_by(SSOSession.expires_at)).all()
+            assert len(sessions) == 2
+            sessions[0].expires_at = 0
+        assert client.get("/api" + destination).status_code == 401
+        assert second.get("/api" + destination).status_code == 200
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_single_session_upgrade_preserves_valid_cookie_without_resurrecting_logout(
+    client, monkeypatch, expired
+):
+    enable(monkeypatch)
+    data = identity()
+    expires_at = time.time() + (-60 if expired else 600)
+    with Session.begin() as db:
+        row = db.get(SSOIdentity, data["sub"])
+        row.session_id, row.expires_at = data["session_id"], expires_at
+    client.cookies.set(
+        "lr_session",
+        signed(
+            {
+                "auth": "google",
+                "sub": data["sub"],
+                "session_id": data["session_id"],
+            }
+        ),
+    )
+    init_db()
+    init_db()
+    if expired:
+        assert client.get("/api/resources/agents").status_code == 401
+    else:
+        assert client.get("/api/session").json()["user"]["expires_at"] == expires_at
+        cookie = client.cookies.get("lr_session")
+        client.post("/api/logout").raise_for_status()
+        client.cookies.set("lr_session", cookie)
+    init_db()
+    assert client.get("/api/resources/agents").status_code == 401
+    with Session() as db:
+        assert not db.scalars(select(SSOSession)).all()
+        assert db.get(SSOIdentity, data["sub"]).session_id == ""
+    assert sso.eligible_caller({"id": 42, "login": "trusted"})
 
 
 @pytest.mark.parametrize("session_ended", ["expired", "signed_out"])
@@ -191,7 +320,7 @@ def test_signed_webhook_uses_linked_github_after_browser_session_ends(owner, mon
         assert len(db.scalars(select(Job)).all()) == 2
     if session_ended == "expired":
         with Session() as db:
-            db.get(SSOIdentity, "google-sub").expires_at = time.time() - 365 * 86400
+            db.get(SSOSession, digest("test-session")).expires_at = time.time() - 365 * 86400
             db.commit()
     else:
         assert owner.post("/api/logout").status_code == 200

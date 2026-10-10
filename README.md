@@ -60,7 +60,7 @@ To install LiteReview yourself, you need Admin access on the target repositories
 
 Sync preserves existing environments and permissions. Removing a repository in LiteReview excludes it from future automatic imports; restore it explicitly under **Previously removed repositories**. Removing or restricting an access grant is never undone by sync. Removing GitHub access leaves the saved environment visible as unavailable. After an App replacement, sync updates verified installation IDs without changing grants.
 
-An expired Google session opens **Sign in to continue**, then restores the previous supported page. The GitHub identity remains linked. A failed GitHub check offers retry instead of asking you to rebuild setup.
+Each browser stays signed in independently. Signing in or out in another browser does not close your session. When your session expires, **Sign in to continue** returns you to the page you opened, including a specific run. The GitHub identity remains linked. A failed GitHub check offers retry instead of asking you to rebuild setup.
 
 ## Google Workspace SSO
 

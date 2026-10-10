@@ -127,9 +127,10 @@ def test_browser_and_actor_binding_and_member_authorization(owner, server, monke
     assert owner.post(f"/api/connections/{conn['id']}/test").status_code == 200
     assert owner.post(f"/api/connections/{conn['id']}/oauth/disconnect").status_code == 200
     with Session() as db:
-        from app.db import SSOIdentity
+        from app.db import SSOSession
+        from app.security import digest
 
-        db.get(SSOIdentity, "google-sub").expires_at = 0
+        db.get(SSOSession, digest("test-session")).expires_at = 0
         db.commit()
     assert owner.post(f"/api/connections/{conn['id']}/oauth/start").status_code == 401
     assert owner.post(f"/api/connections/{conn['id']}/oauth/disconnect").status_code == 401

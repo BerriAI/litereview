@@ -72,7 +72,7 @@ For an existing App, see [manual credentials and permissions](../README.md#exist
 
 ## Operate and update
 
-Retain the database, environment settings, and the same `SECRET_KEY`. Losing the database loses configuration and review history. Losing or replacing `SECRET_KEY` prevents decryption of saved connections and invalidates signed sessions. Key rotation with re-encryption is not automated.
+Retain the database, environment settings, and the same `SECRET_KEY`. Losing the database loses configuration and review history. Losing or replacing `SECRET_KEY` prevents decryption of saved connections and invalidates signed sessions. Key rotation with re-encryption is not automated. The upgrade to independent browser sessions preserves currently valid Google sessions with their original expiry; signing in from another browser no longer invalidates them.
 
 - Enable database backups in your hosting provider and verify a restore into a separate, access-restricted deployment using the matching encryption key. Keep `DISPATCHER_ENABLED=false` there while inspecting data so restored queued jobs cannot launch or publish reviews.
 - Monitor database size, service memory, provider spend, and Modal usage. Screenshots, activity logs, uploads, and review results have no automatic retention policy or application size cap. Choose per-agent limits and a concurrency cap to suit your budget.

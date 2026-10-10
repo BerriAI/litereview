@@ -150,16 +150,9 @@ async def login(request: Request):
 @app.post("/api/logout")
 def logout(request: Request):
     if settings().sso_required:
-        from .db import SSOIdentity
+        from .sso import sign_out
 
-        try:
-            user = require_user(request)
-            with Session() as db:
-                identity = db.get(SSOIdentity, user["sub"])
-                identity.expires_at = 0
-                db.commit()
-        except HTTPException:
-            pass
+        sign_out(request)
     response = JSONResponse({"ok": True})
     response.delete_cookie("lr_session")
     return response

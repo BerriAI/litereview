@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 
 from . import github
 from .access import bind_linked_person
-from .db import LoginState, Session, SSOIdentity
+from .db import LoginState, Session, SSOIdentity, SSOSession
 from .security import digest, signed, unsign
 from .settings import settings
 
@@ -70,11 +70,6 @@ def approved_identity(identity):
     )
 
 
-def eligible(identity):
-    """Interactive workspace access requires a current browser session."""
-    return bool(approved_identity(identity) and identity.expires_at > time.time())
-
-
 def current_user(request):
     token = request.cookies.get("lr_session", "")
     if not token:
@@ -84,7 +79,15 @@ def current_user(request):
         raise HTTPException(401, "Sign in with your workspace Google account.")
     with Session() as db:
         identity = db.get(SSOIdentity, data.get("sub", ""))
-    if not configured() or not eligible(identity) or data.get("session_id") != identity.session_id:
+        browser = db.get(SSOSession, digest(data.get("session_id", "")))
+    if (
+        not configured()
+        or not approved_identity(identity)
+        or not browser
+        or browser.identity_sub != identity.sub
+        or browser.audience != settings().google_client_id
+        or browser.expires_at <= time.time()
+    ):
         raise HTTPException(401, "Your Google authorization expired. Sign in again.")
     return {
         "auth": "google",
@@ -93,8 +96,24 @@ def current_user(request):
         "login": identity.github_login or identity.email,
         "github_login": identity.github_login,
         "github_id": identity.github_id,
-        "expires_at": identity.expires_at,
+        "expires_at": browser.expires_at,
     }
+
+
+def sign_out(request):
+    """Revoke this browser's cookie without affecting other signed-in browsers."""
+    try:
+        data = unsign(request.cookies.get("lr_session", ""), settings().sso_session_seconds)
+    except HTTPException:
+        return
+    if data.get("auth") == "google":
+        with Session.begin() as db:
+            db.execute(
+                delete(SSOSession).where(
+                    SSOSession.token_hash == digest(data.get("session_id", "")),
+                    SSOSession.identity_sub == data.get("sub", ""),
+                )
+            )
 
 
 def caller_identity(user):
@@ -263,19 +282,28 @@ async def google_callback(request: Request, state: str = "", code: str = "", err
         raise HTTPException(
             403, "Google sign-in failed or this account is outside the allowed workspace."
         ) from None
+    session_id = secrets.token_urlsafe(32)
+    expires_at = time.time() + s.sso_session_seconds
     with Session() as db:
         identity = db.get(SSOIdentity, claims["sub"]) or SSOIdentity(sub=claims["sub"])
         identity.email, identity.domain = claims["email"], claims["domain"]
         identity.audience = s.google_client_id
-        identity.expires_at = time.time() + s.sso_session_seconds
-        identity.session_id = secrets.token_urlsafe(32)
         db.add(identity)
+        db.execute(delete(SSOSession).where(SSOSession.expires_at <= time.time()))
+        db.add(
+            SSOSession(
+                token_hash=digest(session_id),
+                identity_sub=identity.sub,
+                audience=s.google_client_id,
+                expires_at=expires_at,
+            )
+        )
         db.commit()
     response = RedirectResponse(return_path(data.get("next")), status_code=303)
     response.delete_cookie("lr_sso_state", path="/api/auth")
     response.set_cookie(
         "lr_session",
-        signed({"auth": "google", "sub": identity.sub, "session_id": identity.session_id}),
+        signed({"auth": "google", "sub": identity.sub, "session_id": session_id}),
         max_age=s.sso_session_seconds,
         httponly=True,
         secure=s.public_url.startswith("https://"),

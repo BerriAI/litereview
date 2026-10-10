@@ -12,6 +12,8 @@ LiteReview is a single-workspace application for trusted teams. Every admitted w
 
 Use Google Workspace SSO for a hosted team deployment, restrict `GOOGLE_ALLOWED_DOMAINS` to domains you control, and protect the service with HTTPS. Workspace access-key mode is intended for local development. Keep `SECRET_KEY` private and stable; it protects both encrypted credentials and signed sessions. Back it up separately from the database.
 
+Each Google browser session has its own expiry and revocable token. **Sign out** revokes the current browser session; other browsers remain signed in until they sign out or reach `SSO_SESSION_SECONDS` (12 hours by default).
+
 Google sign-out and browser-session expiry do not revoke linked GitHub review access. Suspending a Google account does not automatically revoke that link. To offboard a reviewer, use **People → Edit access** and leave the selection empty, or unlink their GitHub identity. GitHub repository permissions and configured review grants are checked for review requests.
 
 ## Untrusted code and data

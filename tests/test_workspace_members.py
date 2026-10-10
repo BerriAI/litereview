@@ -4,7 +4,8 @@ import pytest
 from test_sso import enable, identity
 
 from app import github, providers
-from app.db import Artifact, Job, Run, Session, SSOIdentity
+from app.db import Artifact, Job, Run, Session, SSOIdentity, SSOSession
+from app.security import digest
 from app.settings import settings
 
 
@@ -92,7 +93,7 @@ def test_workspace_endpoints_still_require_eligible_google_session(client, monke
         with Session() as db:
             person = db.get(SSOIdentity, "google-sub")
             if state == "expired":
-                person.expires_at = 0
+                db.get(SSOSession, digest("test-session")).expires_at = 0
             elif state == "outside":
                 person.domain, person.email = "outside.test", "person@outside.test"
             elif state == "wrong-audience":
