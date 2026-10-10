@@ -4,7 +4,7 @@ import httpx
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from . import providers, tracing
+from . import providers, spend, tracing
 from .limits import count_model_call
 
 PROTOCOLS = {"chat/completions", "responses", "messages", "messages/count_tokens"}
@@ -57,19 +57,27 @@ async def relay_model(job, request, path):
             headers["anthropic-beta"] = request.headers["anthropic-beta"]
     client = httpx.AsyncClient(timeout=None)
     trace = tracing.ModelTrace(job, body, enabled=path != "messages/count_tokens")
+    meter = (spend.UsageMeter(job, await spend.lookup_rates(connection, cfg["model"]))
+             if path != "messages/count_tokens" else None)
     try:
         response = await client.send(
             client.build_request("POST", base + "/" + path, json=body, headers=headers), stream=True
         )
     except httpx.HTTPError:
+        if meter:
+            meter.end()
         trace.end(error=True)
         await client.aclose()
         raise HTTPException(502, "The harness could not reach the model endpoint.") from None
     except BaseException:
+        if meter:
+            meter.end()
         trace.end(error=True)
         await client.aclose()
         raise
     if not response.is_success:
+        if meter:
+            meter.end()
         status = response.status_code
         trace.end(error=True, status=status)
         await response.aclose()
@@ -84,14 +92,22 @@ async def relay_model(job, request, path):
             status_code=status,
         )
 
+    if meter and "text/event-stream" not in response.headers.get("content-type", ""):
+        # Streaming headers are sent before final usage and can contain a placeholder zero.
+        meter.reported = spend.amount(response.headers.get("x-litellm-response-cost"))
+
     async def stream():
         complete = False
         try:
             async for chunk in response.aiter_bytes():
                 trace.feed(chunk, sse="text/event-stream" in response.headers.get("content-type", ""))
+                if meter:
+                    meter.feed(chunk, sse="text/event-stream" in response.headers.get("content-type", ""))
                 yield chunk
             complete = True
         finally:
+            if meter:
+                meter.end(complete=complete)
             trace.end(error=not complete, status=response.status_code)
             await response.aclose()
             await client.aclose()

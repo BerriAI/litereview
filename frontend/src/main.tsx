@@ -28,6 +28,7 @@ import {
   ArrowLeft,
   LockKeyhole,
   Users,
+  DollarSign,
 } from "lucide-react";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
@@ -38,6 +39,7 @@ import { MCPAuthFields, MCPServers, People } from "./resources";
 import { MCPToolSelector } from "./mcp-tool-selector";
 import { ReviewResult } from "./review-result";
 import { AgentModels, FusionResults } from "./fusion";
+import { RunCost, SpendPage } from "./spend";
 import { api, send } from "./api";
 import { GitHubSetup, GitHubSettings } from "./github-setup";
 import { MemberStart } from "./member-start";
@@ -77,6 +79,7 @@ const icons = {
   models: Network,
   skills: BookOpen,
   runs: History,
+  spend: DollarSign,
 };
 const titles = {
   repos: "Repositories",
@@ -88,6 +91,7 @@ const titles = {
   models: "Models",
   skills: "Skills",
   runs: "Runs",
+  spend: "Spend",
 };
 const descriptions = {
   repos: "Choose where LiteReview can run.",
@@ -100,6 +104,7 @@ const descriptions = {
   models: "Model providers and gateways available to your agents.",
   skills: "Reusable instructions and files for your agents.",
   runs: "Review progress, findings, and visual evidence from each agent.",
+  spend: "Model costs across reviews, people, and repositories.",
 };
 function App() {
   const [session, setSession] = useState<any>(undefined);
@@ -724,7 +729,7 @@ function App() {
             : store.connections.filter((c) =>
                 tab === "mcp" ? c.type === "mcp" : c.type !== "mcp",
               )
-          : store[active as Kind];
+          : store[active as Kind] || [];
   const filtered = rows.filter((row) => {
     const searchable = [
       row.name,
@@ -795,7 +800,7 @@ function App() {
         </div>
         <nav aria-label="Main navigation">
           {[
-            ["Review", ["agents", "groups", "runs"]],
+            ["Review", ["agents", "groups", "runs", "spend"]],
             ["Resources", ["mcp", "skills", "models"]],
             ["Workspace", ["repos", "access", "connections"]],
           ].map(([label, keys]) => (
@@ -980,6 +985,7 @@ function App() {
           )}
           {workspaceLoaded &&
             active !== "repos" &&
+            active !== "spend" &&
             (needsRepositories || needsGithubAccount) && (
               <section
                 className="github-next-step"
@@ -1089,7 +1095,7 @@ function App() {
               }
             />
           )}
-          {active === "runs" && path.split("/")[2] ? (
+          {active === "spend" ? <SpendPage /> : active === "runs" && path.split("/")[2] ? (
             <>
               <button className="back" onClick={() => navigate("/runs")}>
                 <ArrowLeft size={14} /> All runs
@@ -1118,6 +1124,10 @@ function App() {
                     <code>{run.head.slice(0, 12)}</code>
                   </div>
                   <dl className="run-summary">
+                    <div>
+                      <dt>Model cost</dt>
+                      <dd><RunCost value={run.spend} /></dd>
+                    </div>
                     <div>
                       <dt>Reviewers</dt>
                       <dd>
@@ -1150,6 +1160,7 @@ function App() {
                     <details className="job" key={job.id}>
                       <summary className="job-title">
                         <h3>{job.config.name}</h3>
+                        <span className="job-cost"><RunCost value={job.spend} /></span>
                         {job.config.target_kind !== "agent" && (
                           <span>{job.config.group}</span>
                         )}
@@ -1427,9 +1438,8 @@ function App() {
                                     ? "Started"
                                     : "Connection"}
                         </th>
-                        <th>
-                          <span className="sr-only">Actions</span>
-                        </th>
+                        {active === "runs" && <th>Model cost</th>}
+                        <th><span className="sr-only">Actions</span></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1570,6 +1580,7 @@ function App() {
                               </span>
                             )}
                           </td>
+                          {active === "runs" && <td><RunCost value={row.spend} /></td>}
                           <td className="row-actions">
                             {active === "agents" && (
                               setup?.default_reviewer_id === row.id ? (

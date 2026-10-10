@@ -422,6 +422,24 @@ export function Documentation() {
             </a>
           </p>
         </section>
+        <section>
+          <h2>Track review spend</h2>
+          <p>
+            Open <a href="/spend">Spend</a> for total model cost, PR run count,
+            and average cost per run. Choose By user or By repository to see
+            the same breakdown. Runs also shows each review’s model cost,
+            including every fusion model and the final review pass.
+          </p>
+          <p>
+            Costs use reported gateway amounts or estimates from token usage,
+            cache usage, and available model rates. Estimates are labeled est.;
+            a + marks a partial total. Older runs and requests without cost data
+            show Unavailable. Averages include only finished runs with complete
+            cost data. Agent checks, sandbox charges, and hosting are excluded.
+            Spend tracks usage; it does not enforce a budget or replace your invoice.
+          </p>
+        </section>
+
       </main>
     </div>
   );

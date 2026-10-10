@@ -18,6 +18,12 @@ Reviews require a **Modal account**, a **model provider or gateway**, and a **pu
 
 This beta runs **one trusted workspace per deployment**. Every admitted member can manage the workspace and use its shared connections. Run time, model-call, and concurrency limits are optional; configure them and your providers' budgets for your deployment. See the [security boundary](SECURITY.md#intended-deployment-boundary) before connecting private repositories or privileged tools.
 
+## Track review spend
+
+Open **Spend** for all-time model cost, PR run count, and average cost per run. Use **By user** or **By repository** for the same breakdown. **Runs** shows each review’s model cost, including every fusion branch and the final review pass.
+
+Costs use the gateway’s reported amount when available. Otherwise, LiteReview estimates from token usage, cached tokens, and available model rates; these amounts are labeled **est.** Unknown costs appear as **Unavailable**, and a **+** marks a partial total. Older runs have no recorded costs. Average cost includes only finished runs with complete cost data. Agent checks, Modal charges, and hosting are excluded. These totals are usage tracking, not an invoice or spending limit.
+
 ## Configure reviewers
 
 Comment `@litereview` alone to run the workspace's default reviewer. The first reviewer becomes the default automatically. Under **PR agents**, choose **Set default** on an agent’s row at any time; the choice applies to future runs. Existing workspaces with one reviewer can use the bare command immediately. Workspaces with several reviewers choose a default once. To select specific agents or groups, name them in the comment, such as `@litereview frontend security`. Caller and repository permissions apply to both forms.
