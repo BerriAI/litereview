@@ -110,6 +110,20 @@ async def models(conn):
     return sorted(x["id"] for x in r.json().get("data", []))
 
 
+async def draft_completion(conn, model, messages):
+    """One bounded text request; drafting does not run agent tools or a sandbox."""
+    prefix = "anthropic" if conn["type"] == "anthropic" else "openai"
+    model_name = model if model.startswith(prefix + "/") and conn["type"] != "gateway" else prefix + "/" + model
+    try:
+        response = await litellm.acompletion(
+            model=model_name, api_key=conn["api_key"], api_base=conn.get("base_url") or None,
+            messages=messages, max_tokens=4096, timeout=60, num_retries=0,
+        )
+        return response.choices[0].message.content
+    except Exception as exc:
+        raise HTTPException(502, f"Draft creation failed ({type(exc).__name__}). Check the model and connection in Settings → Agent creation.") from None
+
+
 @asynccontextmanager
 async def mcp_session(conn):
     from .mcp_oauth import MCPAuth

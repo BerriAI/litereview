@@ -283,7 +283,17 @@ export function Documentation() {
           </p>
         </section>
         <section>
-          <h2>Codex, Fusion, and agent groups</h2>
+      <h2>Create a reviewer from a prompt</h2>
+      <p>Open <a href="/agents">PR agents</a>, choose <strong>Create agent</strong>, then <strong>Create from prompt</strong>.
+        Describe the reviewer’s focus and choose <strong>Generate draft</strong>. Review the suggested command name,
+        instructions, and capabilities, choose its review model, then <strong>Save agent</strong> and <strong>Test agent</strong>.
+        Generating a draft does not save an agent or start a PR review.</p>
+      <p>Draft generation defaults to Haiku 5.5 through a saved gateway or Anthropic connection.
+        Change the connection or model in <a href="/settings">Settings → Agent creation</a>.
+        This model writes the draft; the agent’s own model runs reviews. Generation uses one model request and incurs provider charges,
+        which are separate from PR review spend. If creation fails, your prompt stays in the editor for retry.</p>
+
+      <h2>Codex, Fusion, and agent groups</h2>
           <p>
             Every agent uses Codex. Choose an OpenAI connection or a gateway
             that supports the Responses API. A gateway can route compatible

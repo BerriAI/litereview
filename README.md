@@ -26,6 +26,10 @@ Costs use the gateway’s reported amount when available. Otherwise, LiteReview 
 
 ## Configure reviewers
 
+To create a reviewer from a description, open **PR agents → Create agent → Create from prompt**. Describe its focus and choose **Generate draft**. Review the generated name, instructions, and capabilities, select the review model, then **Save agent** and **Test agent**. Nothing is saved or run on a PR until you take those actions. The draft keeps your prompt if generation fails.
+
+Draft generation defaults to Haiku 5.5 through a saved gateway or Anthropic connection. Change its connection and model under **Settings → Agent creation**. This is separate from the agent’s review model. Generation uses one model request and provider credits; its cost is separate from the PR review totals on Spend.
+
 Comment `@litereview` alone to run the workspace's default reviewer. The first reviewer becomes the default automatically. Under **PR agents**, choose **Set default** on an agent’s row at any time; the choice applies to future runs. Existing workspaces with one reviewer can use the bare command immediately. Workspaces with several reviewers choose a default once. To select specific agents or groups, name them in the comment, such as `@litereview frontend security`. Caller and repository permissions apply to both forms.
 
 The agent’s **Review instructions** define its task, scope, workflow, language, and voice. Attached skills support those instructions; the agent instructions take precedence when they conflict. Codex supplies the agent runtime, tools, and result delivery. An agent can produce a narrative response without bug findings. Credentials, enabled tools, and configured time limits still apply.
