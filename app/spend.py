@@ -81,6 +81,7 @@ class UsageMeter:
         self.overflow = False
         self.ended = False
         self.final = False
+        self.streaming = False
         self.protocol = ""
         self.enabled = True
         try:
@@ -96,7 +97,7 @@ class UsageMeter:
         response = data.get("response") or data.get("message") or data
         if not isinstance(response, dict):
             return
-        if data.get("type") in ("response.completed", "message_stop"):
+        if data.get("type") in ("response.completed", "response.incomplete", "response.failed", "message_stop"):
             self.final = True
         if data.get("type", "").startswith("message_") or response.get("type") == "message":
             self.protocol = "anthropic"
@@ -120,6 +121,7 @@ class UsageMeter:
             pass
 
     def feed(self, chunk, sse=False):
+        self.streaming = self.streaming or sse
         for part in chunk.splitlines(keepends=True) if sse else (chunk,):
             if len(self.buffer) + len(part) > 4 * 1024 * 1024:
                 self.overflow = True
@@ -178,7 +180,8 @@ class UsageMeter:
                 if row:
                     for key, value in self.values().items():
                         setattr(row, key, value)
-                    row.complete = int(complete or self.final)
+                    # A clean HTTP EOF can still truncate an SSE response after partial usage.
+                    row.complete = int(self.final or (complete and not self.streaming))
         except Exception:
             logger.warning("Model accounting could not finish; this request's cost is unavailable.")
 

@@ -77,6 +77,18 @@ def test_anthropic_usage_is_cumulative_and_separates_cache_writes(owner):
         assert row.complete == 1
 
 
+def test_clean_http_eof_without_terminal_event_keeps_stream_cost_partial(owner):
+    add_run("truncated")
+    meter = spend.UsageMeter(add_job("truncated-job", "truncated"), RATES)
+    meter.feed(b'data: {"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":1}}}\n\n', sse=True)
+    meter.end(complete=True)
+    data = owner.get("/api/spend").json()["total"]
+    assert data["cost_usd"] == pytest.approx(.00021)
+    assert data["unpriced_runs"] == 1
+    assert data["priced_runs"] == 0
+    assert data["average_cost_usd"] is None
+
+
 @pytest.mark.parametrize("cost", [0, 0.125])
 def test_reported_cost_overrides_token_estimate_including_zero(owner, cost):
     add_run("reported")
