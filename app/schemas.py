@@ -39,10 +39,28 @@ class ReviewTarget(BaseModel):
         return v.lower()
 
 
-class AgentModel(BaseModel):
-    harness: Literal["codex"] = "codex"
+class DefaultReviewer(BaseModel):
+    agent_id: str = Field(min_length=1)
+
+
+class ModelSelection(BaseModel):
     connection_id: str
     model: str = Field(min_length=1)
+    reasoning_effort: Literal["low", "medium", "high", "xhigh"] | None = None
+
+
+class FusionBranch(ModelSelection):
+    focus: str = ""
+
+
+class Fusion(BaseModel):
+    branches: list[FusionBranch] = Field(min_length=1, max_length=16)
+    instructions: str = ""
+
+
+class AgentModel(ModelSelection):
+    harness: Literal["codex"] = "codex"
+    fusion: Fusion | None = None
     capabilities: list[Literal["terminal", "browser", "computer"]] = Field(
         default_factory=lambda: ["terminal"]
     )

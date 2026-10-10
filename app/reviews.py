@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from runner.catalog import HARNESS_VERSIONS, review_capabilities, validate_connection
 
-from . import github
+from . import fusion, github, review_defaults
 from .access import caller_grant, caller_permits, permits
 from .db import Job, Resource, Run, Session, uid
 from .limits import job_timeout, timing_limits
@@ -29,9 +29,11 @@ def command(body):
 
 
 def command_requests(body):
-    match = re.fullmatch(r"\s*(?:@litereview|light\s+review)\s+(.+?)\s*", body or "", re.I | re.S)
+    match = re.fullmatch(r"\s*(?:@litereview|light\s+review)(?:\s+(.+?))?\s*", body or "", re.I | re.S)
     if not match:
         return []
+    if not match[1] or not match[1].strip():
+        return [{"name": ""}]
     selected = []
     for token in match[1].lower().split():
         if token.startswith("t="):
@@ -70,6 +72,7 @@ def expand(groups, resources):
             except ValueError as exc:
                 raise HTTPException(409, str(exc)) from None
             data["connection"] = {"id": conn.id, **conn.data}
+            data = fusion.snapshot_config(data, resources)
             data["skills"] = [{"id": sid, **resources[sid].data} for sid in data["skill_ids"]]
             data["mcp_definitions"] = []
             for mcp in data["mcps"]:
@@ -180,7 +183,7 @@ async def accept(payload, delivery):
     selected = []
     for selection in requests:
         name = selection["name"]
-        target = next(
+        target = review_defaults.selected(resources) if not name else next(
             (
                 r
                 for r in resources.values()
@@ -188,6 +191,11 @@ async def accept(payload, delivery):
             ),
             None,
         )
+        if not name and not target:
+            return reject_command(
+                delivery, repo, pr, actor, installation,
+                "Choose a default reviewer in LiteReview → PR agents, then comment @litereview again.",
+            )
         group = target.data.copy() if target else None
         allowed = target and caller_permits(caller_access, target.id) and permits(repo_access, target.id)
         if not allowed:
@@ -247,7 +255,7 @@ async def accept(payload, delivery):
             return None
         db.add(run)
         for position, cfg in enumerate(configurations):
-            db.add(Job(id=uid(), run_id=run.id, config={**cfg, "run_order": position}))
+            fusion.enqueue(db, run.id, {**cfg, "run_order": position})
         try:
             db.commit()
         except IntegrityError:
@@ -274,7 +282,7 @@ def ordered_jobs(run, jobs):
             )
         return position, cfg.get("instance", 1), job.id
 
-    return sorted(jobs, key=order)
+    return sorted((job for job in jobs if not job.config.get("fusion_parent_id")), key=order)
 
 
 def md(value):
@@ -426,6 +434,8 @@ async def dispatcher():
         try:
             now = time.time()
             with Session() as db:
+                fusion.advance(db)
+                db.commit()
                 active = db.scalars(select(Job).where(Job.status.in_(["starting", "running"]))).all()
                 for job in active:
                     timeout = job_timeout(job.config)

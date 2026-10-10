@@ -45,6 +45,8 @@ def command(cfg, url, instructions, prompt, env, resume_id=None):
             "tool_timeout_sec": 24 * 60 * 60,
         },
     }
+    if cfg.get("reasoning_effort"):
+        config["model_reasoning_effort"] = cfg["reasoning_effort"]
     env["LITEREVIEW_HARNESS_KEY"] = "sandbox-scoped"
     # Config lives outside the PR and the checkout is never trusted for executable hooks/plugins.
     args = [

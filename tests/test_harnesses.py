@@ -47,6 +47,24 @@ def test_codex_tools_allow_verification_and_delegation(tmp_path, monkeypatch):
     assert not any(s.startswith("features.apply_patch_freeform=") for s in settings)
 
 
+@pytest.mark.parametrize("effort", [None, "low", "medium", "high", "xhigh"])
+def test_saved_reasoning_effort_reaches_codex(tmp_path, monkeypatch, owner, effort):
+    from runner import harness
+
+    connection = owner.post("/api/resources/connections", json={"name": "OpenAI", "type": "openai"}).json()
+    saved = owner.post("/api/resources/agents", json={
+        "name": "reasoning-review", "connection_id": connection["id"],
+        "model": "test-model", "instructions": "Review", "reasoning_effort": effort,
+    })
+    assert saved.status_code == 200
+    assert saved.json()["reasoning_effort"] == effort
+    monkeypatch.setattr(harness, "STATE", tmp_path)
+    args = harness.command(saved.json(), "http://127.0.0.1:8000", "Review", "PR", {})
+    settings = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "-c"]
+    actual = [s for s in settings if s.startswith("model_reasoning_effort=")]
+    assert actual == ([] if effort is None else [f'model_reasoning_effort="{effort}"'])
+
+
 @pytest.mark.parametrize("selected", HARNESS_VERSIONS)
 def test_image_installs_only_selected_harness(monkeypatch, selected):
     installed = []

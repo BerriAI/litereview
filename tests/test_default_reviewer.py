@@ -1,0 +1,76 @@
+import pytest
+from sqlalchemy import select
+from test_reviews import create, mock_github, payload, setup, webhook
+
+from app import reviews
+from app.db import Job, Resource, Run, Session
+from app.review_defaults import RESOURCE_ID
+
+
+@pytest.mark.parametrize("body", ["@litereview", "  @LiteReview \n", "light review"])
+def test_bare_command_selects_default(body):
+    assert reviews.command_requests(body) == [{"name": ""}]
+
+
+def test_first_agent_default_and_delivery_snapshot(owner, monkeypatch):
+    _, _, agent, _, _ = setup(owner)
+    assert owner.get("/api/setup").json()["default_reviewer_id"] == agent["id"]
+    mock_github(monkeypatch)
+    run_id = webhook(owner, payload(body="@litereview")).json()["run_id"]
+    other = create(owner, "agents", **{**agent, "name": "other"})
+    owner.put("/api/default-reviewer", json={"agent_id": other["id"]}).raise_for_status()
+    assert webhook(owner, payload(body="@litereview")).json()["run_id"] == run_id
+    second = webhook(owner, payload(body="@litereview"), "new-default").json()["run_id"]
+    named = webhook(owner, payload(body="@litereview reviewer"), "named").json()["run_id"]
+    with Session() as db:
+        for rid, aid in [(run_id, agent["id"]), (second, other["id"]), (named, agent["id"])]:
+            jobs = db.scalars(select(Job).where(Job.run_id == rid)).all()
+            assert len(jobs) == 1
+            assert jobs[0].config["agent_id"] == aid
+            assert jobs[0].config["target_kind"] == "agent"
+
+
+@pytest.mark.parametrize("subject", ["repo", "user"])
+def test_default_obeys_existing_access_rules(owner, monkeypatch, subject):
+    _, _, agent, _, group = setup(owner)
+    grants = owner.get("/api/resources/access").json()
+    grant = next(g for g in grants if g["subject"] == subject)
+    owner.put("/api/resources/access/" + grant["id"], json={
+        **grant, "scope": "selected", "target_ids": [group["id"]],
+    }).raise_for_status()
+    mock_github(monkeypatch)
+    result = webhook(owner, payload(body="@litereview")).json()
+    with Session() as db:
+        assert db.get(Run, result["run_id"]).status == "rejected"
+        assert not db.scalars(select(Job)).all()
+
+
+def test_legacy_defaults_and_missing_selection(owner, monkeypatch):
+    _, _, agent, _, _ = setup(owner)
+    with Session.begin() as db:
+        db.delete(db.get(Resource, RESOURCE_ID))
+    assert owner.get("/api/setup").json()["default_reviewer_id"] == agent["id"]
+    other = create(owner, "agents", **{**agent, "name": "other"})
+    assert owner.get("/api/setup").json()["default_reviewer_id"] == agent["id"]
+    # An existing multi-reviewer workspace must choose; ordering is not a default.
+    with Session.begin() as db:
+        db.delete(db.get(Resource, RESOURCE_ID))
+    mock_github(monkeypatch)
+    result = webhook(owner, payload(body="@litereview")).json()
+    with Session() as db:
+        run = db.get(Run, result["run_id"])
+        assert run.status == "rejected"
+        assert "Choose a default reviewer" in run.snapshot["rejection"]
+    owner.put("/api/default-reviewer", json={"agent_id": other["id"]}).raise_for_status()
+    owner.put("/api/resources/agents/" + other["id"], json={**other, "name": "renamed"}).raise_for_status()
+    assert owner.get("/api/setup").json()["default_reviewer_id"] == other["id"]
+    owner.delete("/api/resources/agents/" + other["id"]).raise_for_status()
+    assert owner.get("/api/setup").json()["default_reviewer_id"] is None
+
+
+def test_default_requires_an_agent_and_authentication(owner, client):
+    _, _, _, _, group = setup(owner)
+    for value in ["missing", group["id"]]:
+        assert owner.put("/api/default-reviewer", json={"agent_id": value}).status_code == 400
+    owner.post("/api/logout")
+    assert client.put("/api/default-reviewer", json={"agent_id": "missing"}).status_code == 401

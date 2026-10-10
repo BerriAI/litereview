@@ -18,13 +18,13 @@ from sqlalchemy.exc import IntegrityError
 
 from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
 
-from . import github, mcp_oauth, providers, reviews, tracing
+from . import fusion, github, mcp_oauth, providers, reviews, tracing
 from .access import bind_existing_people, initialize_access, people
 from .db import Artifact, Job, MCPOAuth, Resource, ReviewTiming, Run, Session, SSOIdentity, init_db, uid
 from .limits import count_model_call, job_timeout, model_rounds
 from .onboarding import exclude_repository, include_repository
 from .onboarding import router as onboarding_router
-from .schemas import SCHEMAS, AgentModel, ReviewResult
+from .schemas import SCHEMAS, AgentModel, DefaultReviewer, ReviewResult
 from .security import decrypt, digest, encrypt, require_user, signed, unsign, verify_signature
 from .settings import settings
 from .sso import router as sso_router
@@ -253,6 +253,12 @@ def validate_resource(kind, data, db, resource_id):
         return r
 
     if kind == "agents":
+        for branch in (data.get("fusion") or {}).get("branches", []):
+            branch_conn = exists(branch["connection_id"], "connections")
+            try:
+                validate_connection("codex", branch_conn.data["type"])
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from None
         conn = exists(data["connection_id"], "connections")
         if conn.data["type"] == "mcp":
             raise HTTPException(400, "Choose a model connection.")
@@ -405,6 +411,10 @@ async def save_resource(kind: str, request: Request, resource_id: str | None = N
                     if grant.data["subject"] == "repo" and grant.data["name"] == row.data["name"].lower():
                         grant.data = {**grant.data, "name": data["name"].lower()}
         if not row:
+            if kind == "agents":
+                from .review_defaults import preserve_on_create
+
+                preserve_on_create(db, rid)
             row = Resource(id=rid, kind=kind, data=data)
             db.add(row)
         row.data, row.secret, row.updated_at = data, secret, time.time()
@@ -430,6 +440,7 @@ def delete_resource(kind: str, resource_id: str):
         for other in db.scalars(select(Resource).where(Resource.id != resource_id)):
             if other.kind == "agents" and (
                 resource_id == other.data["connection_id"]
+                or any(b["connection_id"] == resource_id for b in (other.data.get("fusion") or {}).get("branches", []))
                 or resource_id in other.data["skill_ids"]
                 or any(m["connection_id"] == resource_id for m in other.data["mcps"])
             ):
@@ -437,7 +448,7 @@ def delete_resource(kind: str, resource_id: str):
             if other.kind == "groups" and (any(m["agent_id"] == resource_id for m in other.data["members"])):
                 raise HTTPException(409, f'Remove this item from group "{other.data["name"]}" first.')
         active = db.scalar(
-            select(func.count()).select_from(Job).where(Job.status.in_(["queued", "starting", "running"]))
+            select(func.count()).select_from(Job).where(Job.status.in_(["waiting", "queued", "starting", "running"]))
         )
         if active and kind in ("connections", "repos"):
             raise HTTPException(
@@ -462,6 +473,12 @@ def delete_resource(kind: str, resource_id: str):
                     "target_ids": [id for id in grant.data["target_ids"] if id != resource_id],
                 }
         db.delete(row)
+        if kind == "agents":
+            from .review_defaults import RESOURCE_ID
+
+            default = db.get(Resource, RESOURCE_ID, with_for_update=True)
+            if default and default.data.get("agent_id") == resource_id:
+                default.data = {"agent_id": None}
         db.commit()
     return {"ok": True}
 
@@ -537,16 +554,22 @@ async def test_connection(resource_id: str):
 
 @app.post("/api/agents/test", dependencies=[Depends(require_user)])
 async def test_agent_model(data: AgentModel):
-    connection = providers.connection(data.connection_id)
-    if connection["type"] == "mcp":
-        raise HTTPException(400, "Choose a model connection.")
-    try:
-        validate_connection(data.harness, connection["type"])
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from None
-    return await providers.probe(
-        connection, data.model, bool({"browser", "computer"} & set(data.capabilities))
-    )
+    selections = [data] + (data.fusion.branches if data.fusion else [])
+    tested = set()
+    result = None
+    for selected in selections:
+        key = (selected.connection_id, selected.model)
+        if key in tested:
+            continue
+        connection = providers.connection(selected.connection_id)
+        try:
+            validate_connection(data.harness, connection["type"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        result = await providers.probe(
+            connection, selected.model, bool({"browser", "computer"} & set(data.capabilities)))
+        tested.add(key)
+    return result
 
 
 @app.get("/api/harnesses", dependencies=[Depends(require_user)])
@@ -577,7 +600,7 @@ def agent_check_status(run_id: str):
         run = db.get(Run, run_id)
         if not run or not run.snapshot.get("harness_check"):
             raise HTTPException(404)
-        job = db.scalar(select(Job).where(Job.run_id == run_id))
+        job = reviews.ordered_jobs(run, db.scalars(select(Job).where(Job.run_id == run_id)).all())[0]
         return {"id": run.id, "status": job.status, "result": job.result, "logs": job.logs}
 
 
@@ -589,11 +612,11 @@ async def cancel_agent_check(run_id: str):
         run = db.get(Run, run_id)
         if not run or not run.snapshot.get("harness_check"):
             raise HTTPException(404)
-        job = db.scalar(select(Job).where(Job.run_id == run_id))
-        sandbox_id = job.sandbox_id
+        jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
+        sandbox_ids = [job.sandbox_id for job in jobs if job.sandbox_id and job.status not in reviews.TERMINAL]
         db.execute(
             update(Job)
-            .where(Job.id == job.id, Job.status.in_(["queued", "starting", "running"]))
+            .where(Job.run_id == run_id, Job.status.in_(["waiting", "queued", "starting", "running"]))
             .values(
                 status="failed",
                 finished_at=time.time(),
@@ -606,7 +629,7 @@ async def cancel_agent_check(run_id: str):
             )
         )
         db.commit()
-    if sandbox_id:
+    for sandbox_id in sandbox_ids:
         await terminate(sandbox_id)
     return {"ok": True}
 
@@ -618,18 +641,19 @@ async def test_agent(resource_id: str):
         if not row or row.kind != "agents":
             raise HTTPException(404)
         data = row.data
-    return await providers.probe(
-        providers.connection(data["connection_id"]),
-        data["model"],
-        bool({"browser", "computer"} & set(data["capabilities"])),
-    )
+    return await test_agent_model(AgentModel.model_validate(data))
 
 
 @app.get("/api/setup", dependencies=[Depends(require_user)])
 def setup_status():
+    from .review_defaults import agent_id
+
+    with Session() as db:
+        default_id = agent_id(db)
     conf = github.config()
     return {
         "public_url": settings().public_url,
+        "default_reviewer_id": default_id,
         "modal": bool(settings().modal_token_id and settings().modal_token_secret),
         "github": bool(conf.get("app_id") and conf.get("private_key")),
         "github_app_url": conf.get("html_url", ""),
@@ -638,6 +662,27 @@ def setup_status():
         "development_github_token": bool(settings().github_token),
         "webhook_url": settings().public_url + "/api/webhook/github",
     }
+
+
+@app.put("/api/default-reviewer", dependencies=[Depends(require_user)])
+def set_default_reviewer(data: DefaultReviewer):
+    from .review_defaults import RESOURCE_ID
+
+    with Session() as db:
+        agent = db.get(Resource, data.agent_id, with_for_update=True)
+        if not agent or agent.kind != "agents":
+            raise HTTPException(400, "Choose an existing PR agent as the default reviewer.")
+        saved = db.get(Resource, RESOURCE_ID, with_for_update=True)
+        if not saved:
+            saved = Resource(id=RESOURCE_ID, kind="system", data={})
+            db.add(saved)
+        saved.data = {"agent_id": agent.id}
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(409, "The default reviewer changed. Reload PR agents and try again.") from None
+    return {"default_reviewer_id": data.agent_id}
 
 
 @app.get("/api/github/repositories", dependencies=[Depends(require_user)])
@@ -669,7 +714,7 @@ def reset_github(request: Request):
                 select(Job.id)
                 .join(Run, Job.run_id == Run.id)
                 .where(
-                    Job.status.in_(["queued", "starting", "running"]),
+                    Job.status.in_(["waiting", "queued", "starting", "running"]),
                     Run.snapshot["harness_check"].as_boolean().is_not(True),
                 )
                 .limit(1)
@@ -930,7 +975,8 @@ def run_detail(run_id: str):
         run = db.get(Run, run_id)
         if not run:
             raise HTTPException(404)
-        jobs = reviews.ordered_jobs(run, db.scalars(select(Job).where(Job.run_id == run_id)).all())
+        all_jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
+        jobs = reviews.ordered_jobs(run, all_jobs)
         result = run_public(run)
         result["jobs"] = []
         for job in jobs:
@@ -952,6 +998,16 @@ def run_detail(run_id: str):
                 {"id": a.id, "name": a.name}
                 for a in db.scalars(select(Artifact).where(Artifact.job_id == job.id))
             ]
+            children = fusion.branches(db, job) if job.config.get("fusion") else []
+            data["branches"] = [{
+                "id": child.id, "status": child.status, "config": child.config,
+                "model_calls": child.model_calls, "sandbox_id": child.sandbox_id,
+                "result": child.result, "logs": child.logs,
+                "artifacts": [{"id": a.id, "name": a.name} for a in db.scalars(
+                    select(Artifact).where(Artifact.job_id == child.id))],
+            } for child in children]
+            data["aggregator_model_calls"] = job.model_calls
+            data["model_calls"] += sum(child.model_calls for child in children)
             result["jobs"].append(data)
         return result
 
@@ -1016,6 +1072,7 @@ def bootstrap(job_id: str, request: Request):
             "test_secrets": test_secrets,
             "max_rounds": model_rounds(job.config),
             "timeout": job_timeout(job.config),
+            "branch_reports": fusion.reports(db, job) if job.config.get("fusion") else [],
         }
 
 
@@ -1145,6 +1202,9 @@ async def finish(job_id: str, request: Request):
         job = db.get(Job, job_id)
         run = db.get(Run, job.run_id)
         minimum = job.config.get("minimum_review_seconds", 0)
+        if job.config.get("fusion"):
+            result["limitations"] = list(dict.fromkeys(
+                result["limitations"] + fusion.coverage_limits(fusion.branches(db, job))))
         clock = db.get(ReviewTiming, job_id) if minimum else None
         if clock:
             result["review_seconds"] = round(max(0, time.time() - clock.started_at), 1)

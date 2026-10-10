@@ -3,7 +3,7 @@
 Self-hosted plane for configuring PR review agents. Host a shared workspace, configure each agent’s model, instructions, skills, and tools, then call reviewers from a GitHub PR comment:
 
 ```text
-@litereview frontend pentest security
+@litereview
 ```
 
 LiteReview acknowledges an accepted command with 👀 and creates a separate progress comment for each agent instance. Every instance runs in its own Modal sandbox. As each agent finishes, its comment shows ✅ and its full response, with findings linked to inline threads where you can reply. Findings without a usable diff line stay in the agent comment. Each agent’s 👀 reaction is removed when it finishes; the request’s 👀 is removed when all agents finish. ✅ means the agent finished, not that the review is issue-free: incomplete work and skipped checks remain labeled. Reviewers stay in the order named in the command, with group members and instances in their saved order. In **Runs**, agent reports, findings, checks, screenshots, and activity start collapsed. LiteReview never pushes fixes.
@@ -19,6 +19,8 @@ Reviews require a **Modal account**, a **model provider or gateway**, and a **pu
 This beta runs **one trusted workspace per deployment**. Every admitted member can manage the workspace and use its shared connections. Run time, model-call, and concurrency limits are optional; configure them and your providers' budgets for your deployment. See the [security boundary](SECURITY.md#intended-deployment-boundary) before connecting private repositories or privileged tools.
 
 ## Configure reviewers
+
+Comment `@litereview` alone to run the workspace's default reviewer. The first reviewer becomes the default automatically. Under **PR agents → Default reviewer**, choose a different agent at any time; the choice applies to future runs. Existing workspaces with one reviewer can use the bare command immediately. Workspaces with several reviewers choose a default once. To select specific agents or groups, name them in the comment, such as `@litereview frontend security`. Caller and repository permissions apply to both forms.
 
 The agent’s **Review instructions** define its task, scope, workflow, language, and voice. Attached skills support those instructions; the agent instructions take precedence when they conflict. Codex supplies the agent runtime, tools, and result delivery. An agent can produce a narrative response without bug findings. Credentials, enabled tools, and configured time limits still apply.
 
@@ -83,6 +85,18 @@ Every reviewer runs Codex 0.158.0 in its own Modal sandbox. Choose the model, in
 Use an OpenAI connection or a gateway that supports the Responses API. A gateway can route compatible requests to other providers, including Anthropic. Direct Anthropic connections cannot run reviewers. Browser and desktop checks require image-capable models. Under **PR agents**, select your reviewer and choose **Test agent** to check Codex, the model, sample skill loading, and enabled terminal/browser/desktop tools on a sample project. This private check consumes Modal and model credits; it does not access a GitHub repository, post comments, execute your review instructions, or call attached MCP tools.
 
 Every reviewer includes terminal access to inspect files, install dependencies, run tests, and create reproducers in its disposable checkout. Instructions and skills can request Codex subagents; the main reviewer combines their evidence into one result. Browser, computer use, attached skills, and selected MCP tools remain configurable. The checkout contains the supplied PR commit's source archive, without Git history. LiteReview never pushes changes.
+
+Under **PR agents → reviewer → Model**, **Reasoning effort** can use the model default or request Low, Medium, High, or Extra high. Supported levels depend on your model and gateway. Higher effort can increase review time and cost. Run **Test agent** after changing it; that check uses the selected effort. Existing reviewers keep their model default until you choose a level.
+
+### Combine independent reviews with Fusion
+
+Open **PR agents → reviewer** and change **Review mode** to **Fusion**. Select each branch's connection, model, and optional reasoning effort. Use **Add branch** for more independent reviews, up to 16. An optional focus gives a branch a perspective such as configuration contracts or state and lifecycle bugs. All branches use the reviewer's instructions, skills, and enabled tools.
+
+Choose the **Aggregator model** below the branches, then save and run **Test agent**. The test exercises every stage on a private sample project. For a PR review, branches run in separate checkouts; the aggregator gets a fresh checkout and their reports, verifies the claims, and publishes one final review. In **Runs**, expand **Fusion** to inspect each branch's result and activity. Branch results start collapsed. If a branch fails, its incomplete coverage remains in the final result. If every branch fails, aggregation does not run.
+
+A fusion review costs the sum of every branch and the aggregator. Maximum run time and model-call limits apply separately to each stage; minimum review time applies to each branch. The workspace concurrency setting can queue branches when capacity is full. Choose this reviewer as **Default reviewer** to invoke the whole fusion with `@litereview`.
+
+For an independent bug review, copy the [example review instructions](examples/reviewers/independent-bugs.md) into the reviewer's instructions. The example traces callers and consumers, checks boundary cases and repeated operations, and verifies whether tests exercise their intended behavior. Leave external review-service MCP tools unselected when evaluating it against another reviewer. Measure quality and cost on your own PRs before making it a required check.
 
 The full PR context is stored in a sandbox file, and the diff remains available through review tools. Large diffs do not travel as command-line arguments or oversized initial prompts. Follow-up turns and timed continuations keep the same Codex session and cache key. Cache hits and savings depend on the selected gateway and provider; independent reviewers have separate sessions.
 

@@ -1928,3 +1928,8 @@ summary:hover {
 .empty[hidden] {
   display: none;
 }
+
+.fusion-branch { border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 16px; margin: 12px 0; min-width: 0; }
+.fusion-branch legend { padding: 0 6px; font-weight: 600; }
+.fusion-results > details { padding: 12px; margin: 8px 0; border: 1px solid var(--border, #ddd); border-radius: 8px; }
+.fusion-results summary { overflow-wrap: anywhere; }

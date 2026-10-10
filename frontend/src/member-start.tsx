@@ -6,7 +6,7 @@ import { Brand, ProviderMark } from "./ui";
 type Availability = {
   state:
     "github" | "workspace" | "approval" | "reviewer" | "unavailable" | "ready";
-  repositories: { name: string; reviewers: string[] }[];
+  repositories: { name: string; reviewers: string[]; default_reviewer: string | null }[];
 };
 
 export function MemberStart({
@@ -70,8 +70,10 @@ export function MemberStart({
     data?.repositories[0];
   const reviewer = repo?.reviewers.includes(reviewerName)
     ? reviewerName
-    : repo?.reviewers[0];
-  const command = reviewer ? `@litereview ${reviewer}` : "";
+    : repo?.default_reviewer || repo?.reviewers[0];
+  const command = reviewer
+    ? reviewer === repo?.default_reviewer ? "@litereview" : `@litereview ${reviewer}`
+    : "";
   const copy = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);

@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 import tarfile
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from tempfile import TemporaryFile
 
 import httpx
@@ -128,6 +128,10 @@ def skill_context(skills):
 
 
 async def run(relay, data):
+    if data.get("branch_reports"):
+        report_path = Path("/workspace/litereview-run/branch-reports.json")
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(data["branch_reports"], ensure_ascii=False), encoding="utf-8")
     data["config"]["capabilities"] = review_capabilities(data["config"].get("capabilities", []))
     await prepare_repository(relay)
     stage_skills(data["config"]["skills"])

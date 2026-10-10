@@ -4,9 +4,12 @@ import io
 import secrets
 import tarfile
 
+from sqlalchemy import select
+
 from runner.catalog import HARNESS_VERSIONS, validate_connection
 
-from .db import Job, Run, Session, uid
+from . import fusion
+from .db import Resource, Run, Session, uid
 
 
 def archive():
@@ -98,7 +101,8 @@ def enqueue(data, connection):
         },
     )
     with Session() as db:
+        cfg = fusion.snapshot_config(cfg, {r.id: r for r in db.scalars(select(Resource))})
         db.add(run)
-        db.add(Job(id=uid(), run_id=run.id, config=cfg))
+        fusion.enqueue(db, run.id, cfg)
         db.commit()
     return {"id": run.id, "status": "queued"}

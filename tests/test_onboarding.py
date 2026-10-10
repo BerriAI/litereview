@@ -159,7 +159,9 @@ def test_member_response_is_minimal_and_applies_both_grants_and_github_access(ow
     identity(owner)
     response = owner.get("/api/start").json()
     assert response["state"] == "ready"
-    assert response["repositories"] == [{"name": "BerriAI/litereview", "reviewers": ["reviewer"]}]
+    assert response["repositories"] == [{
+        "name": "BerriAI/litereview", "reviewers": ["reviewer"], "default_reviewer": "reviewer",
+    }]
     github.permission.assert_awaited_once_with("BerriAI/litereview", 42, "trusted", expected_id="42")
     assert all(
         secret not in json.dumps(response)
@@ -176,7 +178,21 @@ def test_member_response_is_minimal_and_applies_both_grants_and_github_access(ow
     assert owner.get("/api/start").json()["repositories"] == []
 
 
-@pytest.mark.parametrize("cause", ["permission", "installation", "stale-check", "failed-check"])
+def test_start_does_not_offer_an_unavailable_default(owner, monkeypatch):
+    agent, _ = ready_workspace(owner, monkeypatch)
+    other = owner.post("/api/resources/agents", json={**agent, "name": "private-reviewer"}).json()
+    owner.put("/api/default-reviewer", json={"agent_id": other["id"]}).raise_for_status()
+    enable(monkeypatch)
+    identity(owner)
+    result = owner.get("/api/start").json()
+    assert result["state"] == "ready"
+    assert result["repositories"] == [{
+        "name": "BerriAI/litereview", "reviewers": ["reviewer"], "default_reviewer": None,
+    }]
+    assert "private-reviewer" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("cause", ["permission", "installation", "stale-check", "failed-check", "effort"])
 def test_readiness_does_not_claim_unavailable_or_unchecked_reviewer(owner, monkeypatch, cause):
     agent, conn = ready_workspace(owner, monkeypatch)
     if cause == "permission":
@@ -187,6 +203,9 @@ def test_readiness_does_not_claim_unavailable_or_unchecked_reviewer(owner, monke
         with Session() as db:
             if cause == "stale-check":
                 db.get(Resource, conn["id"]).updated_at = time.time() + 1
+            elif cause == "effort":
+                row = db.get(Resource, agent["id"])
+                row.data = {**row.data, "reasoning_effort": "high"}
             else:
                 db.get(Job, "check-job").status = "failed"
             db.commit()

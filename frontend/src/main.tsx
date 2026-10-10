@@ -37,6 +37,7 @@ import { Documentation } from "./docs";
 import { MCPAuthFields, MCPServers, People } from "./resources";
 import { MCPToolSelector } from "./mcp-tool-selector";
 import { ReviewResult } from "./review-result";
+import { FusionFields, FusionResults } from "./fusion";
 import { api, send } from "./api";
 import { GitHubSetup, GitHubSettings } from "./github-setup";
 import { MemberStart } from "./member-start";
@@ -233,6 +234,8 @@ function App() {
     setModelCheck(null);
   }, [
     editor?.data.model,
+    editor?.data.reasoning_effort,
+    JSON.stringify(editor?.data.fusion),
     modelConnection,
     JSON.stringify(editor?.data.capabilities),
   ]);
@@ -620,6 +623,8 @@ function App() {
           ? `Reset access for “${item.name}” to all agents and groups? Google sign-in and linked GitHub are still required.`
           : kind === "access"
             ? `Remove access for “${item.name}”?`
+            : kind === "agents" && setup?.default_reviewer_id === item.id
+              ? `Delete “${item.name}”? Choose another default reviewer afterward to keep @litereview working.`
             : `Delete “${item.name}”?`,
       )
     )
@@ -1198,7 +1203,7 @@ function App() {
                         >
                           {job.result.limitations?.length
                             ? "incomplete"
-                            : job.status}
+                            : job.status === "waiting" ? "reviewing branches" : job.status}
                         </Badge>
                         <span>
                           {job.result.findings?.length || 0}{" "}
@@ -1209,6 +1214,7 @@ function App() {
                         <code>{job.config.model}</code>
                       </p>
                       <ReviewResult job={job} repo={run.repo} head={run.head} />
+                      <FusionResults job={job} repo={run.repo} head={run.head} />
                       {job.artifacts.length > 0 && (
                         <details>
                           <summary>{job.artifacts.length} screenshots</summary>
@@ -1288,6 +1294,30 @@ function App() {
             />
           ) : (
             <>
+              {active === "agents" && store.agents.length > 0 && (
+                <Field label="Default reviewer" hint="Comment @litereview to run this agent. Caller and repository permissions still apply.">
+                  <select
+                    value={setup?.default_reviewer_id || ""}
+                    disabled={busy}
+                    onChange={async (event) => {
+                      const agentId = event.target.value;
+                      setBusy(true);
+                      setError("");
+                      try {
+                        const result = await api("/default-reviewer", send("PUT", { agent_id: agentId }));
+                        setSetup((current: any) => ({ ...current, ...result }));
+                      } catch (error) {
+                        setError((error as Error).message);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    <option value="" disabled>Choose a reviewer</option>
+                    {store.agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                  </select>
+                </Field>
+              )}
               {active === "agents" && store.agents.length > 0 && (
                 <div className="tabs agent-tabs" aria-label="Filter agents">
                   {[
@@ -1383,7 +1413,7 @@ function App() {
                     {query
                       ? "Try a different search."
                       : active === "runs"
-                        ? "Post @litereview followed by agent or group names on a connected PR. Your review will appear here."
+                        ? "Post @litereview on a connected PR to run the default reviewer, or add agent or group names. Your review will appear here."
                         : active === "agents" && !modelConnections.length
                           ? "Connect a model provider or gateway, then create your first reviewer."
                           : active === "groups"
@@ -1841,8 +1871,19 @@ function App() {
                         .
                       </div>
                     )}
+                  <Field label="Review mode" hint="Fusion combines independent branches into one verified review.">
+                    <select value={editor.data.fusion ? "fusion" : "single"} disabled={testingModel}
+                      onChange={(event) => update("fusion", event.target.value === "single" ? null : {
+                        branches: [0, 1].map(() => ({ connection_id: editor.data.connection_id, model: editor.data.model, reasoning_effort: editor.data.reasoning_effort || null, focus: "" })),
+                        instructions: "",
+                      })}>
+                      <option value="single">Single reviewer</option><option value="fusion">Fusion</option>
+                    </select>
+                  </Field>
+                  {editor.data.fusion && <FusionFields value={editor.data.fusion}
+                    onChange={(value) => update("fusion", value)} connections={modelConnections} disabled={testingModel} />}
                   <FormSection
-                    title="Model"
+                    title={editor.data.fusion ? "Aggregator model" : "Model"}
                     description="Reviews run with Codex in a dedicated Modal sandbox. Use OpenAI or a gateway that supports the Responses API."
                   >
                     {store.connections.find((c) => c.id === editor.data.connection_id)?.type === "anthropic" && (
@@ -1887,6 +1928,22 @@ function App() {
                       />
                     </div>
                     {modelError && <small role="status">{modelError}</small>}
+                    <Field
+                      label="Reasoning effort"
+                      hint="Higher effort gives supported models more time to reason and can increase cost. Leave the default for models that do not support this setting."
+                    >
+                      <select
+                        value={editor.data.reasoning_effort || ""}
+                        disabled={testingModel}
+                        onChange={(e) => update("reasoning_effort", e.target.value || null)}
+                      >
+                        <option value="">Model default</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="xhigh">Extra high</option>
+                      </select>
+                    </Field>
                     <div className="model-actions">
                       <button
                         type="button"
@@ -1925,13 +1982,15 @@ function App() {
                                 harness: "codex",
                                 connection_id: editor.data.connection_id,
                                 model: editor.data.model,
+                                reasoning_effort: editor.data.reasoning_effort || null,
+                                fusion: editor.data.fusion || null,
                                 capabilities: editor.data.capabilities,
                               }),
                             );
                             setCheckRunId(check.id);
                             setModelCheck({
                               error: false,
-                              text: "Starting a private test sandbox. The first run may take a few minutes.",
+                              text: editor.data.fusion ? "Starting private branch checks, followed by the aggregator check." : "Starting a private test sandbox. The first run may take a few minutes.",
                             });
                             while (true) {
                               await new Promise((resolve) =>
@@ -1956,7 +2015,7 @@ function App() {
                                   );
                                 setModelCheck({
                                   error: false,
-                                  text: "Harness, model, and selected capabilities passed the test.",
+                                  text: "All selected models and capabilities passed the harness check.",
                                 });
                                 break;
                               }
@@ -2004,7 +2063,7 @@ function App() {
                       )}
                     </div>
                     <small>
-                      Checks Codex, this model, and enabled tools on a sample
+                      Checks Codex, every selected model, and enabled tools on a sample
                       project. Uses Modal and model credits. Your review
                       instructions, attached skills, and MCP tools are not run
                       in this check. The minimum review time applies to PR
