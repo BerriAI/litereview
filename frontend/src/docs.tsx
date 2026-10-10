@@ -170,8 +170,8 @@ export function Documentation() {
               <p>
                 On Repositories, choose Configure reviewer. Reuse a saved model
                 connection, choose a model, and save and check the reviewer.
-                Codex is the default harness; a direct Anthropic connection uses
-                Claude Code. The private check uses model and Modal credits on a
+                Every reviewer uses Codex with OpenAI or a Responses-compatible
+                gateway. Anthropic models require a gateway. The private check uses model and Modal credits on a
                 sample project without touching your repositories. You can leave
                 the page and return while it runs.
               </p>
@@ -264,19 +264,26 @@ export function Documentation() {
           </p>
         </section>
         <section>
-          <h2>Optional harnesses and groups</h2>
+          <h2>Codex and agent groups</h2>
           <p>
-            Agents can use Built-in, Pi, OpenCode V1, OpenCode V2, Codex, Claude
-            Code, or Deep Agents. Codex needs a Responses-compatible endpoint;
-            Claude Code needs a Messages-compatible endpoint. A gateway can
-            translate these protocols. Test agent checks your selected harness
-            and capabilities. Skills and MCP selections stay with the agent.
+            Every agent uses Codex. Choose an OpenAI connection or a gateway
+            that supports the Responses API. A gateway can route compatible
+            requests to other models, including Anthropic. Test agent checks
+            Codex, the model, and enabled capabilities. Skills and MCP selections
+            stay with the agent.
           </p>
           <p>
-            Optional runtimes retain their own licenses. The Claude Agent SDK
-            uses separate Anthropic terms and is not covered by LiteReview’s MIT
-            license. Review the <a href="/THIRD_PARTY_NOTICES.md">third-party notices</a>
-            {" "}when enabling or redistributing a runtime.
+            Existing reviewers move to Codex automatically. If a reviewer uses a
+            direct Anthropic connection, add a Responses-compatible gateway in
+            <a href="/models"> Models</a>, select it in the reviewer’s Model
+            section, and run Test agent. Models, instructions, skills, tools, and
+            limits are preserved. Running reviews and history keep their original
+            settings; queued reviews using a retired runtime need a new request.
+          </p>
+          <p>
+            Codex retains its Apache-2.0 license. See the
+            <a href="/THIRD_PARTY_NOTICES.md"> third-party notices</a> when
+            redistributing the runtime.
           </p>
           <p>
             In <a href="/groups">Agent groups</a>, bundle existing agents and
@@ -313,8 +320,7 @@ export function Documentation() {
             <div>
               <dt>Subagents</dt>
               <dd>
-                Instructions and skills can request delegation in harnesses that
-                support it. The main reviewer combines their evidence into one
+                Instructions and skills can request Codex subagents. The main reviewer combines their evidence into one
                 result.
               </dd>
             </div>

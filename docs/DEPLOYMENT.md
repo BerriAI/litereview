@@ -22,7 +22,7 @@ You need a Render account, a Modal account with sandbox capacity, a Google Works
 
    Complete the browser flow. The CLI stores `token_id` and `token_secret` in `~/.modal.toml`; enter them privately as `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` in Render. Do not commit that file. LiteReview creates its Modal app and sandbox images on demand; there is no separate Modal app deployment.
 2. **Google:** in [Google Auth Platform](https://console.cloud.google.com/auth/overview), select a project owned by your Workspace organization. Configure the app branding and an **Internal** audience, then create an OAuth client with application type **Web application** under **Clients**. Save the client ID and secret for Render. You will add the exact callback URL once Render assigns your deployment URL.
-3. **Model:** obtain an API key from your provider or gateway. Add it through LiteReview's **Models** page after signing in. Codex requires a Responses-compatible endpoint; a direct Anthropic connection uses Claude Code and its [separate terms](../THIRD_PARTY_NOTICES.md#optional-agent-runtimes-and-services). Other harnesses are available in the agent editor. Model discovery alone does not establish compatibility.
+3. **Model:** obtain an API key for OpenAI or a gateway that supports the Responses API. Add it through LiteReview's **Models** page after signing in. All reviewers use Codex; Anthropic models require a Responses-compatible gateway. Model discovery alone does not establish compatibility.
 4. **GitHub:** identify the account that owns the repositories. For organization repositories, an organization owner or organization-wide App Manager must create the App; installation can require an owner's approval. A private personal App cannot be installed into an organization. LiteReview's guided setup creates the App after deployment.
 
 ## Deploy on Render
@@ -92,7 +92,7 @@ After deployment, check `/health`, sign-in, saved connections/repositories, and 
 | Request origin does not match | Make `PUBLIC_URL` match the HTTPS origin used in your browser. Restart after changing the environment. |
 | GitHub App exists but no repositories appear | Check the App owner, pending organization approval, and installed repository selection; then sync in Repositories. |
 | Reviewer check fails before execution | Check Modal credentials, account capacity, and whether Modal can reach `PUBLIC_URL` over HTTPS. Retry the saved reviewer check. |
-| Model discovery works but review fails | Check the selected harness's protocol, tool/image support, provider credits, and the failure details under Runs. |
+| Model discovery works but review fails | Confirm the endpoint supports the Responses API, then check tool/image support, provider credits, and the failure details under Runs. |
 | Work is incomplete or expensive | Inspect Checks and execution details, narrow instructions/tools, and configure optional limits and upstream budgets. |
 
 See [validation scope](VALIDATION.md) for the distinction between automated checks and live integration evidence.

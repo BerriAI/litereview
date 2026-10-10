@@ -14,6 +14,7 @@ from sqlalchemy import (
     create_engine,
     func,
     inspect,
+    select,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -155,3 +156,11 @@ def init_db():
             name = next(c for c in inspect(connection).get_columns("artifacts") if c["name"] == "name")
             if getattr(name["type"], "length", None) is not None:
                 connection.execute(text("ALTER TABLE artifacts ALTER COLUMN name TYPE TEXT"))
+
+    # Migrate saved reviewers only. Accepted jobs keep their original snapshots;
+    # running sandboxes continue, and retired queued runtimes require a new review.
+    with Session.begin() as db:
+        for row in db.scalars(select(Resource).where(Resource.kind == "agents")):
+            if row.data.get("harness") != "codex":
+                row.data = {**row.data, "harness": "codex"}
+                row.updated_at = time.time()

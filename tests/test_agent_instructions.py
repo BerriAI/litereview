@@ -26,10 +26,11 @@ def test_codex_uses_saved_instructions_as_base_on_start_and_resume(tmp_path, mon
         path = json.loads(settings["model_instructions_file"])
         assert (tmp_path / "agent-instructions.md").read_text() == instructions
         assert path == str(tmp_path / "agent-instructions.md")
-        assert args[-1] == "immutable PR data"
+        assert args[-1] == "-"
+        assert "immutable PR data" not in args
         assert instructions not in args
         if resume_id:
-            assert args[-3:] == ["resume", resume_id, "immutable PR data"]
+            assert args[-3:] == ["resume", resume_id, "-"]
 
 
 def test_instruction_contract_preserves_task_and_skills_without_duplicate_persona():

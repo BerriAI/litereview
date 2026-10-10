@@ -1,6 +1,6 @@
 # Third-party notices
 
-LiteReview's original application code and documentation are licensed under the [MIT License](LICENSE). Dependencies, optional agent runtimes, fonts, and third-party marks retain their own licenses and terms. LiteReview's MIT license does not relicense them.
+LiteReview's original application code and documentation are licensed under the [MIT License](LICENSE). Dependencies, the Codex runtime, fonts, and third-party marks retain their own licenses and terms. LiteReview's MIT license does not relicense them.
 
 ## Browser application
 
@@ -12,21 +12,9 @@ Python dependencies are resolved in `uv.lock` and installed with their distribut
 
 Container base images, system packages, Chromium, and sandbox tools retain their upstream licenses. Their package managers install their license notices. The application image includes this notice and LiteReview's `LICENSE` in `/app`.
 
-## Optional agent runtimes and services
+## Agent runtime and services
 
-The versions and package names are pinned in `runner/catalog.py`. Runtimes are installed from their upstream packages into the user's Modal sandbox only when selected.
-
-| Runtime | Package | License or terms |
-| --- | --- | --- |
-| Built-in | LiteReview runner | MIT |
-| Pi | `@earendil-works/pi-coding-agent` | MIT |
-| OpenCode V1 | `opencode-ai` | MIT |
-| OpenCode V2 | `@opencode/cli` | MIT |
-| Codex | `@openai/codex` | Apache-2.0 |
-| Claude Code | `@anthropic-ai/claude-agent-sdk` | Anthropic's separate [legal agreements](https://code.claude.com/docs/en/legal-and-compliance); not licensed by LiteReview under MIT |
-| Deep Agents | `deepagents` | MIT |
-
-The pinned Claude Agent SDK package states: “© Anthropic PBC. All rights reserved. Use is subject to the Legal Agreements outlined here: https://code.claude.com/docs/en/legal-and-compliance.” Its README refers to the [Anthropic Commercial Terms](https://www.anthropic.com/legal/commercial-terms). Review those terms when enabling that integration or redistributing its runtime.
+Every review sandbox installs `@openai/codex`, licensed under Apache-2.0. Its version is pinned in `runner/catalog.py`. Preserve the package's license and notices when redistributing the runtime; LiteReview's MIT license does not relicense Codex.
 
 Modal, GitHub, Google OAuth, model providers, gateways, and connected MCP services have their own service terms, access requirements, and charges. An open-source application license does not provide credentials or credits for those services.
 

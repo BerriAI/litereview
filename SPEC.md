@@ -12,7 +12,7 @@ The purpose of v1 is to run real reviews and judge whether the experience is use
 
 | Object | Owns |
 | --- | --- |
-| **PR agent** | Unique command name, instructions, harness, model, enabled tools, attached MCP connections, attached skills |
+| **PR agent** | Unique command name, instructions, model, enabled tools, attached MCP connections, attached skills |
 | **Agent group** | Command name, references to PR agents, instance count for each reference |
 | **Connection** | A reusable model/provider connection or MCP server connection |
 | **Skill** | Name, description, `SKILL.md`, optional supporting files |
@@ -26,7 +26,7 @@ GitHub commands accept **agents and groups** together. Their command names share
 
 1. A workspace member connects GitHub, selects repositories, and adds a model connection.
 2. They optionally add reusable MCP connections and skills.
-3. They create PR agents, choosing a harness, model, instructions, capabilities, and attachments for each.
+3. They create PR agents, choosing a model, instructions, capabilities, and attachments for each.
 4. They optionally create groups by selecting existing agents and instance counts, then use People and each repository's Review permissions to configure invocation grants.
 5. An allowed user comments on a PR:
 
@@ -44,7 +44,7 @@ V1 accepts a command as the entire content of a new top-level PR comment. Unknow
 
 ## 4. Agent capabilities
 
-**Every agent instance runs in a Modal sandbox. There is no “code only versus sandbox” selector.** Models run at the selected provider or gateway; Modal runs the selected harness and its tools. Built-in, Pi, OpenCode V1/V2, Codex, Claude Code, and Deep Agents are available; only the selected package/process is installed and launched in that job. The model endpoint must support the harness protocol.
+**Every agent instance runs in a Modal sandbox. There is no “code only versus sandbox” selector.** Models run at the selected provider or gateway; Modal runs the pinned Codex runtime and its tools. The model endpoint must support the Responses API. Direct Anthropic connections require a compatible gateway.
 
 Repository and terminal access are included for every reviewer. The agent editor offers browser and computer use as additional capabilities:
 
@@ -150,7 +150,7 @@ The [agent control plane](https://github.com/LiteLLM-Labs/litellm-agent-control-
 2. Resolve the PR’s current base/head SHAs and snapshot selected group memberships, agents, models, capabilities, and skills. Create the run and jobs in Postgres.
 3. Acknowledge the request comment with 👀 and dispatch from the durable job queue. Reaction retries are idempotent. A stored pending run must be recoverable if dispatch is interrupted.
 4. For every job, create a fresh sandbox, stage the repository and diff, mount attached skills, and initialize enabled tools. Run configured setup only when the job needs the runnable application environment.
-5. Run the selected harness: request a model response, execute permitted tool calls, return tool results, and continue until it returns a structured review or reaches its limits.
+5. Run Codex: request a model response, execute permitted tool calls, return tool results, and continue until it returns a structured review or reaches its limits.
 6. Persist results and artifacts. Terminate the sandbox in cleanup, with Modal’s required sandbox lifetime as a backstop.
 7. When all jobs reach a terminal state, post one final GitHub comment. Recover an existing marked comment after a lost publication response. One failed agent does not discard other agents’ results.
 
@@ -193,7 +193,7 @@ The build is ready to try when all of these work against a real test repository:
 7. Reject an unauthorized caller, handle a duplicated webhook once, and clean up sandboxes after completion and timeout.
 8. Verify the create/edit/reuse flows and run results on desktop and narrow screens using the specified UI standard.
 
-No auto-fixes, pushes, scheduled reviews, persistent chat sessions, custom runtime packages beyond the listed harnesses, TOML import/export, or enterprise administration in this version. Native subagents are available in harnesses that support them; the main reviewer submits the combined result.
+No auto-fixes, pushes, scheduled reviews, persistent chat sessions, custom agent runtimes, TOML import/export, or enterprise administration in this version. Codex subagents are available; the main reviewer submits the combined result.
 
 ## 11. Build order
 

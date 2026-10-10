@@ -128,8 +128,9 @@ def workspace_readiness():
                 job
                 for job, created in checks
                 if conn
+                and conn.data["type"] in ("openai", "gateway")
                 and created >= conn.updated_at
-                and job.config.get("harness_version") == HARNESS_VERSIONS[row.data.get("harness", "builtin")]
+                and job.config.get("harness_version") == HARNESS_VERSIONS["codex"]
                 and all(
                     job.config.get(k, "builtin" if k == "harness" else None)
                     == (

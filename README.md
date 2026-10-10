@@ -1,6 +1,6 @@
 # LiteReview
 
-Self-hosted plane for configuring PR review agents. Host a shared workspace, configure each agent’s harness, model, instructions, skills, and tools, then call reviewers from a GitHub PR comment:
+Self-hosted plane for configuring PR review agents. Host a shared workspace, configure each agent’s model, instructions, skills, and tools, then call reviewers from a GitHub PR comment:
 
 ```text
 @litereview frontend pentest security
@@ -20,7 +20,7 @@ This beta runs **one trusted workspace per deployment**. Every admitted member c
 
 ## Configure reviewers
 
-The agent’s **Review instructions** define its task, scope, workflow, language, and voice. Attached skills support those instructions; the agent instructions take precedence when they conflict. The harness supplies tools and result delivery. An agent can produce a narrative response without bug findings. Credentials, enabled tools, and configured time limits still apply.
+The agent’s **Review instructions** define its task, scope, workflow, language, and voice. Attached skills support those instructions; the agent instructions take precedence when they conflict. Codex supplies the agent runtime, tools, and result delivery. An agent can produce a narrative response without bug findings. Credentials, enabled tools, and configured time limits still apply.
 
 Agents attempt relevant dependency setup using the project’s manifests and documented commands before reporting an environment blocker. Build tools, Python, Node, and uv are available; project-specific packages and toolchains can be installed in the disposable sandbox. Optional tests that were not run appear under **Checks** without making the review incomplete. A required check that could not run, or other unfinished work required by the configured task, is reported as incomplete. An executed test that fails is evidence, not automatically an incomplete review.
 
@@ -32,7 +32,7 @@ Set **Minimum review time (minutes)** when creating a reviewer or under **PR age
 
 Every instance uses its reviewer's saved minimum, including when called through a group. The clock starts after repository/tool setup. `0` means no minimum and preserves the normal behavior for existing reviewers. Use whole minutes; LiteReview does not impose a workspace ceiling. Changing the setting affects future reviews; accepted jobs keep their saved duration. Comment time options are rejected with instructions to use the UI setting. Private harness checks do not run for this minimum.
 
-The harness checks a monotonic clock, asks the agent to keep investigating and verifying, and rejects early completion. The API independently checks elapsed time. Codex continues the same thread if it returns without submitting; the other harnesses retain their sessions too. This does not invoke the interactive `/goal` slash command. Runs have no LiteReview time or model-call limit by default. To set one, expand **Optional limits** in the agent editor and enter **Maximum run time (minutes)**, **Maximum model calls**, or both. Leave a field blank to remove its limit. Maximum run time includes setup and must exceed the minimum; a minimum never creates a maximum. Groups use each agent’s saved limits, and accepted jobs keep their snapshots. Provider failures and reached limits produce an incomplete review, never a successful early completion. [Modal imposes a 24-hour sandbox lifetime](https://modal.com/docs/guide/sandboxes#timeouts); LiteReview uses that full lifetime when no maximum is selected. Runs do not yet resume across sandbox replacements. Existing MCP selections, skills, visual tools, models, and instructions are preserved.
+The harness checks a monotonic clock, asks the agent to keep investigating and verifying, and rejects early completion. The API independently checks elapsed time. Codex continues the same thread if it returns before the minimum without submitting. This does not invoke the interactive `/goal` slash command. Runs have no LiteReview time or model-call limit by default. To set one, expand **Optional limits** in the agent editor and enter **Maximum run time (minutes)**, **Maximum model calls**, or both. Leave a field blank to remove its limit. Maximum run time includes setup and must exceed the minimum; a minimum never creates a maximum. Groups use each agent’s saved limits, and accepted jobs keep their snapshots. Provider failures and reached limits produce an incomplete review, never a successful early completion. [Modal imposes a 24-hour sandbox lifetime](https://modal.com/docs/guide/sandboxes#timeouts); LiteReview uses that full lifetime when no maximum is selected. Runs do not yet resume across sandbox replacements. Existing MCP selections, skills, visual tools, models, and instructions are preserved.
 
 ## Deploy to Render
 
@@ -43,7 +43,7 @@ Follow the [deployment guide](docs/DEPLOYMENT.md) to obtain credentials, deploy,
 3. Sign in with Google. Link GitHub to request reviews, or choose **Workspace** to configure agents and connections first. Every member has the same interface.
 4. Open **Repositories → Connect GitHub** (the button names your organization when configured). Use an App owned by the account that owns your repositories. Continue to GitHub in the same tab; the guided flow registers the App, stores its credentials encrypted, and opens installation. An organization owner or organization-wide App Manager can create the App; installation may need an owner’s approval. A private personal App cannot be installed in an organization.
 5. Select repositories on GitHub and return to **Repositories**. LiteReview imports the selection automatically; installation IDs and a second repository picker are unnecessary. Public and private repositories are supported. New selections allow existing approved People to call their permitted reviewers. Open a repository’s **Review permissions** to narrow that access.
-6. If no model connection exists, add one under **Models**. Reuse an existing gateway or direct provider where possible. **Configure reviewer** asks for its name and model, then **Save and check reviewer** runs a private harness check using Modal and model credits. Codex is the default; a direct Anthropic connection uses Claude Code. Full instructions, capabilities, skills, and MCP tools remain in the agent editor.
+6. If no model connection exists, add one under **Models**. Reuse an existing Responses-compatible gateway or OpenAI connection where possible. **Configure reviewer** asks for its name and model, then **Save and check reviewer** runs a private harness check using Modal and model credits. Every reviewer uses Codex; Anthropic models require a Responses-compatible gateway. Full instructions, capabilities, skills, and MCP tools remain in the agent editor.
 7. Each teammate chooses **Sign in with Google → Connect GitHub**. They appear in **People** automatically and can use all reviewers by default. Use **Edit access** for optional restrictions; no duplicate allowlist is required. The start page shows commands only for permitted repositories and checked reviewers, after verifying current GitHub access. Post the command in a PR; successful setup ends with an actual review result. Provider consent can require additional clicks.
 
 ## Resume GitHub setup
@@ -76,17 +76,23 @@ Local development can use `ADMIN_TOKEN` only when no Google client is configured
 
 Modal images and sandboxes are created on demand using your credentials. The first review builds the image and can take several minutes; subsequent reviews reuse it. No separate Modal app deployment, workflow service, Redis, or storage bucket is required.
 
-## Harnesses
+## Codex runtime
 
-Choose **Built-in**, **Pi**, **OpenCode V1**, **OpenCode V2**, **Codex**, **Claude Code**, or **Deep Agents** alongside the model in each agent's editor. Existing agents keep Built-in. Each sandbox installs and launches only the selected harness; there is no pool of idle harnesses.
+Every reviewer runs Codex 0.158.0 in its own Modal sandbox. Choose the model, instructions, skills, and tools; LiteReview installs and configures Codex automatically.
 
-Every reviewer includes terminal access to run tests and create reproducers in its disposable checkout. Native editing and subagents are available in harnesses that support them; instructions and skills can request delegation. The main reviewer waits for delegated evidence and submits one result. Browser, computer use, attached skills, and selected MCP tools remain configured per agent. Nothing pushes source changes to GitHub. Skills written for another harness can use equivalent native tools, but custom external tools still need a configured MCP connection. The checkout is an archive of the supplied PR commit; it does not include Git history.
+Use an OpenAI connection or a gateway that supports the Responses API. A gateway can route compatible requests to other providers, including Anthropic. Direct Anthropic connections cannot run reviewers. Browser and desktop checks require image-capable models. Under **PR agents**, select your reviewer and choose **Test agent** to check Codex, the model, sample skill loading, and enabled terminal/browser/desktop tools on a sample project. This private check consumes Modal and model credits; it does not access a GitHub repository, post comments, execute your review instructions, or call attached MCP tools.
 
-Codex needs a Responses-compatible endpoint. Claude Code needs a Messages-compatible endpoint. A gateway can translate these protocols to compatible models, including Claude with Codex. Pi, OpenCode, and Deep Agents use Chat Completions for gateway/OpenAI connections and Messages for direct Anthropic connections. Browser and desktop checks require image-capable models. Model discovery alone does not establish compatibility: **Test agent** runs the actual selected harness against a sample project, without accessing a GitHub repo or posting comments. It checks sample skill loading and the enabled terminal/browser/desktop tools; it does not execute your review instructions or attached MCP tools. You can stop a test from the editor.
+Every reviewer includes terminal access to inspect files, install dependencies, run tests, and create reproducers in its disposable checkout. Instructions and skills can request Codex subagents; the main reviewer combines their evidence into one result. Browser, computer use, attached skills, and selected MCP tools remain configurable. The checkout contains the supplied PR commit's source archive, without Git history. LiteReview never pushes changes.
 
-Versions are pinned in `runner/catalog.py` and captured with every job. Runtime updates are application releases. See [harness validation](docs/VALIDATION.md#selectable-harness-validation) for the tested versions and combinations.
+The full PR context is stored in a sandbox file, and the diff remains available through review tools. Large diffs do not travel as command-line arguments or oversized initial prompts. Follow-up turns and timed continuations keep the same Codex session and cache key. Cache hits and savings depend on the selected gateway and provider; independent reviewers have separate sessions.
 
-Optional runtimes retain their upstream licenses. The Claude Agent SDK uses separate Anthropic terms; it is not covered by LiteReview's MIT license. See [third-party notices](THIRD_PARTY_NOTICES.md#optional-agent-runtimes-and-services).
+The runtime version is pinned in `runner/catalog.py` and recorded with every job. See [runtime validation](docs/VALIDATION.md#codex-runtime-validation) for the evidence and [third-party notices](THIRD_PARTY_NOTICES.md#agent-runtime-and-services) for Codex's Apache-2.0 license.
+
+### Existing reviewers
+
+On startup, LiteReview moves saved reviewers to Codex while preserving models, instructions, skills, tools, and limits. If a reviewer uses a direct Anthropic connection, add a Responses-compatible gateway in **Models**, select it in **PR agents → reviewer → Model**, then run **Test agent**. Keep the model ID if your gateway exposes it; otherwise use its equivalent model ID. Run a private check before requesting your next PR review.
+
+Running sandboxes and review history retain their original configuration. A queued job using a retired harness ends with instructions to start a new review; LiteReview does not reinterpret an accepted job's settings.
 
 ## Capabilities
 
@@ -200,7 +206,7 @@ submitted review. It can include private source code and command output. Images,
 request headers, and stored credentials are not captured. Secrets inside conversation text or tool
 arguments and results are not redacted.
 
-All supported harnesses export through the API. The collector key never enters a Modal sandbox.
+Codex model requests export through the API. The collector key never enters a Modal sandbox.
 Exports run in the background without a queue-size cap. Failed exports are logged; reviews continue.
 An API restart can lose pending exports; later calls still join the same review. The parent span and
 final review appear when the run finishes. Unfinished required checks mark the review incomplete.
@@ -211,7 +217,7 @@ Keep `/v1/traces` in the endpoint. To turn tracing off, clear `LITEREVIEW_TRACE_
 
 ### Review execution
 
-The FastAPI service serves the built React UI and runs a durable Postgres-backed dispatcher. Each job runs its selected harness in a separate Modal sandbox with Python 3.12, Node 22, Chromium, Playwright, and a Linux desktop. LLM inference happens at the configured provider.
+The FastAPI service serves the built React UI and runs a durable Postgres-backed dispatcher. Each job runs Codex in a separate Modal sandbox with Python 3.12, Node 22, Chromium, Playwright, and a Linux desktop. LLM inference happens at the configured provider.
 
 The checkout is a GitHub source archive at the PR's immutable head SHA, rather than a full Git clone. It does not include `.git` history, materialize submodules or Git LFS objects, or preserve symlinks. Repositories that depend on those features need additional support. Executable reviews use the repository's configured setup command, start command, and readiness URL; external services, private package registries, and test accounts still need their own configuration. Modal sandboxes have outbound internet access by default, including package installation and browser navigation. This does not grant access to private networks or credentials.
 
@@ -221,7 +227,7 @@ Repository downloads and extraction have no LiteReview size or file-count limit.
 
 Screenshots and activity logs are private Postgres records with no LiteReview size or count cap. Skill uploads, instructions, tool results, review findings, and summaries are also retained without application size caps or truncation.
 
-File, search, shell, browser, and MCP tools return their full results unless the agent requests a range. Model, MCP, download, setup, and tool requests have no LiteReview deadline unless one is explicitly selected for the run or command. Harnesses and upstream services can still enforce their own capacities. When a harness needs model capacities, LiteReview uses the published model metadata when available and otherwise leaves the harness defaults in place.
+File, search, shell, browser, and MCP tools return their full results unless the agent requests a range. Model, MCP, download, setup, and tool requests have no LiteReview deadline unless one is explicitly selected for the run or command. Codex, models, and upstream services still enforce their own context capacities.
 
 Sandboxes launch on demand across reviews by default. Set `CONCURRENCY` to a positive number for an optional workspace-wide cap; `0` leaves concurrency to Modal account quotas and provider rate limits. Each sandbox requests 2 CPU cores and 4 GiB of memory. Time and model-call budgets are optional per-agent settings. Legacy `JOB_TIMEOUT`, `MAX_ROUNDS`, and `MAX_REVIEW_MINUTES` environment values no longer impose defaults. Existing reviewers have no minimum by default. Keep Postgres backups enabled; deleting the database loses settings and run history.
 

@@ -37,6 +37,12 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Check pinned Codex launch and resume
+        run: |
+          codex_test_dir="$(mktemp -d)"
+          codex_version="$(uv run python -c 'from runner.catalog import HARNESS_VERSIONS; print(HARNESS_VERSIONS["codex"])')"
+          npm install --prefix "$codex_test_dir" --omit=dev --no-package-lock "@openai/codex@$codex_version"
+          uv run python -m scripts.codex_smoke --codex "$codex_test_dir/node_modules/.bin/codex"
       - run: npm ci --prefix frontend
       - run: npm run build --prefix frontend
       # Official image mirror avoids Docker Hub's shared-runner pull quota.
