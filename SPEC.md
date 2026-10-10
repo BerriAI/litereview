@@ -4,7 +4,7 @@ Status: beta · 10 October 2026. This document records product behavior and desi
 
 ## 1. What we are building
 
-A small web app for configuring reusable PR review agents and calling them directly or in optional groups from GitHub comments. Each agent instance reviews the same PR commit in its own Modal sandbox. LiteReview acknowledges accepted requests with 👀 and posts one final comment with each agent’s findings, “No issues found,” or a clear failure status.
+A small web app for configuring reusable PR review agents and calling them directly or in optional groups from GitHub comments. Each agent instance reviews the same PR commit in its own Modal sandbox. LiteReview acknowledges accepted requests with 👀 and updates a separate comment for each agent as it finishes, with linked finding threads, “No issues found,” or a clear failure status.
 
 The purpose of v1 is to run real reviews and judge whether the experience is useful. Ship the complete loop before adding more orchestration.
 
