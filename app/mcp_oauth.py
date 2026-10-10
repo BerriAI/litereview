@@ -132,7 +132,7 @@ def prepare_authorization(cid, actor):
             db.commit()
         data, revision = unpack(record), record.revision
     endpoint = secure_url(conn["base_url"])
-    with httpx.Client(timeout=30, follow_redirects=False) as client:
+    with httpx.Client(timeout=None, follow_redirects=False) as client:
         response = client.post(
             endpoint,
             headers={"Accept": "application/json, text/event-stream"},
@@ -331,7 +331,7 @@ def exchange_code(pending, code):
         if not row or row.revision != pending["revision"]:
             raise HTTPException(409, "The connection changed. Retry OAuth from its current settings.")
     data = json.loads(decrypt(pending["secret"]))
-    with httpx.Client(timeout=30, follow_redirects=False) as client:
+    with httpx.Client(timeout=None, follow_redirects=False) as client:
         data = token_request(
             client,
             data,
@@ -376,7 +376,7 @@ def access_token(cid, endpoint, rejected_token=None):
             if not tokens.get("refresh_token"):
                 raise HTTPException(409, "OAuth authorization expired. Reconnect this MCP server.")
             try:
-                with httpx.Client(timeout=30, follow_redirects=False) as client:
+                with httpx.Client(timeout=None, follow_redirects=False) as client:
                     data = token_request(
                         client,
                         data,

@@ -1,13 +1,14 @@
-"""Optional, bounded OTLP export. Collector credentials stay in the API process."""
+"""Optional OTLP export. Collector credentials stay in the API process."""
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+import httpx
+from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import SpanLimits, TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace import SpanLimits, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from opentelemetry.trace import INVALID_SPAN, SpanKind, StatusCode
 
@@ -15,8 +16,39 @@ from .settings import settings
 
 logger = logging.getLogger(__name__)
 _provider = None
-CONTENT_LIMIT = 8192
-BUFFER_LIMIT = 65536
+
+
+class TraceProcessor(SpanProcessor):
+    """Export off the request path with an unbounded queue and no content truncation."""
+
+    def __init__(self, endpoint, headers):
+        self.endpoint = endpoint
+        self.client = httpx.Client(headers=headers, timeout=None)
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="litereview-traces")
+
+    def on_end(self, span):
+        self.executor.submit(self.export, span)
+
+    def export(self, span):
+        try:
+            response = self.client.post(
+                self.endpoint,
+                content=encode_spans((span,)).SerializeToString(),
+                headers={"Content-Type": "application/x-protobuf"},
+            )
+            response.raise_for_status()
+        except Exception:
+            logger.warning("Trace export failed. Check the collector and its credentials.")
+
+    def force_flush(self, timeout_millis=None):
+        self.executor.submit(lambda: None).result(
+            timeout=timeout_millis / 1000 if timeout_millis is not None else None
+        )
+        return True
+
+    def shutdown(self):
+        self.executor.shutdown(wait=True)
+        self.client.close()
 
 
 def start():
@@ -28,21 +60,24 @@ def start():
         url = urlsplit(config.litereview_trace_endpoint)
         if url.scheme not in ("http", "https") or not url.hostname or url.username or url.query or url.fragment:
             raise ValueError("Invalid collector URL")
-        exporter = OTLPSpanExporter(
-            endpoint=config.litereview_trace_endpoint,
-            headers={"Authorization": "Bearer " + config.litereview_trace_api_key}
-            if config.litereview_trace_api_key else {},
-            timeout=3,
-        )
         provider = TracerProvider(
             resource=Resource({"service.name": "litereview"}),
             sampler=ALWAYS_ON,
-            span_limits=SpanLimits(max_attributes=32, max_attribute_length=CONTENT_LIMIT),
+            span_limits=SpanLimits(
+                max_span_attributes=SpanLimits.UNSET,
+                max_events=SpanLimits.UNSET,
+                max_links=SpanLimits.UNSET,
+                max_event_attributes=SpanLimits.UNSET,
+                max_link_attributes=SpanLimits.UNSET,
+                max_attribute_length=SpanLimits.UNSET,
+                max_span_attribute_length=SpanLimits.UNSET,
+            ),
             shutdown_on_exit=False,
         )
-        provider.add_span_processor(BatchSpanProcessor(
-            exporter, max_queue_size=256, max_export_batch_size=16,
-            schedule_delay_millis=1000, export_timeout_millis=3000,
+        provider.add_span_processor(TraceProcessor(
+            config.litereview_trace_endpoint,
+            {"Authorization": "Bearer " + config.litereview_trace_api_key}
+            if config.litereview_trace_api_key else {},
         ))
         _provider = provider
     except Exception:
@@ -57,23 +92,16 @@ def shutdown():
         provider.shutdown()
 
 
-def text_content(value, limit=CONTENT_LIMIT):
+def text_content(value):
     """Only explicit text fields; never images, headers, tools, or arbitrary objects."""
     if isinstance(value, str):
-        return value[:limit]
+        return value
     if isinstance(value, list):
-        parts, remaining = [], limit
-        for item in value:
-            part = text_content(item, remaining)
-            parts.append(part)
-            remaining -= len(part) + 1
-            if remaining <= 0:
-                break
-        return "\n".join(parts)[:limit]
+        return "\n".join(text_content(item) for item in value)
     if isinstance(value, dict):
         for key in ("text", "content"):
             if key in value:
-                return text_content(value[key], limit)
+                return text_content(value[key])
     return ""
 
 
@@ -85,7 +113,6 @@ class ModelTrace:
         self.capture = False
         self.buffer = bytearray()
         self.output = ""
-        self.overflow = False
         self.ended = False
         self.failed = False
         if _provider is None or not enabled:
@@ -130,7 +157,7 @@ class ModelTrace:
                     if isinstance(usage.get(name), int):
                         self.span.set_attribute("gen_ai.usage." + dest + "_tokens", usage[name])
                         break
-        if not self.capture or len(self.output) >= CONTENT_LIMIT:
+        if not self.capture:
             return
         delta = data.get("delta", {})
         content = ""
@@ -144,23 +171,17 @@ class ModelTrace:
         # Final Responses events repeat the deltas; do not append the full response again.
         if not content and not self.output:
             content = text_content(response.get("content") or response.get("output", []))
-        self.output += content[:CONTENT_LIMIT - len(self.output)]
+        self.output += content
 
     def feed(self, chunk, sse=False):
         if not self.span.is_recording():
             return
-        # Bound each incomplete event/body even if an upstream ignores its protocol.
         for part in chunk.splitlines(keepends=True) if sse else (chunk,):
-            if len(self.buffer) + len(part) > BUFFER_LIMIT:
-                self.buffer.clear()
-                self.overflow = True
-            if not self.overflow:
-                self.buffer.extend(part)
+            self.buffer.extend(part)
             if sse and part.endswith(b"\n"):
-                if not self.overflow and self.buffer.startswith(b"data:"):
+                if self.buffer.startswith(b"data:"):
                     self._parse(self.buffer[5:])
                 self.buffer.clear()
-                self.overflow = False
 
     def _parse(self, raw):
         try:
@@ -172,7 +193,7 @@ class ModelTrace:
         if self.ended:
             return
         self.ended = True
-        if self.buffer and not self.overflow:
+        if self.buffer:
             self._parse(self.buffer)
         self.buffer.clear()
         if self.capture:

@@ -6,7 +6,6 @@ import { Brand, ProviderMark } from "./ui";
 type Availability = {
   state:
     "github" | "workspace" | "approval" | "reviewer" | "unavailable" | "ready";
-  max_minutes: number;
   repositories: { name: string; reviewers: string[] }[];
 };
 

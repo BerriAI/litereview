@@ -16,7 +16,7 @@ from langchain_core.tools import StructuredTool
 async def main():
     data = json.loads(Path(sys.argv[1]).read_text())
     cfg, url = data["config"], data["url"]
-    async with httpx.AsyncClient(timeout=180) as client:
+    async with httpx.AsyncClient(timeout=None) as client:
         definitions = (await client.get(url + "/tools")).json()
         tools = []
         for item in definitions:
@@ -81,12 +81,16 @@ async def main():
         if cfg["connection"]["type"] == "anthropic":
             from langchain_anthropic import ChatAnthropic
 
-            model = ChatAnthropic(model=cfg["model"], api_key="sandbox-scoped", base_url=url, max_tokens=8192)
+            capacity = cfg.get("model_capacity", {}).get("output")
+            model = ChatAnthropic(
+                model=cfg["model"], api_key="sandbox-scoped", base_url=url,
+                timeout=None, **({"max_tokens": capacity} if capacity else {}),
+            )
         else:
             from langchain_openai import ChatOpenAI
 
             model = ChatOpenAI(
-                model=cfg["model"], api_key="sandbox-scoped", base_url=url + "/v1", max_tokens=8192
+                model=cfg["model"], api_key="sandbox-scoped", base_url=url + "/v1", timeout=None
             )
         agent = create_deep_agent(
             model=model,

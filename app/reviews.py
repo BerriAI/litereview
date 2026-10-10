@@ -46,8 +46,6 @@ def command_requests(body):
     unique = {}
     for item in selected:
         unique[item["name"]] = item
-    if len(unique) > 20:
-        raise ValueError("A review can select at most 20 agents or groups.")
     return list(unique.values())
 
 
@@ -63,10 +61,6 @@ def expand(groups, resources):
             data.setdefault("harness", "builtin")
             data["harness_version"] = HARNESS_VERSIONS[data["harness"]]
             minutes = data.get("minimum_minutes", 0)
-            if minutes > settings().max_review_minutes:
-                raise HTTPException(
-                    409, "A reviewer's minimum time exceeds the workspace limit. Update it in PR agents."
-                )
             data.update(timing_limits(minutes, data.get("maximum_minutes"), data.get("max_model_calls")))
             conn = resources.get(data["connection_id"])
             if not conn or conn.kind != "connections" or conn.data["type"] == "mcp":
@@ -101,8 +95,6 @@ def expand(groups, resources):
                         "target_kind": group.get("target_kind", "group"),
                     }
                 )
-    if len(jobs) > 30:
-        raise HTTPException(400, "A review can launch at most 30 agent instances.")
     return jobs
 
 
@@ -212,10 +204,6 @@ async def accept(payload, delivery):
         return reject_command(
             delivery, repo, pr, actor, installation, "LiteReview only reviews open pull requests."
         )
-    if pr_info.get("changed_files", 0) > 300:
-        return reject_command(
-            delivery, repo, pr, actor, installation, "This PR exceeds the v1 limit of 300 changed files."
-        )
     head, base = pr_info["head"]["sha"], pr_info["base"]["sha"]
     diff = (
         await github.repo_request(
@@ -226,10 +214,6 @@ async def accept(payload, delivery):
             headers={"Accept": "application/vnd.github.diff"},
         )
     ).text
-    if len(diff) > 2_000_000:
-        return reject_command(
-            delivery, repo, pr, actor, installation, "The PR diff exceeds the v1 limit of 2 MB."
-        )
     repository = {k: v for k, v in repos[0].data.items() if k != "test_secrets"}
     repository["id"] = repos[0].id
     run = Run(
@@ -247,7 +231,7 @@ async def accept(payload, delivery):
             "repository": repository,
             "diff": diff,
             "title": pr_info["title"],
-            "description": (pr_info.get("body") or "")[:20000],
+            "description": (pr_info.get("body") or ""),
         },
     )
     configurations = expand(selected, resources)
@@ -326,16 +310,8 @@ def render_comment(run, jobs, newer=False):
             notes += [f"Requested minimum: {c['minimum_review_seconds'] // 60} minutes."]
             if result.get("review_seconds") is not None:
                 notes += [f"Recorded review time: {result['review_seconds']:g} seconds."]
-        budget = max(1200, 50000 // max(1, len(jobs)))
         note_text = "\n".join(notes).strip()
-        if len(note_text) > budget // 3:
-            note_text = note_text[: budget // 3].rstrip() + "… See the full review."
         section = "\n".join(visible).strip()
-        available = budget - len(note_text) - 200
-        if len(section) > available:
-            section = (
-                section[:available].rstrip() + "…\n\nAdditional findings and details are in the full review."
-            )
         lines += [section, ""]
         if note_text:
             lines += ["<details>", "<summary>Checks and execution details</summary>", "", note_text, "", "</details>", ""]
@@ -343,7 +319,29 @@ def render_comment(run, jobs, newer=False):
         "---",
         f"[View review]({settings().public_url}/runs/{run.id}) · Reviewed [`{run.head[:12]}`](https://github.com/{run.repo}/commit/{run.head})",
     ]
-    return "\n".join(lines)[:60000]
+    return "\n".join(lines)
+
+
+# GitHub's issue-comment API accepts at most 65,536 characters per comment.
+GITHUB_COMMENT_CHARACTERS = 65_536
+
+
+def comment_parts(run, body):
+    if len(body) <= GITHUB_COMMENT_CHARACTERS:
+        return [body]
+    parts = []
+    remaining = body.removeprefix(f"<!-- litereview:{run.id} -->")
+    while remaining:
+        number = len(parts) + 1
+        marker = f"<!-- litereview:{run.id} -->" if number == 1 else f"<!-- litereview:{run.id}:part:{number} -->"
+        prefix = marker + "\n"
+        available = GITHUB_COMMENT_CHARACTERS - len(prefix)
+        end = len(remaining) if len(remaining) <= available else remaining.rfind("\n", 0, available) + 1
+        if end <= 0:
+            end = available
+        parts.append(prefix + remaining[:end])
+        remaining = remaining[end:]
+    return parts
 
 
 async def publish(run_id):
@@ -392,9 +390,12 @@ async def publish(run_id):
     if done and run.status != "rejected":
         info = (await github.repo_request(run.repo, run.installation, "GET", f"pulls/{run.pr}")).json()
         newer = info["head"]["sha"] != run.head
-    body = render_comment(run, jobs, newer)
-    if not run.comment_id:
-        # Recover a successful POST whose response/DB commit was lost.
+    bodies = comment_parts(run, render_comment(run, jobs, newer))
+    existing = {}
+    if run.comment_id:
+        existing[f"<!-- litereview:{run.id} -->"] = run.comment_id
+    if not run.comment_id or len(bodies) > 1:
+        # Recover every successful POST, including a lost response halfway through a large review.
         page = 1
         while True:
             comments = (
@@ -402,30 +403,27 @@ async def publish(run_id):
                     run.repo, run.installation, "GET", f"issues/{run.pr}/comments?per_page=100&page={page}"
                 )
             ).json()
-            found = next(
-                (
-                    c
-                    for c in comments
-                    if f"<!-- litereview:{run.id} -->" in c.get("body", "")
-                    and (c["user"].get("type") == "Bot" or settings().github_token)
-                ),
-                None,
-            )
-            if found:
-                run.comment_id = found["id"]
-                break
+            for comment in comments:
+                if comment["user"].get("type") == "Bot" or settings().github_token:
+                    marker = comment.get("body", "").split("\n", 1)[0]
+                    existing[marker] = comment["id"]
             if len(comments) < 100:
                 break
             page += 1
-    if run.comment_id:
-        await github.repo_request(
-            run.repo, run.installation, "PATCH", f"issues/comments/{run.comment_id}", json={"body": body}
-        )
-    else:
-        result = await github.repo_request(
-            run.repo, run.installation, "POST", f"issues/{run.pr}/comments", json={"body": body}
-        )
-        run.comment_id = result.json()["id"]
+    for index, body in enumerate(bodies):
+        marker = body.split("\n", 1)[0]
+        comment_id = existing.get(marker)
+        if comment_id:
+            await github.repo_request(
+                run.repo, run.installation, "PATCH", f"issues/comments/{comment_id}", json={"body": body}
+            )
+        else:
+            result = await github.repo_request(
+                run.repo, run.installation, "POST", f"issues/{run.pr}/comments", json={"body": body}
+            )
+            comment_id = result.json()["id"]
+        if index == 0:
+            run.comment_id = comment_id
     with Session() as db:
         saved = db.get(Run, run_id)
         saved.comment_id = run.comment_id

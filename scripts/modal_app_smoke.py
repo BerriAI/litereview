@@ -135,7 +135,8 @@ async def fetch_source(repo, pr):
     try:
         pull = (await github.repo_request(repo, 0, "GET", f"pulls/{pr}")).json()
         sha = pull["head"]["sha"]
-        raw = await github.archive(repo, 0, sha)
+        async with github.archive(repo, 0, sha) as response:
+            raw = await response.aread()
     finally:
         settings().github_token = ""
     files = {}

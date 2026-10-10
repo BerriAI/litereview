@@ -55,7 +55,7 @@ async def relay_model(job, request, path):
         headers["anthropic-version"] = request.headers.get("anthropic-version", "2023-06-01")
         if request.headers.get("anthropic-beta"):
             headers["anthropic-beta"] = request.headers["anthropic-beta"]
-    client = httpx.AsyncClient(timeout=httpx.Timeout(180, connect=20))
+    client = httpx.AsyncClient(timeout=None)
     trace = tracing.ModelTrace(job, body, enabled=path != "messages/count_tokens")
     try:
         response = await client.send(

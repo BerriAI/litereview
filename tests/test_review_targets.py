@@ -125,7 +125,7 @@ def test_database_prevents_duplicate_names_even_without_api(owner, kind):
 
 def test_agent_command_name_validation(owner):
     _, _, agent, _, _ = setup(owner)
-    for name in ["two words", "123", "-bad", "x" * 41]:
+    for name in ["two words", "123", "-bad"]:
         response = owner.put("/api/resources/agents/" + agent["id"], json={**agent, "name": name})
         assert response.status_code == 422
 

@@ -318,7 +318,7 @@ def test_skill_archive_traversal_and_size(owner):
         )
 
     assert upload({"SKILL.md": "hello", "../outside": "oops"}).status_code == 400
-    assert upload({"SKILL.md": "hello", "huge": "x" * 2_000_001}).status_code == 400
+    assert upload({"SKILL.md": "hello", "huge": "x" * 2_000_001}).status_code == 200
     valid = upload({"my-skill/SKILL.md": "# Skill", "my-skill/examples/test.txt": "test"})
     assert valid.status_code == 200
     assert valid.json()["instructions"] == "# Skill"
@@ -500,7 +500,8 @@ def test_large_reviews_keep_every_agent_section():
             )
         )
     text = reviews.render_comment(run, jobs)
-    assert len(text) < 60000
+    assert text.count("e" * 5000) == 30 * 30
+    assert all(len(part) <= reviews.GITHUB_COMMENT_CHARACTERS for part in reviews.comment_parts(run, text))
     for i in range(30):
         assert f"### Agent {i} · general\n" in text
     assert text.count("<details>") == text.count("</details>")

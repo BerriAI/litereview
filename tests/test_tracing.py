@@ -39,7 +39,7 @@ def test_disabled_by_default(monkeypatch):
     assert not cfg.litereview_trace_content
     monkeypatch.setattr(tracing, '_provider', None)
     exporter = AsyncMock()
-    monkeypatch.setattr(tracing, 'OTLPSpanExporter', exporter)
+    monkeypatch.setattr(tracing, 'TraceProcessor', exporter)
     tracing.start()
     span = tracing.ModelTrace(job(), {'messages': []})
     span.feed(b'{"choices": []}')
@@ -90,11 +90,11 @@ def test_fragmented_stream_content_is_opt_in(captured, monkeypatch, protocol, ev
     assert 'private-key' not in str(attrs)
 
 
-def test_buffers_are_bounded_and_bad_events_do_not_break_stream(captured, monkeypatch):
+def test_full_trace_content_and_bad_events_do_not_break_stream(captured, monkeypatch):
     monkeypatch.setattr(settings(), 'litereview_trace_content', True)
     span = tracing.ModelTrace(job(), {'input': 'x' * 100_000})
     span.feed(b'data: ' + b'x' * 100_000, sse=True)
-    assert len(span.buffer) <= tracing.BUFFER_LIMIT
+    assert len(span.buffer) == 100_006
     span.feed(b'\n', sse=True)
     span.feed(b'data: {"choices": [null]}\ndata: {"usage": "oops"}\n', sse=True)
     for _ in range(20):
@@ -103,9 +103,32 @@ def test_buffers_are_bounded_and_bad_events_do_not_break_stream(captured, monkey
     span.end()
     spans = captured.get_finished_spans()
     assert len(spans) == 1
-    assert len(spans[0].attributes['input.value']) <= tracing.CONTENT_LIMIT
-    assert len(spans[0].attributes['output.value']) == tracing.CONTENT_LIMIT
+    assert 'x' * 100_000 in spans[0].attributes['input.value']
+    assert spans[0].attributes['output.value'] == 'y' * 20_000
     assert spans[0].status.status_code == StatusCode.ERROR
+
+
+def test_slow_collector_does_not_drop_a_full_queue(monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    exported = []
+    processor = tracing.TraceProcessor('http://collector.test/v1/traces', {})
+
+    def export(span):
+        entered.set()
+        assert release.wait(10)
+        exported.append(span)
+
+    monkeypatch.setattr(processor, 'export', export)
+    try:
+        for index in range(300):
+            processor.on_end(index)
+        assert entered.wait(5)
+        release.set()
+        processor.force_flush()
+        assert exported == list(range(300))
+    finally:
+        release.set()
+        processor.shutdown()
 
 
 @pytest.mark.parametrize('native', [False, True])

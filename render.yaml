@@ -36,8 +36,6 @@ services:
         value: litereview
       - key: CONCURRENCY
         value: "0"
-      - key: MAX_REVIEW_MINUTES
-        value: "120"
 databases:
   - name: litereview-db
     plan: basic-256mb

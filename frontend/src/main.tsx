@@ -1665,7 +1665,6 @@ function App() {
       {starter && (
         <StarterReviewer
           connections={modelConnections}
-          maxMinutes={setup.max_review_minutes || 120}
           close={() => {
             setStarter(false);
             void load();
@@ -1782,9 +1781,6 @@ function App() {
                       value={editor.data.name}
                       onChange={(e) => update("name", e.target.value)}
                       required
-                      maxLength={
-                        ["agents", "groups"].includes(editor.kind) ? 40 : 100
-                      }
                       pattern={
                         ["agents", "groups"].includes(editor.kind)
                           ? "[a-zA-Z][a-zA-Z0-9_\\-]*"
@@ -1959,9 +1955,7 @@ function App() {
                               error: false,
                               text: "Starting a private test sandbox. The first run may take a few minutes.",
                             });
-                            const deadline = Date.now() + 45 * 60 * 1000;
-                            let complete = false;
-                            while (Date.now() < deadline) {
+                            while (true) {
                               await new Promise((resolve) =>
                                 setTimeout(resolve, 3000),
                               );
@@ -1973,7 +1967,6 @@ function App() {
                                   result.status,
                                 )
                               ) {
-                                complete = true;
                                 if (
                                   result.status !== "completed" ||
                                   result.result.limitations?.length
@@ -1996,10 +1989,6 @@ function App() {
                                   "Starting test sandbox…",
                               });
                             }
-                            if (!complete)
-                              throw new Error(
-                                "The test is still running. Check Modal for its status.",
-                              );
                           } catch (error) {
                             setModelCheck({
                               error: true,
@@ -2066,7 +2055,6 @@ function App() {
                     </Field>
                     <MinimumReviewTime
                       value={editor.data.minimum_minutes || 0}
-                      max={setup.max_review_minutes || 120}
                       onChange={(value) => update("minimum_minutes", value)}
                     />
                     <OptionalReviewLimits
@@ -2240,7 +2228,6 @@ function App() {
                           <input
                             type="number"
                             min="1"
-                            max="10"
                             value={m.count}
                             onChange={(e) =>
                               update(

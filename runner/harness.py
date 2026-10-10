@@ -20,9 +20,10 @@ def opencode_config(cfg, url, instructions):
     package = "@ai-sdk/anthropic" if anthropic else "@ai-sdk/openai-compatible"
     model = {
         "name": cfg["model"],
-        "limit": {"context": 128000, "output": 8192},
         "modalities": {"input": ["text", "image"], "output": ["text"]},
     }
+    if cfg.get("model_capacity"):
+        model["limit"] = cfg["model_capacity"]
     permission = {
         "*": "deny",
         "read": "allow",
@@ -125,8 +126,9 @@ def command(cfg, url, instructions, prompt, env, resume_id=None):
             "mcp_servers.litereview": {
                 "url": url + "/mcp",
                 "required": True,
-                "startup_timeout_sec": 40,
-                "tool_timeout_sec": 180,
+                # Codex requires finite MCP deadlines; use Modal's full sandbox lifetime.
+                "startup_timeout_sec": 24 * 60 * 60,
+                "tool_timeout_sec": 24 * 60 * 60,
             },
         }
         env["LITEREVIEW_HARNESS_KEY"] = "sandbox-scoped"
@@ -153,6 +155,22 @@ def command(cfg, url, instructions, prompt, env, resume_id=None):
     raise ValueError("Unknown harness.")
 
 
+async def stream_lines(stream):
+    """Read JSON events without StreamReader's fixed maximum line length."""
+    pending = bytearray()
+    searched = 0
+    while chunk := await stream.read(64 * 1024):
+        pending.extend(chunk)
+        start = 0
+        while (end := pending.find(b"\n", searched)) != -1:
+            yield bytes(pending[start:end + 1])
+            start = searched = end + 1
+        searched = len(pending) - start
+        del pending[:start]
+    if pending:
+        yield bytes(pending)
+
+
 async def run_external(tools, relay, data, system, prompt):
     cfg = data["config"]
     harness = cfg["harness"]
@@ -174,28 +192,20 @@ async def run_external(tools, relay, data, system, prompt):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 start_new_session=True,
-                limit=16_000_000,
             )
-
-            diagnostic = bytearray()
 
             async def drain():
                 nonlocal thread_id
-                with open(STATE / "harness.log", "wb") as log:
-                    total = 0
-                    async for line in process.stdout:
-                        diagnostic.extend(line[-8000:])
-                        del diagnostic[:-8000]
-                        if total < 2_000_000:
-                            log.write(line)
-                            log.flush()
-                            total += len(line)
+                with open(STATE / "harness.log", "ab") as log:
+                    async for line in stream_lines(process.stdout):
+                        log.write(line)
+                        log.flush()
                         try:
                             event = json.loads(line)
                             if event.get("type") == "thread.started":
                                 thread_id = event.get("thread_id")
                             if event.get("lr_event"):
-                                await relay.event(str(event["lr_event"])[:200])
+                                await relay.event(str(event["lr_event"]))
                             item = event.get("item", {})
                             if (
                                 item.get("type") == "command_execution"
@@ -232,7 +242,7 @@ async def run_external(tools, relay, data, system, prompt):
                         await relay.event("Continuing review in the same harness session")
                         continue
                     print(
-                        "Harness diagnostic:\n" + diagnostic.decode(errors="replace"),
+                        "Harness diagnostic:\n" + (STATE / "harness.log").read_text(errors="replace"),
                         flush=True,
                     )
                     raise RuntimeError(
