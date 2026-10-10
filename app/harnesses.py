@@ -4,7 +4,7 @@ import httpx
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from . import providers
+from . import providers, tracing
 from .limits import count_model_call
 
 PROTOCOLS = {"chat/completions", "responses", "messages", "messages/count_tokens"}
@@ -56,15 +56,22 @@ async def relay_model(job, request, path):
         if request.headers.get("anthropic-beta"):
             headers["anthropic-beta"] = request.headers["anthropic-beta"]
     client = httpx.AsyncClient(timeout=httpx.Timeout(180, connect=20))
+    trace = tracing.ModelTrace(job, body, enabled=path != "messages/count_tokens")
     try:
         response = await client.send(
             client.build_request("POST", base + "/" + path, json=body, headers=headers), stream=True
         )
     except httpx.HTTPError:
+        trace.end(error=True)
         await client.aclose()
         raise HTTPException(502, "The harness could not reach the model endpoint.") from None
+    except BaseException:
+        trace.end(error=True)
+        await client.aclose()
+        raise
     if not response.is_success:
         status = response.status_code
+        trace.end(error=True, status=status)
         await response.aclose()
         await client.aclose()
         return JSONResponse(
@@ -78,10 +85,14 @@ async def relay_model(job, request, path):
         )
 
     async def stream():
+        complete = False
         try:
             async for chunk in response.aiter_bytes():
+                trace.feed(chunk, sse="text/event-stream" in response.headers.get("content-type", ""))
                 yield chunk
+            complete = True
         finally:
+            trace.end(error=not complete, status=response.status_code)
             await response.aclose()
             await client.aclose()
 

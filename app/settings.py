@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     concurrency: int = Field(default=0, ge=0)  # 0 launches on demand without an app-level cap.
     max_review_minutes: int = Field(default=120, ge=1, le=1440)
     dispatcher_enabled: bool = True
+    litereview_trace_endpoint: str = ""
+    litereview_trace_api_key: str = ""
+    litereview_trace_content: bool = False
 
     @model_validator(mode="after")
     def resolve_public_url(self):
