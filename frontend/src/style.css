@@ -952,12 +952,20 @@ dialog::backdrop {
   min-height: calc(100% - 108px);
 }
 .resource-form {
+  border: 0;
+  min-width: 0;
   padding: 0 40px;
   width: 100%;
   max-width: 1180px;
   margin: 0 auto;
   flex: 1;
 }
+.agent-prompt { padding: 20px 0; border-bottom: 1px solid var(--line); }
+.agent-prompt-fields { max-width: 760px; margin: 18px 0 0 auto; }
+.agent-prompt-fields .meta { margin-top: 12px; }
+.agent-generation-settings { margin-bottom: 24px; }
+.agent-generation-settings form { max-width: 760px; }
+.agent-generation-settings form > button { margin-top: 16px; }
 .form-section {
   display: grid;
   grid-template-columns: minmax(160px, 230px) minmax(0, 1fr);

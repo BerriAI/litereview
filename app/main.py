@@ -20,6 +20,7 @@ from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
 
 from . import fusion, github, mcp_oauth, providers, reviews, tracing
 from .access import bind_existing_people, initialize_access, people
+from .agent_generation import router as agent_generation_router
 from .db import Artifact, Job, MCPOAuth, Resource, ReviewTiming, Run, Session, SSOIdentity, init_db, uid
 from .limits import count_model_call, job_timeout, model_rounds
 from .onboarding import exclude_repository, include_repository
@@ -77,6 +78,7 @@ app = FastAPI(title="LiteReview", lifespan=lifespan, docs_url=None, redoc_url=No
 app.include_router(sso_router)
 app.include_router(onboarding_router)
 app.include_router(mcp_oauth.router)
+app.include_router(agent_generation_router)
 
 
 @app.middleware("http")

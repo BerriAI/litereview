@@ -40,6 +40,7 @@ import { MCPToolSelector } from "./mcp-tool-selector";
 import { ReviewResult } from "./review-result";
 import { AgentModels, FusionResults } from "./fusion";
 import { RunCost, SpendPage } from "./spend";
+import { AgentFromPrompt, AgentGenerationSettings } from "./agent-generation";
 import { api, send } from "./api";
 import { GitHubSetup, GitHubSettings } from "./github-setup";
 import { MemberStart } from "./member-start";
@@ -99,7 +100,7 @@ const descriptions = {
     "Choose which agents and groups people and repositories can use. Both must have access to start a review.",
   agents: "Create reusable reviewers with their own model, tools, and skills.",
   groups: "Optional shortcuts for running several agents together.",
-  connections: "GitHub App settings for this workspace.",
+  connections: "Model generation and GitHub App settings for this workspace.",
   mcp: "Connect your tools, then choose which ones each agent can use.",
   models: "Model providers and gateways available to your agents.",
   skills: "Reusable instructions and files for your agents.",
@@ -140,6 +141,7 @@ function App() {
     ? "litereview:agent-draft:" + (session.user.sub || session.user.login)
     : "";
   const [busy, setBusy] = useState(false);
+  const [generatingAgent, setGeneratingAgent] = useState(false);
   const [formError, setFormError] = useState("");
   const [testingModel, setTestingModel] = useState(false);
   const [checkRunId, setCheckRunId] = useState<string | null>(null);
@@ -417,6 +419,7 @@ function App() {
   const edit = (kind: Kind, item?: Row) => {
     setNotice("");
     setAccessQuery("");
+    const defaultAgent = store.agents.find(a => a.id === setup.default_reviewer_id);
     const defaults: Record<Kind, any> = {
       access: {
         name: "",
@@ -432,9 +435,9 @@ function App() {
         max_model_calls: null,
         instructions:
           "Review this PR for actionable defects. Explain a concrete failure scenario and cite the affected code. Report no findings when appropriate.",
-        connection_id:
+        connection_id: defaultAgent?.connection_id ||
           store.connections.find((c) => ["openai", "gateway"].includes(c.type))?.id || "",
-        model: "",
+        model: defaultAgent?.model || "",
         capabilities: ["terminal"],
         skill_ids: [],
         mcps: [],
@@ -1025,6 +1028,10 @@ function App() {
             )}
           {active === "connections" && (
             <>
+              {tab === "github" && (
+                <AgentGenerationSettings connections={store.connections.filter(c => c.type !== "mcp")}
+                  onModels={() => navigate("/models")} />
+              )}
               {tab === "github" && (
                 <GitHubSettings
                   setup={setup}
@@ -1726,7 +1733,12 @@ function App() {
           navigationOpen={mobileNav}
         >
           <form onSubmit={save} className="resource-editor-form">
-            <div className={"dialog-body resource-form " + editor.kind}>
+            <fieldset disabled={generatingAgent} className={"dialog-body resource-form " + editor.kind}>
+              {editor.kind === "agents" && !editor.id && <AgentFromPrompt value={editor.data} update={update}
+                onBusy={value => { setBusy(value); setGeneratingAgent(value); }}
+                onSettings={() => navigate("/settings")}
+                onDraft={data => setEditor(current => current?.kind === "agents" && !current.id
+                  ? { ...current, data: { ...current.data, ...data, from_prompt: false } } : current)} />}
               <FormSection
                 title={
                   editor.kind === "groups"
@@ -2531,7 +2543,7 @@ function App() {
                   {formError}
                 </div>
               )}
-            </div>
+            </fieldset>
             <footer>
               <div className="editor-footer-note">
                 {editor.kind === "groups" ? (
@@ -2556,7 +2568,7 @@ function App() {
                 {busy && !testingModel ? (
                   <>
                     <Loader2 size={15} className="spin" />
-                    Saving…
+                    {generatingAgent ? "Creating draft…" : "Saving…"}
                   </>
                 ) : editor.kind === "connections" ? (
                   editor.data.type === "mcp" &&
