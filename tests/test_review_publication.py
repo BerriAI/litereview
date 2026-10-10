@@ -51,7 +51,7 @@ async def test_acknowledgment_then_one_final_comment_after_every_agent(publicati
     await reviews.publish(run_id)
     posted = [body for method, path, body in calls if path == "issues/1/comments" and method == "POST"]
     assert len(posted) == 1
-    assert "No issues found." in posted[0]["body"]
+    assert "Checked the changed paths." in posted[0]["body"]
     assert "Review in progress" not in posted[0]["body"]
     count = len(calls)
     await reviews.publish(run_id)
@@ -125,7 +125,7 @@ async def test_rejected_command_explains_failure_without_eyes(publication):
     assert "Review not started" in calls[-1][2]["body"]
 
 
-def test_clean_review_keeps_notes_collapsed_and_metadata_in_footer():
+def test_agent_response_is_visible_without_generic_narrative_replacement():
     run = Run(id="clean", repo="owner/repo", head="a" * 40, status="completed")
     job = Job(
         config={"name": "yujong", "target_kind": "agent", "group": "yujong", "instance": 1},
@@ -133,8 +133,8 @@ def test_clean_review_keeps_notes_collapsed_and_metadata_in_footer():
         result={"summary": "Long review narrative.", "findings": [], "limitations": []},
     )
     body = reviews.render_comment(run, [job])
-    assert body.startswith("<!-- litereview:clean -->\n\n### yujong\n\n**No issues found.**")
-    assert body.index("<details>") < body.index("Long review narrative.") < body.index("</details>")
+    assert body.startswith("<!-- litereview:clean -->\n\n### yujong\n\nLong review narrative.")
+    assert "No issues found" not in body
     assert "Review complete" not in body and "· 1" not in body and "1 agents" not in body
     assert body.endswith(f"Reviewed [`{'a' * 12}`](https://github.com/owner/repo/commit/{'a' * 40})")
 
@@ -163,8 +163,6 @@ def test_findings_and_incomplete_coverage_stay_visible():
     assert "**High · Token exposed** · [app/auth.py:42]" in body
     assert "#L42" in body and "Browser unavailable." in body
     assert "Review incomplete." in body and "No issues found" not in body
-    visible, notes = body.split("<details>", 1)
-    assert "Browser unavailable." in visible and "Token exposed" in visible
-    assert "Could not finish browser checks." not in visible
-    assert "Could not finish browser checks." in notes
+    assert "Browser unavailable." in body and "Token exposed" in body
+    assert "Could not finish browser checks." in body
     assert "@all" not in body and "<script>" not in body

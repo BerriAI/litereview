@@ -57,8 +57,6 @@ class Bridge:
             if name == "lr_finish_review":
                 if self.cfg.get("minimum_review_seconds"):
                     self.tools.clock.require_elapsed()
-                if {"browser", "computer"} & set(self.cfg["capabilities"]) and self.tools.visual_calls == 0:
-                    raise ValueError("Inspect a screenshot before completing this visual review.")
                 self.result = {**arguments, "status": "completed"}
                 self.finished.set()
                 return content_blocks({"submitted": True})

@@ -51,6 +51,7 @@ export function ReviewResult({
   const result = job.result || {};
   const findings = result.findings || [];
   const limitations = result.limitations || [];
+  const checks = result.checks || [];
   const finished = ["completed", "failed", "timed_out"].includes(job.status);
   const incomplete =
     finished && (job.status !== "completed" || limitations.length > 0);
@@ -68,7 +69,12 @@ export function ReviewResult({
           </span>
         </div>
       )}
-      {finished && !incomplete && findings.length === 0 && (
+      {finished && result.summary && (
+        <div className="review-response">
+          <ReviewMarkdown>{result.summary}</ReviewMarkdown>
+        </div>
+      )}
+      {finished && !incomplete && !result.summary && findings.length === 0 && (
         <div className="review-clean">
           <Check size={17} />
           <span>No issues found.</span>
@@ -120,9 +126,28 @@ export function ReviewResult({
           )}
         </section>
       ))}
-      {incomplete && (
+      {checks.length > 0 && (
+        <details className="review-checks" open={checks.some((check: any) => check.status === "not_run")}>
+          <summary>Checks</summary>
+          <ul>
+            {checks.map((check: any, index: number) => (
+              <li key={index}>
+                <div className="review-check-heading">
+                  <strong>{check.name}</strong>
+                  <Badge tone={check.status === "passed" ? "green" : check.status === "failed" ? "red" : ""}>
+                    {check.status === "not_run" ? "Not run" : check.status === "failed" ? "Failed" : "Passed"}
+                  </Badge>
+                  <span>{check.required ? "Required" : "Optional"}</span>
+                </div>
+                <ReviewMarkdown>{check.details}</ReviewMarkdown>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {incomplete && (limitations.length > 0 || !result.summary) && (
         <section className="review-incomplete">
-          <h4>Couldn’t finish these checks</h4>
+          <h4>Couldn’t complete</h4>
           {limitations.length > 0 ? (
             <ul>
               {limitations.map((limitation: string, i: number) => (
@@ -133,17 +158,10 @@ export function ReviewResult({
             </ul>
           ) : (
             <ReviewMarkdown>
-              {result.summary ||
-                "The review ended before all checks finished. Open activity for execution details."}
+              The task ended before completion. Open activity for execution details.
             </ReviewMarkdown>
           )}
         </section>
-      )}
-      {result.summary && (!incomplete || limitations.length > 0) && (
-        <details className="review-notes">
-          <summary>Review notes</summary>
-          <ReviewMarkdown>{result.summary}</ReviewMarkdown>
-        </details>
       )}
     </>
   );

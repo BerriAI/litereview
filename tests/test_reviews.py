@@ -357,6 +357,8 @@ def test_no_findings_never_used_for_incomplete_reviews():
     assert "**Review incomplete.**" in text
     job.status = "completed"
     job.result = {"findings": [], "summary": "Checked", "limitations": []}
+    assert "Checked" in reviews.render_comment(run, [job])
+    job.result["summary"] = ""
     assert "**No issues found.**" in reviews.render_comment(run, [job])
 
 
@@ -501,7 +503,7 @@ def test_large_reviews_keep_every_agent_section():
     assert len(text) < 60000
     for i in range(30):
         assert f"### Agent {i} · general\n" in text
-    assert text.count("<details>") == text.count("</details>") == 30
+    assert text.count("<details>") == text.count("</details>")
 
 
 def test_private_app_manifest_targets_repository_owner(owner, monkeypatch):

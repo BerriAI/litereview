@@ -46,7 +46,7 @@ def definitions(cfg):
         function("read_diff", "Read the immutable PR diff (paged by character offset).", {"offset": N}),
         function(
             "finish_review",
-            "Submit the review according to your configured scope. Put findings and their evidence in findings, and successful checks in summary. Limitations contains actual obstacles to completing the configured checks, not successful checks or reproduced findings. Use arrays for findings and limitations; use [] when empty.",
+            "Submit the configured task in the agent's requested voice. Summary is the primary response; findings holds concrete issues when relevant. Record verification in checks, distinguishing required work from optional checks. Limitations is only for blockers to completing the configured task. Optional checks not run do not make it incomplete. Use [] for empty arrays.",
             {
                 "summary": S,
                 "findings": {
@@ -65,6 +65,19 @@ def definitions(cfg):
                     },
                 },
                 "limitations": {"type": "array", "items": S},
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": S,
+                            "status": {"type": "string", "enum": ["passed", "failed", "not_run"]},
+                            "required": {"type": "boolean"},
+                            "details": S,
+                        },
+                        "required": ["name", "status", "required", "details"],
+                    },
+                },
             },
             ["summary", "findings", "limitations"],
         ),
@@ -189,7 +202,7 @@ class Toolset:
         if self.caps:
             os.environ.update(self.data.get("test_secrets", {}))
             if repo.get("setup_command"):
-                result = await self.shell(repo["setup_command"], 180)
+                result = await self.shell(repo["setup_command"])
                 if result["exit_code"] != 0:
                     raise RuntimeError("Repository setup command failed: " + result["output"][-2000:])
             if repo.get("start_command"):
@@ -235,7 +248,7 @@ class Toolset:
             raise ValueError("Path is outside the repository and attached skills.")
         return resolved
 
-    async def shell(self, command, timeout=60):
+    async def shell(self, command, timeout=None):
         process = await asyncio.create_subprocess_exec(
             "/bin/bash",
             "-lc",
@@ -257,14 +270,16 @@ class Toolset:
 
         timed_out = False
         try:
-            await asyncio.wait_for(drain(), max(1, min(timeout, 180)))
-        except TimeoutError:
-            timed_out = True
+            await asyncio.wait_for(drain(), max(1, timeout) if timeout is not None else None)
+        except (TimeoutError, asyncio.CancelledError) as exc:
+            timed_out = isinstance(exc, TimeoutError)
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             await process.wait()
+            if not timed_out:
+                raise
         return {
             "exit_code": process.returncode,
             "output": output.decode(errors="replace"),
@@ -359,7 +374,7 @@ class Toolset:
                 "next_offset": offset + 40000 if offset + 40000 < len(diff) else None,
             }
         if name == "terminal":
-            return await self.shell(args["command"], args.get("timeout_seconds", 60))
+            return await self.shell(args["command"], args.get("timeout_seconds"))
         if name == "browser":
             return await self.browse(args)
         if name == "computer":

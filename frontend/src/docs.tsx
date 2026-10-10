@@ -93,11 +93,14 @@ export function Documentation() {
               <h3>Read the results</h3>
               <p>
                 LiteReview reacts with 👀 when it accepts your request. When all
-                agents finish, it posts one comment with findings or “No issues
-                found.” Expand Review notes for the summary. Open
+                agents finish, it posts their responses and findings in one
+                comment, preserving each agent’s configured voice. Expand Checks
+                and execution details for verification results. Open
                 <a href="/runs"> Runs</a> for details, activity, and
                 screenshots. An incomplete check means the agent could not
-                finish its configured review. Results are summary comments;
+                finish work required by its instructions. Optional checks that
+                were not run appear under Checks without making the review
+                incomplete. Results are summary comments;
                 agents do not push fixes.
               </p>
             </li>
@@ -250,6 +253,21 @@ export function Documentation() {
 
         <section>
           <h2>Choose what an agent can do</h2>
+          <p>
+            Review instructions define the agent’s task, scope, workflow,
+            language, and voice. Attached skills support those instructions;
+            the agent instructions take precedence when they conflict. The
+            response is shown directly, including for tasks that do not call
+            for bug findings.
+          </p>
+          <p>
+            For relevant checks, agents inspect the project’s setup instructions
+            and attempt missing dependency installation before reporting a
+            blocker. They can install project packages and official toolchains
+            in the disposable sandbox. State any required tests or setup
+            restrictions in Review instructions. Optional verification gaps
+            remain visible under Checks.
+          </p>
           <dl className="docs-capabilities">
             <div>
               <dt>Code & terminal · Included</dt>

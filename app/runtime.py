@@ -19,7 +19,10 @@ def sandbox_image(harness="builtin"):
         raise ValueError("Unknown harness.")
     image = (
         modal.Image.from_registry("node:22-bookworm-slim", add_python="3.12")
-        .apt_install("git", "ripgrep", "curl", "xvfb", "openbox", "scrot", "xdotool", "xauth")
+        .apt_install(
+            "git", "ripgrep", "curl", "build-essential", "pkg-config", "libssl-dev",
+            "xvfb", "openbox", "scrot", "xdotool", "xauth",
+        )
         .pip_install(
             "uv==0.10.9", "httpx==0.28.1", "playwright==1.63.0", "pyautogui==0.9.54", "pillow>=11,<13"
         )

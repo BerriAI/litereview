@@ -6,7 +6,11 @@ A private workspace for reusable PR reviewers. Configure each agent’s harness,
 @litereview frontend pentest security
 ```
 
-LiteReview acknowledges an accepted command with a 👀 reaction. Every instance runs in a separate Modal sandbox. When all agents finish, it posts one comment with findings, **No issues found**, or an explicit incomplete result for each agent. Review notes are collapsed and the footer links to the full run and reviewed commit. LiteReview never pushes fixes.
+LiteReview acknowledges an accepted command with a 👀 reaction. Every instance runs in a separate Modal sandbox. When all agents finish, it posts their responses and findings in one comment, preserving each agent’s configured voice. Check details are collapsed and the footer links to the full run and reviewed commit. LiteReview never pushes fixes.
+
+The agent’s **Review instructions** define its task, scope, workflow, language, and voice. Attached skills support those instructions; the agent instructions take precedence when they conflict. The harness supplies tools and result delivery. An agent can produce a narrative response without bug findings. Credentials, enabled tools, and configured time limits still apply.
+
+Agents attempt relevant dependency setup using the project’s manifests and documented commands before reporting an environment blocker. Build tools, Python, Node, and uv are available; project-specific packages and toolchains can be installed in the disposable sandbox. Optional tests that were not run appear under **Checks** without making the review incomplete. A required check that could not run, or other unfinished work required by the configured task, is reported as incomplete. An executed test that fails is evidence, not automatically an incomplete review.
 
 Set **Minimum review time (minutes)** when creating a reviewer or under **PR agents → reviewer → Review instructions**. For example, save `5` for `frontend` and `10` for `security`, then comment:
 
