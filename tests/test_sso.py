@@ -149,7 +149,8 @@ def test_legacy_sessions_cannot_bypass_sso_and_members_get_workspace_access(owne
         assert owner.get(path).status_code == 200
     assert owner.get("/api/artifacts/any").status_code == 404
     assert owner.post("/api/logout").status_code == 200
-    assert not sso.eligible_caller({"id": 42, "login": "trusted"})
+    assert owner.get("/api/resources/agents").status_code == 401
+    assert sso.eligible_caller({"id": 42, "login": "trusted"})
 
 
 @pytest.mark.parametrize("changed", ["domain", "audience", "expires_at", "session_id"])
@@ -170,14 +171,17 @@ def test_incomplete_sso_config_fails_closed(client, monkeypatch):
     assert not sso.eligible_caller({"id": 42, "login": "trusted"})
 
 
-def test_signed_webhook_requires_current_google_and_linked_github_id(owner, monkeypatch):
+@pytest.mark.parametrize("session_ended", ["expired", "signed_out"])
+def test_signed_webhook_uses_linked_github_after_browser_session_ends(owner, monkeypatch, session_ended):
     setup(owner)
     mock_github(monkeypatch)
     enable(monkeypatch)
     data = payload()
     data["comment"]["user"]["id"] = 42
     rejected = webhook(owner, data, "no-sso").json()["run_id"]
-    identity()
+    owner.cookies.clear()
+    identity(owner)
+    browser_cookie = owner.cookies.get("lr_session")
     accepted = webhook(owner, data, "with-sso").json()["run_id"]
     data["comment"]["user"]["id"] = 43
     wrong_id = webhook(owner, data, "wrong-id").json()["run_id"]
@@ -185,10 +189,46 @@ def test_signed_webhook_requires_current_google_and_linked_github_id(owner, monk
         assert db.get(Run, rejected).status == db.get(Run, wrong_id).status == "rejected"
         assert db.get(Run, accepted).status == "queued"
         assert len(db.scalars(select(Job)).all()) == 2
-        db.get(SSOIdentity, "google-sub").expires_at = 0
-        db.commit()
-    assert not sso.eligible_caller({"id": 42, "login": "trusted"})
+    if session_ended == "expired":
+        with Session() as db:
+            db.get(SSOIdentity, "google-sub").expires_at = time.time() - 365 * 86400
+            db.commit()
+    else:
+        assert owner.post("/api/logout").status_code == 200
+        owner.cookies.clear()
+        owner.cookies.set("lr_session", browser_cookie)
+    assert owner.get("/api/resources/agents").status_code == 401
+    assert sso.eligible_caller({"id": 42, "login": "trusted"})
+    data["comment"]["user"]["id"] = 42
+    later = webhook(owner, data, "after-session").json()["run_id"]
+    with Session() as db:
+        assert db.get(Run, later).status == "queued"
+        assert len(db.scalars(select(Job)).all()) == 4
     assert owner.post("/api/webhook/github", json=data).status_code == 401
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"domain": "outside.test", "email": "member@outside.test"},
+        {"audience": "another-client"},
+        {"email": "member@outside.test"},
+        {"github_id": None, "github_login": ""},
+        {"github_id": "43"},
+        {"github_login": "another-login"},
+    ],
+)
+def test_persistent_github_access_still_checks_workspace_identity_and_link(owner, monkeypatch, changes):
+    setup(owner)
+    mock_github(monkeypatch)
+    enable(monkeypatch)
+    identity(expires_at=0, **changes)
+    data = payload()
+    data["comment"]["user"]["id"] = 42
+    rejected = webhook(owner, data, "invalid-link").json()["run_id"]
+    with Session() as db:
+        assert db.get(Run, rejected).status == "rejected"
+        assert not db.scalars(select(Job)).all()
 
 
 def test_github_link_requires_both_proven_identities(client, monkeypatch):
@@ -254,7 +294,8 @@ def test_sso_members_can_review_without_manual_people_entry(owner, monkeypatch):
 
 
 @pytest.mark.parametrize("subject", ["user", "repo"])
-def test_sso_default_never_overrides_explicit_restrictions(owner, monkeypatch, subject):
+@pytest.mark.parametrize("expired", [False, True])
+def test_sso_default_never_overrides_explicit_restrictions(owner, monkeypatch, subject, expired):
     from app.db import Resource
 
     setup(owner)
@@ -265,7 +306,7 @@ def test_sso_default_never_overrides_explicit_restrictions(owner, monkeypatch, s
         db.commit()
     mock_github(monkeypatch)
     enable(monkeypatch)
-    identity()
+    identity(expires_at=0 if expired else time.time() + 1000)
     data = payload()
     data["comment"]["user"]["id"] = 42
     run = webhook(owner, data, "restricted").json()["run_id"]
@@ -299,7 +340,7 @@ def test_people_comes_from_sso_and_preserves_existing_restrictions(owner, monkey
     fresh = next(r for r in rows if r["name"] == "new-person")
     assert fresh["inherited"] and fresh["scope"] == "all" and fresh["status"] == "ready"
     assert next(r for r in rows if r["email"] == "unlinked@berri.ai")["status"] == "github_required"
-    assert next(r for r in rows if r["email"] == "expired@berri.ai")["status"] == "sign_in_required"
+    assert next(r for r in rows if r["email"] == "expired@berri.ai")["status"] == "ready"
     assert next(r for r in rows if r["name"] == "limited-person")["status"] == "not_signed_in"
     override = owner.post(
         "/api/resources/access", json={**fresh, "scope": "selected", "target_ids": []}

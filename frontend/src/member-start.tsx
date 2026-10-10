@@ -156,10 +156,9 @@ export function MemberStart({
               </button>
             </section>
             <p className="member-note">
-              Sign in with Google again after{" "}
-              {new Date(user.expires_at * 1000).toLocaleString()} to keep
-              requesting reviews. Your GitHub link and access settings are
-              saved.
+              Once linked, your GitHub account can request reviews without
+              signing in here again. Signing out or an expired browser session
+              keeps your GitHub link and review access.
             </p>
             <button onClick={onLogout}>Sign out</button>
           </>

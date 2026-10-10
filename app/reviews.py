@@ -165,7 +165,8 @@ async def accept(payload, delivery):
                 actor,
                 installation,
                 "Sign in to LiteReview with your workspace Google account and link your GitHub account "
-                "before requesting a review. Google authorization must be renewed when it expires.",
+                "once before requesting a review. Your linked GitHub account can then request reviews "
+                "without signing in again.",
             )
     if parse_error:
         return reject_command(delivery, repo, pr, actor, installation, parse_error)

@@ -244,7 +244,7 @@ export function People({
   const statuses: Record<string, string> = {
     ready: "Connected",
     github_required: "GitHub not linked",
-    sign_in_required: "Google sign-in expired",
+    sign_in_required: "Google sign-in required",
     not_signed_in: "Awaiting Google sign-in",
   };
   return (
