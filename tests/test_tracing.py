@@ -277,7 +277,7 @@ def test_review_root_contains_final_result_and_actual_status(captured, monkeypat
     assert root.status.status_code == (StatusCode.OK if status == 'completed' and not limitations else StatusCode.ERROR)
     assert 'Review this code' in root.attributes['input.value']
     assert 'Verified the regression' in root.attributes['llm.output_messages.0.message.content']
-    assert '**High · The bug**' in root.attributes['llm.output_messages.0.message.content']
+    assert '### High · The bug' in root.attributes['llm.output_messages.0.message.content']
     assert json.loads(root.attributes['litereview.result']) == review.result
 
 
@@ -414,3 +414,18 @@ def test_nonstreaming_content_with_nullable_fields(captured, monkeypatch, respon
     attrs = captured.get_finished_spans()[0].attributes
     assert attrs['llm.input_messages.0.message.content'] == 'Review'
     assert attrs['llm.output_messages.0.message.content'] == 'Done'
+
+
+def test_final_trace_review_is_markdown_and_preserves_code():
+    output = tracing.review_output({
+        'summary': '## Review\n\nVerified a defect.',
+        'findings': [{'title': 'Order matters', 'severity': 'high', 'explanation': 'Use set equality.',
+                      'file': 'maths.py', 'line': 2, 'evidence': ['The regression fails.']}],
+        'checks': [{'name': 'pytest', 'status': 'failed', 'details': '```text\n> assert same_cases(a, b)\n```'}],
+        'limitations': ['Integration check could not run.'],
+    })
+    assert '> assert same_cases(a, b)' in output
+    assert 'Location: `maths.py:2`' in output
+    assert 'The regression fails.' in output
+    assert 'Integration check could not run.' in output
+    assert '<details>' not in output and '<!--' not in output and '&gt;' not in output
