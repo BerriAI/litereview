@@ -1,6 +1,6 @@
 # LiteReview
 
-MIT-licensed PR review agents for trusted teams. Host a shared workspace, configure each agent’s harness, model, instructions, skills, and tools, then call reviewers from a GitHub PR comment:
+Self-hosted plane for configuring PR review agents. Host a shared workspace, configure each agent’s harness, model, instructions, skills, and tools, then call reviewers from a GitHub PR comment:
 
 ```text
 @litereview frontend pentest security
