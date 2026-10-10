@@ -21,6 +21,14 @@ from app.db import Base, engine
 from app.main import app
 
 
+@pytest.fixture(autouse=True)
+def offline_pricing(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app import spend
+    monkeypatch.setattr(spend, "lookup_rates", AsyncMock(return_value=None))
+
+
 @pytest.fixture
 def client():
     Base.metadata.drop_all(engine)

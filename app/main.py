@@ -956,28 +956,36 @@ def run_public(run):
     }
 
 
+@app.get("/api/spend", dependencies=[Depends(require_user)])
+def spend_dashboard():
+    from . import spend
+    with Session() as db:
+        return spend.dashboard(db)
+
+
 @app.get("/api/runs", dependencies=[Depends(require_user)])
 def runs():
+    from . import spend
     with Session() as db:
-        return [
-            run_public(r)
-            for r in db.scalars(
-                select(Run)
-                .where(Run.snapshot["harness_check"].as_boolean().is_not(True))
-                .order_by(Run.created_at.desc())
-            )
-        ]
+        rows = db.scalars(select(Run)
+            .where(Run.snapshot["harness_check"].as_boolean().is_not(True))
+            .order_by(Run.created_at.desc())).all()
+        costs = spend.run_costs(db, rows)
+        return [{**run_public(r), "spend": costs[r.id]} for r in rows]
 
 
 @app.get("/api/runs/{run_id}", dependencies=[Depends(require_user)])
 def run_detail(run_id: str):
+    from . import spend
     with Session() as db:
         run = db.get(Run, run_id)
         if not run:
             raise HTTPException(404)
         all_jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
         jobs = reviews.ordered_jobs(run, all_jobs)
+        costs = spend.job_costs(db, [j.id for j in all_jobs])
         result = run_public(run)
+        result["spend"] = spend.cost_summary(all_jobs, costs)
         result["jobs"] = []
         for job in jobs:
             data = {
@@ -1007,6 +1015,7 @@ def run_detail(run_id: str):
                     select(Artifact).where(Artifact.job_id == child.id))],
             } for child in children]
             data["aggregator_model_calls"] = job.model_calls
+            data["spend"] = spend.cost_summary([job, *children], costs)
             data["model_calls"] += sum(child.model_calls for child in children)
             result["jobs"].append(data)
         return result
@@ -1106,23 +1115,29 @@ def start_review(job_id: str, request: Request):
 
 @app.post("/api/internal/jobs/{job_id}/model")
 async def model_relay(job_id: str, request: Request):
+    from . import spend
     job = worker(request, job_id)
     if not count_model_call(job):
         raise HTTPException(429, "Model round limit reached.")
     body = await request.json()
     trace = tracing.ModelTrace(job, body)
+    connection = providers.snapshot_connection(job.config["connection"])
+    meter = spend.UsageMeter(job, await spend.lookup_rates(connection, job.config["model"]))
     try:
         result = await providers.complete(
-            providers.snapshot_connection(job.config["connection"]),
+            connection,
             job.config["model"],
             body["messages"],
             body.get("tools", []),
             trace=trace,
+            meter=meter,
         )
         trace.result(result)
         trace.end()
+        meter.end(complete=True)
         return result
     except BaseException:
+        meter.end()
         trace.end(error=True)
         raise
 

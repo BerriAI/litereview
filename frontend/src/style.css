@@ -1771,7 +1771,7 @@ summary:hover {
 
 .run-summary {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   padding: 20px 0;
@@ -1804,6 +1804,7 @@ summary:hover {
   color: var(--muted);
   letter-spacing: 0;
 }
+.run-summary dd > .run-cost { margin-left: 0; font-size: inherit; color: inherit; }
 .run-summary dd.summary-caller {
   font-size: 14px;
   padding-top: 6px;
@@ -1984,3 +1985,12 @@ summary:hover {
 .final-review-model { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 16px; }
 .fusion-results > details { padding: 12px; margin: 8px 0; border: 1px solid var(--border, #ddd); border-radius: 8px; }
 .fusion-results summary { overflow-wrap: anywhere; }
+.spend-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 28px 0 18px; }
+.spend-summary > div { border: 1px solid var(--line); border-radius: 8px; padding: 22px; }
+.spend-summary dt { color: var(--muted); font-size: 12px; }
+.spend-summary dd { font-size: 28px; letter-spacing: -1px; margin: 9px 0; }
+.spend-summary small, .spend-note, .cost-estimate, .job-cost { color: var(--muted); font-size: 12px; }
+.spend-note { line-height: 1.6; margin-bottom: 28px; max-width: 850px; }
+.spend-page .tabs { margin-bottom: 18px; }
+.job-cost { margin-left: auto; white-space: nowrap; }
+@media (max-width: 700px) { .spend-summary { grid-template-columns: 1fr; gap: 12px; } }

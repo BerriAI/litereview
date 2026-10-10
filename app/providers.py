@@ -55,7 +55,7 @@ class UntimedHTTPHandler(AsyncHTTPHandler):
         return await super().post(*args, **kwargs)
 
 
-async def complete(conn, model, messages, tools, *, trace=None):
+async def complete(conn, model, messages, tools, *, trace=None, meter=None):
     provider = conn["type"]
     prefix = "anthropic" if provider == "anthropic" else "openai"
     model_name = model if model.startswith(prefix + "/") and provider != "gateway" else prefix + "/" + model
@@ -73,6 +73,12 @@ async def complete(conn, model, messages, tools, *, trace=None):
         )
         if trace is not None:
             trace.result(response.model_dump(exclude_none=True))
+        if meter is not None:
+            meter.result(response.model_dump(exclude_none=True))
+            reported = (getattr(response, "_hidden_params", None) or {}).get("response_cost")
+            from .spend import amount
+            if provider == "gateway" and amount(reported) is not None:
+                meter.reported = amount(reported)
         return response.choices[0].message.model_dump(exclude_none=True)
     except Exception as exc:
         # Provider exceptions can include request headers; never expose their text.

@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
+    Numeric,
     String,
     Text,
     create_engine,
@@ -99,6 +100,20 @@ class Artifact(Base):
     name: Mapped[str] = mapped_column(Text)
     content: Mapped[bytes] = mapped_column(LargeBinary)
     mime: Mapped[str] = mapped_column(String(80), default="image/png")
+
+
+class ModelUsage(Base):
+    __tablename__ = "model_usage"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=uid)
+    job_id: Mapped[str] = mapped_column(String(40), index=True)
+    model: Mapped[str] = mapped_column(String(250))
+    cost_usd = mapped_column(Numeric(24, 12), nullable=True)
+    source: Mapped[str] = mapped_column(String(30), default="unavailable")
+    input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cached_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    complete: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[float] = mapped_column(Float, default=time.time)
 
 
 class ReviewPublication(Base):
