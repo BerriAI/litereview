@@ -1,19 +1,21 @@
 import React, { useEffect, useRef, useState } from "react";
+import { CircleHelp, Plus, X } from "lucide-react";
 import { api, send } from "./api";
-import { Field, FormSection, SearchPicker } from "./ui";
+import { Field, SearchPicker } from "./ui";
 import { ReviewResult } from "./review-result";
 
-type Model = { connection_id: string; model: string; reasoning_effort?: string | null; focus?: string };
-type Fusion = { branches: Model[]; instructions: string };
+type Model = { connection_id: string; model: string; reasoning_effort?: string | null };
+type Selection = Model & { fusion?: { branches: Model[] } | null };
 
-export function FusionFields({ value, onChange, connections, disabled }: {
-  value: Fusion; onChange: (value: Fusion) => void;
+export function AgentModels({ value, onChange, connections, disabled }: {
+  value: Selection; onChange: (value: Selection) => void;
   connections: { id: string; name: string }[]; disabled: boolean;
 }) {
   const [models, setModels] = useState<Record<string, string[]>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const pending = useRef(new Set<string>());
-  const ids = [...new Set(value.branches.map(b => b.connection_id).filter(Boolean))].join(",");
+  const selected = value.fusion?.branches || [value];
+  const ids = [...new Set([...selected, value].map(b => b.connection_id).filter(Boolean))].join(",");
   useEffect(() => {
     for (const id of ids.split(",").filter(Boolean)) {
       if (pending.current.has(id)) continue;
@@ -23,39 +25,49 @@ export function FusionFields({ value, onChange, connections, disabled }: {
         .catch(() => setErrors(current => ({ ...current, [id]: "Could not load models. Enter the model ID." })));
     }
   }, [ids]);
-  const update = (index: number, patch: Partial<Model>) => onChange({
-    ...value, branches: value.branches.map((b, i) => i === index ? { ...b, ...patch } : b),
-  });
-  return <FormSection title={`Fusion branches · ${value.branches.length}`} description="Branches review independently in separate sandboxes. All use this agent’s instructions, skills, and tools. The aggregator then verifies their reports and publishes one review.">
-    {value.branches.map((branch, index) => <fieldset key={index} className="fusion-branch">
-      <legend>Branch {index + 1}</legend>
-      <div className="form-grid">
-        <SearchPicker label={`Branch ${index + 1} connection`} disabled={disabled} value={branch.connection_id}
-          options={connections.map(c => ({ value: c.id, label: c.name }))}
-          onChange={connection_id => update(index, { connection_id, model: "" })} />
-        <SearchPicker label={`Branch ${index + 1} model`} disabled={disabled} value={branch.model} allowCustom
-          options={(models[branch.connection_id] || []).map(model => ({ value: model, label: model }))}
-          onChange={model => update(index, { model })} />
-      </div>
-      {errors[branch.connection_id] && <small role="status">{errors[branch.connection_id]}</small>}
-      <Field label={`Branch ${index + 1} reasoning effort`}>
-        <select disabled={disabled} value={branch.reasoning_effort || ""} onChange={e => update(index, { reasoning_effort: e.target.value || null })}>
+  const selection = (model: Model): Model => ({ connection_id: model.connection_id, model: model.model, reasoning_effort: model.reasoning_effort || null });
+  const updateModels = (next: Model[]) => onChange(next.length === 1
+    ? { ...selection(next[0]), fusion: null }
+    : { ...selection(value), fusion: { branches: next.map(selection) } });
+  const fields = (model: Model, label: string, change: (patch: Partial<Model>) => void) => <>
+    <div className="form-grid">
+      <SearchPicker label={label === "Model" ? "Model connection" : `${label} connection`} disabled={disabled} value={model.connection_id}
+        options={connections.map(c => ({ value: c.id, label: c.name }))}
+        onChange={connection_id => change({ connection_id, model: "" })} />
+      <SearchPicker label={label} disabled={disabled} value={model.model} allowCustom
+        options={(models[model.connection_id] || []).map(id => ({ value: id, label: id }))}
+        onChange={model => change({ model })} />
+    </div>
+    {errors[model.connection_id] && <small role="status">{errors[model.connection_id]}</small>}
+    <details className="model-settings"><summary>Reasoning effort</summary>
+      <Field label={`${label} reasoning effort`}>
+        <select disabled={disabled} value={model.reasoning_effort || ""} onChange={e => change({ reasoning_effort: e.target.value || null })}>
           <option value="">Model default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option>
         </select>
       </Field>
-      <Field label={`Branch ${index + 1} focus (optional)`} hint="Give a branch a useful perspective, such as configuration contracts or state and lifecycle bugs.">
-        <textarea disabled={disabled} rows={2} value={branch.focus || ""} onChange={e => update(index, { focus: e.target.value })} />
-      </Field>
-      <button type="button" className="text-button" disabled={disabled || value.branches.length === 1}
-        onClick={() => onChange({ ...value, branches: value.branches.filter((_, i) => i !== index) })}>Remove branch {index + 1}</button>
-    </fieldset>)}
-    <button type="button" className="text-button" disabled={disabled || value.branches.length >= 16}
-      onClick={() => onChange({ ...value, branches: [...value.branches, { ...value.branches[value.branches.length - 1], focus: "" }] })}>Add branch</button>
-    <Field label="Aggregator guidance (optional)" hint="The aggregator already verifies evidence, merges duplicates, and preserves distinct defects. Add any task-specific guidance here.">
-      <textarea rows={3} disabled={disabled} value={value.instructions} onChange={e => onChange({ ...value, instructions: e.target.value })} />
-    </Field>
-    <p className="meta">Runs {value.branches.length} branches plus one aggregator. Model and sandbox costs add together. Time and call limits apply to each stage; the minimum review time applies to branches. Up to 16 branches.</p>
-  </FormSection>;
+    </details>
+  </>;
+  return <>
+    {selected.map((model, index) => <div className="agent-model" key={index}>
+      {fields(model, selected.length === 1 ? "Model" : `Model ${index + 1}`, patch => updateModels(selected.map((m, i) => i === index ? { ...m, ...patch } : m)))}
+      {selected.length > 1 && <button type="button" className="icon remove-model" aria-label={`Remove model ${index + 1}`} disabled={disabled}
+        onClick={() => updateModels(selected.filter((_, i) => i !== index))}><X size={13} /></button>}
+    </div>)}
+    <span className="add-model-action">
+      <button type="button" className="text-button" disabled={disabled || selected.length >= 16}
+        onClick={() => updateModels([...selected, { ...selection(selected[selected.length - 1]), model: "" }])}>
+        <Plus size={12} /> Add model
+      </button>
+      <span className="model-help">
+        <button type="button" className="icon" aria-label="About adding models" aria-describedby="add-model-help"><CircleHelp size={12} /></button>
+        <span role="tooltip" id="add-model-help">Models run in parallel as a fusion, using the same instructions, skills, and tools. Their findings are combined into one review. Each model adds usage costs.</span>
+      </span>
+    </span>
+    {value.fusion && <div className="final-review-model">
+      {fields(value, "Final review model", patch => onChange({ ...selection(value), ...patch, fusion: { branches: selected.map(selection) } }))}
+      <small>Combines and verifies the findings into one review. Costs include all models and this final pass.</small>
+    </div>}
+  </>;
 }
 
 export function FusionResults({ job, repo, head }: { job: any; repo: string; head: string }) {

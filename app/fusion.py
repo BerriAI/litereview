@@ -47,7 +47,8 @@ def selection(config):
     fusion = config.get("fusion")
     if not fusion:
         return None
-    return {**fusion, "branches": [{k: v for k, v in b.items() if k != "connection"} for b in fusion["branches"]]}
+    return {"branches": [{k: v for k, v in b.items() if k in {"connection_id", "model", "reasoning_effort"}}
+                         for b in fusion["branches"]]}
 
 
 def enqueue(db, run_id, config):
@@ -60,20 +61,17 @@ def enqueue(db, run_id, config):
         **config,
         "fusion_stage": "aggregator",
         "minimum_review_seconds": 0,
-        "instructions": config["instructions"] + "\n\n" + AGGREGATOR_INSTRUCTIONS
-        + "\n" + config["fusion"].get("instructions", ""),
+        "instructions": config["instructions"] + "\n\n" + AGGREGATOR_INSTRUCTIONS,
     }
     db.add(parent)
     for index, branch in enumerate(config["fusion"]["branches"]):
         cfg = {k: v for k, v in config.items() if k != "fusion"}
-        focus = branch.get("focus", "").strip()
         cfg.update(
-            **{k: v for k, v in branch.items() if k != "focus"},
+            **{k: v for k, v in branch.items() if k in {"connection_id", "connection", "model", "reasoning_effort"}},
             fusion_parent_id=parent.id,
             fusion_index=index,
             fusion_stage="branch",
-            instructions=config["instructions"] + "\n\nWork independently. Submit your own verified findings."
-            + ("\nInvestigation focus: " + focus if focus else ""),
+            instructions=config["instructions"] + "\n\nWork independently. Submit your own verified findings.",
         )
         db.add(Job(id=uid(), run_id=run_id, config=cfg))
     return parent

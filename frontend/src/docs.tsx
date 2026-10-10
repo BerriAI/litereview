@@ -83,7 +83,7 @@ export function Documentation() {
               </pre>
               <p>
                 The first reviewer becomes the default automatically. Change
-                it under PR agents → Default reviewer. If an existing workspace
+                it with Set default on an agent’s row under PR agents. If an existing workspace
                 has several reviewers, choose a default once. Caller and
                 repository permissions still apply.
               </p>
@@ -311,11 +311,11 @@ export function Documentation() {
           </p>
           <p>
             To combine independent reviews into one result, open a reviewer in
-            <a href="/agents"> PR agents</a> and set Review mode to Fusion.
-            Choose each branch’s connection, model, reasoning effort, and optional
-            focus. Add branch supports up to 16 branches. All branches use the
-            reviewer’s instructions, skills, and enabled tools. Select the
-            Aggregator model, save, and run Test agent to check every stage.
+            <a href="/agents"> PR agents</a> and choose Add model under Model.
+            Adding a second model enables fusion automatically. Every model uses
+            the same instructions, skills, and tools. Choose the Final review model,
+            save, and run Test agent. You can add up to 16 models; remove extra
+            models to return to a single reviewer.
           </p>
           <p>
             Each branch gets its own checkout. The aggregator verifies their reports
@@ -327,7 +327,7 @@ export function Documentation() {
             Fusion costs include every branch plus the aggregator. Time and call
             limits apply separately to each stage; minimum review time applies to
             branches. Workspace concurrency can queue branches. Choose a fusion
-            reviewer as Default reviewer to run it with <code>@litereview</code>.
+            reviewer with Set default in PR agents to run it with <code>@litereview</code>.
           </p>
         </section>
 

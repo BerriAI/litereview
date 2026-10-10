@@ -49,13 +49,8 @@ class ModelSelection(BaseModel):
     reasoning_effort: Literal["low", "medium", "high", "xhigh"] | None = None
 
 
-class FusionBranch(ModelSelection):
-    focus: str = ""
-
-
 class Fusion(BaseModel):
-    branches: list[FusionBranch] = Field(min_length=1, max_length=16)
-    instructions: str = ""
+    branches: list[ModelSelection] = Field(min_length=1, max_length=16)
 
 
 class AgentModel(ModelSelection):

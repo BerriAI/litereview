@@ -522,6 +522,45 @@ td small {
   background: transparent;
   padding: 5px 7px;
 }
+.default-reviewer {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.row-actions .default-help {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 4px 0;
+  min-height: 24px;
+}
+.default-help-text {
+  display: none;
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  width: 240px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: white;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 3px 12px #0000000d;
+}
+.default-reviewer:hover .default-help-text,
+.default-reviewer:focus-within .default-help-text {
+  display: block;
+}
 .model-cell {
   min-width: 185px;
   max-width: 240px;
@@ -1929,7 +1968,19 @@ summary:hover {
   display: none;
 }
 
-.fusion-branch { border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 16px; margin: 12px 0; min-width: 0; }
-.fusion-branch legend { padding: 0 6px; font-weight: 600; }
+.agent-model { position: relative; padding-right: 26px; }
+.agent-model + .agent-model { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.agent-model .remove-model { position: absolute; top: 25px; right: 0; padding: 4px; width: 22px; min-height: 24px; color: var(--muted); }
+.agent-model + .agent-model .remove-model { top: 39px; }
+.model-settings { margin: 8px 0 0; }
+.model-settings summary { color: var(--muted); font-size: 11px; font-weight: 400; }
+.model-settings .field { margin-top: 10px; }
+.add-model-action { display: inline-flex; align-items: center; gap: 3px; margin-top: 10px; }
+.add-model-action > .text-button { font-size: 12px; color: var(--muted); padding: 3px 0; min-height: 24px; }
+.model-help { position: relative; display: inline-flex; }
+.model-help > .icon { padding: 4px; width: 24px; min-height: 24px; color: var(--muted); }
+.model-help [role="tooltip"] { display: none; position: absolute; left: 0; top: calc(100% + 5px); z-index: 5; width: 240px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--ink); font-size: 12px; line-height: 1.5; box-shadow: 0 3px 12px #0000000d; }
+.model-help:hover [role="tooltip"], .model-help:focus-within [role="tooltip"] { display: block; }
+.final-review-model { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 16px; }
 .fusion-results > details { padding: 12px; margin: 8px 0; border: 1px solid var(--border, #ddd); border-radius: 8px; }
 .fusion-results summary { overflow-wrap: anywhere; }

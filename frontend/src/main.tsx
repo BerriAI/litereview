@@ -37,7 +37,7 @@ import { Documentation } from "./docs";
 import { MCPAuthFields, MCPServers, People } from "./resources";
 import { MCPToolSelector } from "./mcp-tool-selector";
 import { ReviewResult } from "./review-result";
-import { FusionFields, FusionResults } from "./fusion";
+import { AgentModels, FusionResults } from "./fusion";
 import { api, send } from "./api";
 import { GitHubSetup, GitHubSettings } from "./github-setup";
 import { MemberStart } from "./member-start";
@@ -136,9 +136,6 @@ function App() {
     : "";
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
-  const [models, setModels] = useState<Record<string, string[]>>({});
-  const [loadingModels, setLoadingModels] = useState(false);
-  const [modelError, setModelError] = useState("");
   const [testingModel, setTestingModel] = useState(false);
   const [checkRunId, setCheckRunId] = useState<string | null>(null);
   const [modelCheck, setModelCheck] = useState<{
@@ -203,33 +200,6 @@ function App() {
   };
   const modelConnection =
     editor?.kind === "agents" ? editor.data.connection_id : "";
-  useEffect(() => {
-    setModelError("");
-    setLoadingModels(false);
-    if (!modelConnection || models[modelConnection]) return;
-    let active = true;
-    setLoadingModels(true);
-    api("/connections/" + modelConnection + "/test", send("POST"))
-      .then((result) => {
-        if (active)
-          setModels((current) => ({
-            ...current,
-            [modelConnection]: result.models || [],
-          }));
-      })
-      .catch(() => {
-        if (active)
-          setModelError(
-            "Could not load models. Enter a model ID or try loading again.",
-          );
-      })
-      .finally(() => {
-        if (active) setLoadingModels(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [modelConnection]);
   useEffect(() => {
     setModelCheck(null);
   }, [
@@ -528,7 +498,6 @@ function App() {
   const discoverConnection = async (item: Row) => {
     try {
       const r = await api(`/connections/${item.id}/test`, send("POST"));
-      if (r.models) setModels((m) => ({ ...m, [item.id]: r.models }));
       setNotice(
         r.models
           ? `Connected · ${r.models.length} models available.`
@@ -1295,30 +1264,6 @@ function App() {
           ) : (
             <>
               {active === "agents" && store.agents.length > 0 && (
-                <Field label="Default reviewer" hint="Comment @litereview to run this agent. Caller and repository permissions still apply.">
-                  <select
-                    value={setup?.default_reviewer_id || ""}
-                    disabled={busy}
-                    onChange={async (event) => {
-                      const agentId = event.target.value;
-                      setBusy(true);
-                      setError("");
-                      try {
-                        const result = await api("/default-reviewer", send("PUT", { agent_id: agentId }));
-                        setSetup((current: any) => ({ ...current, ...result }));
-                      } catch (error) {
-                        setError((error as Error).message);
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                  >
-                    <option value="" disabled>Choose a reviewer</option>
-                    {store.agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
-                  </select>
-                </Field>
-              )}
-              {active === "agents" && store.agents.length > 0 && (
                 <div className="tabs agent-tabs" aria-label="Filter agents">
                   {[
                     ["all", "All agents"],
@@ -1626,6 +1571,39 @@ function App() {
                             )}
                           </td>
                           <td className="row-actions">
+                            {active === "agents" && (
+                              setup?.default_reviewer_id === row.id ? (
+                                <span className="default-reviewer">
+                                  Default
+                                  <button type="button" className="default-help"
+                                    aria-label="About the default reviewer"
+                                    aria-describedby={`default-help-${row.id}`}>
+                                    <CircleHelp size={12} aria-hidden="true" />
+                                  </button>
+                                  <span role="tooltip" id={`default-help-${row.id}`} className="default-help-text">
+                                    This agent runs when someone comments <code>@litereview</code> without naming an agent or group.
+                                  </span>
+                                </span>
+                              ) : (
+                                <button type="button" className="quiet-action"
+                                  aria-label={`Set ${row.name} as default reviewer`}
+                                  disabled={busy}
+                                  onClick={async () => {
+                                    setBusy(true);
+                                    setError("");
+                                    try {
+                                      const result = await api("/default-reviewer", send("PUT", { agent_id: row.id }));
+                                      setSetup((current: any) => ({ ...current, ...result }));
+                                    } catch (error) {
+                                      setError((error as Error).message);
+                                    } finally {
+                                      setBusy(false);
+                                    }
+                                  }}>
+                                  Set default
+                                </button>
+                              )
+                            )}
                             {active === "connections" && tab !== "github" && (
                               <button
                                 disabled={busy}
@@ -1871,105 +1849,29 @@ function App() {
                         .
                       </div>
                     )}
-                  <Field label="Review mode" hint="Fusion combines independent branches into one verified review.">
-                    <select value={editor.data.fusion ? "fusion" : "single"} disabled={testingModel}
-                      onChange={(event) => update("fusion", event.target.value === "single" ? null : {
-                        branches: [0, 1].map(() => ({ connection_id: editor.data.connection_id, model: editor.data.model, reasoning_effort: editor.data.reasoning_effort || null, focus: "" })),
-                        instructions: "",
-                      })}>
-                      <option value="single">Single reviewer</option><option value="fusion">Fusion</option>
-                    </select>
-                  </Field>
-                  {editor.data.fusion && <FusionFields value={editor.data.fusion}
-                    onChange={(value) => update("fusion", value)} connections={modelConnections} disabled={testingModel} />}
                   <FormSection
-                    title={editor.data.fusion ? "Aggregator model" : "Model"}
-                    description="Reviews run with Codex in a dedicated Modal sandbox. Use OpenAI or a gateway that supports the Responses API."
+                    title="Model"
+                    description="Reviews run with Codex. Use OpenAI or a Responses-compatible gateway."
                   >
-                    {store.connections.find((c) => c.id === editor.data.connection_id)?.type === "anthropic" && (
+                    {[editor.data, ...(editor.data.fusion?.branches || [])].some(model =>
+                      store.connections.find(c => c.id === model.connection_id)?.type === "anthropic"
+                    ) && (
                       <p className="error" role="alert">
                         This reviewer uses a direct Anthropic connection. Add a Responses-compatible gateway in Models, then select it here to keep using your Anthropic model with Codex.
                       </p>
                     )}
-                    <div className="form-grid">
-                      <SearchPicker
-                        label="Model connection"
-                        disabled={testingModel}
-                        value={editor.data.connection_id}
-                        options={modelConnections.map((connection) => ({
-                          value: connection.id,
-                          label: connection.name,
-                        }))}
-                        onChange={(value) =>
-                          setEditor(
-                            (current) =>
-                              current && {
-                                ...current,
-                                data: {
-                                  ...current.data,
-                                  connection_id: value,
-                                  model: "",
-                                },
-                              },
-                          )
-                        }
-                      />
-                      <SearchPicker
-                        key={editor.data.connection_id}
-                        label="Model"
-                        disabled={testingModel}
-                        value={editor.data.model}
-                        options={(models[editor.data.connection_id] || []).map(
-                          (model) => ({ value: model, label: model }),
-                        )}
-                        onChange={(value) => update("model", value)}
-                        allowCustom
-                        loading={loadingModels}
-                      />
-                    </div>
-                    {modelError && <small role="status">{modelError}</small>}
-                    <Field
-                      label="Reasoning effort"
-                      hint="Higher effort gives supported models more time to reason and can increase cost. Leave the default for models that do not support this setting."
-                    >
-                      <select
-                        value={editor.data.reasoning_effort || ""}
-                        disabled={testingModel}
-                        onChange={(e) => update("reasoning_effort", e.target.value || null)}
-                      >
-                        <option value="">Model default</option>
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
-                        <option value="xhigh">Extra high</option>
-                      </select>
-                    </Field>
+                    <AgentModels value={editor.data}
+                      onChange={(value) => setEditor(current => current && ({ ...current, data: { ...current.data, ...value } }))}
+                      connections={modelConnections} disabled={testingModel} />
                     <div className="model-actions">
-                      <button
-                        type="button"
-                        className="text-button"
-                        disabled={
-                          busy || loadingModels || !editor.data.connection_id
-                        }
-                        onClick={() => {
-                          const c = store.connections.find(
-                            (c) => c.id === editor.data.connection_id,
-                          );
-                          if (c) {
-                            setModelError("");
-                            testConnection(c);
-                          }
-                        }}
-                      >
-                        {loadingModels ? "Loading models…" : "Refresh models"}
-                      </button>
                       <button
                         type="button"
                         className="text-button"
                         disabled={
                           busy ||
                           !editor.data.connection_id ||
-                          !editor.data.model
+                          !editor.data.model ||
+                          editor.data.fusion?.branches.some((model: any) => !model.connection_id || !model.model)
                         }
                         onClick={async () => {
                           setTestingModel(true);
