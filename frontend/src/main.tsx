@@ -136,9 +136,6 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
   const [models, setModels] = useState<Record<string, string[]>>({});
-  const [harnesses, setHarnesses] = useState<
-    { id: string; name: string; version: string }[]
-  >([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelError, setModelError] = useState("");
   const [testingModel, setTestingModel] = useState(false);
@@ -206,12 +203,6 @@ function App() {
   const modelConnection =
     editor?.kind === "agents" ? editor.data.connection_id : "";
   useEffect(() => {
-    if (session?.user)
-      api("/harnesses")
-        .then(setHarnesses)
-        .catch(() => {});
-  }, [session?.user]);
-  useEffect(() => {
     setModelError("");
     setLoadingModels(false);
     if (!modelConnection || models[modelConnection]) return;
@@ -242,7 +233,6 @@ function App() {
     setModelCheck(null);
   }, [
     editor?.data.model,
-    editor?.data.harness,
     modelConnection,
     JSON.stringify(editor?.data.capabilities),
   ]);
@@ -465,7 +455,7 @@ function App() {
         instructions:
           "Review this PR for actionable defects. Explain a concrete failure scenario and cite the affected code. Report no findings when appropriate.",
         connection_id:
-          store.connections.find((c) => c.type !== "mcp")?.id || "",
+          store.connections.find((c) => ["openai", "gateway"].includes(c.type))?.id || "",
         model: "",
         capabilities: ["terminal"],
         skill_ids: [],
@@ -593,7 +583,7 @@ function App() {
     try {
       const saved = await api(
         "/resources/" + editor.kind + (editor.id ? "/" + editor.id : ""),
-        send(editor.id ? "PUT" : "POST", editor.data),
+        send(editor.id ? "PUT" : "POST", editor.kind === "agents" ? { ...editor.data, harness: "codex" } : editor.data),
       );
       // Retain the saved ID if discovery fails, so Retry never creates duplicates.
       setEditor({
@@ -640,7 +630,7 @@ function App() {
       });
   };
   const testConnection = (item: Row) => mutate(() => discoverConnection(item));
-  const modelConnections = store.connections.filter((c) => c.type !== "mcp");
+  const modelConnections = store.connections.filter((c) => ["openai", "gateway"].includes(c.type));
   const mcpConnections = store.connections.filter((c) => c.type === "mcp");
   const needsRepositories =
     !setup.github || setup.github_reset || !store.repos.length;
@@ -1500,10 +1490,7 @@ function App() {
                               <div className="model-cell">
                                 <code>{row.model}</code>
                                 <small>
-                                  {harnesses.find(
-                                    (h) => h.id === (row.harness || "builtin"),
-                                  )?.name || "Built-in"}{" "}
-                                  ·{" "}
+                                  Codex ·{" "}
                                   {store.connections.find(
                                     (c) => c.id === row.connection_id,
                                   )?.name || "Connection unavailable"}
@@ -1851,26 +1838,13 @@ function App() {
                       </div>
                     )}
                   <FormSection
-                    title="Harness & model"
-                    description="Each review starts only this harness in its own Modal sandbox."
+                    title="Model"
+                    description="Reviews run with Codex in a dedicated Modal sandbox. Use OpenAI or a gateway that supports the Responses API."
                   >
-                    <SearchPicker
-                      label="Harness"
-                      disabled={testingModel}
-                      value={editor.data.harness || "builtin"}
-                      options={harnesses.map((h) => ({
-                        value: h.id,
-                        label: h.name,
-                      }))}
-                      onChange={(value) => update("harness", value)}
-                    />
-                    {(editor.data.harness === "codex" ||
-                      editor.data.harness === "claude-code") && (
-                      <small>
-                        {editor.data.harness === "codex"
-                          ? "Requires a Responses-compatible connection. A gateway can route it to Claude or other models."
-                          : "Requires a Messages-compatible connection, through Anthropic or your gateway."}
-                      </small>
+                    {store.connections.find((c) => c.id === editor.data.connection_id)?.type === "anthropic" && (
+                      <p className="error" role="alert">
+                        This reviewer uses a direct Anthropic connection. Add a Responses-compatible gateway in Models, then select it here to keep using your Anthropic model with Codex.
+                      </p>
                     )}
                     <div className="form-grid">
                       <SearchPicker
@@ -1944,7 +1918,7 @@ function App() {
                             const check = await api(
                               "/agents/check",
                               send("POST", {
-                                harness: editor.data.harness || "builtin",
+                                harness: "codex",
                                 connection_id: editor.data.connection_id,
                                 model: editor.data.model,
                                 capabilities: editor.data.capabilities,
@@ -2026,7 +2000,7 @@ function App() {
                       )}
                     </div>
                     <small>
-                      Checks this harness, model, and enabled tools on a sample
+                      Checks Codex, this model, and enabled tools on a sample
                       project. Uses Modal and model credits. Your review
                       instructions, attached skills, and MCP tools are not run
                       in this check. The minimum review time applies to PR
@@ -2066,7 +2040,7 @@ function App() {
                   </FormSection>
                   <FormSection
                     title="Tools & environment"
-                    description="Each reviewer can inspect code, run tests, and use its harness’s subagents when requested by your instructions or skills. Add visual tools if needed."
+                    description="Each reviewer can inspect code, run tests, and use Codex subagents when requested by your instructions or skills. Add visual tools if needed."
                   >
                     <div className="included-capability">
                       <FileCode2 size={18} />
@@ -2385,7 +2359,9 @@ function App() {
                           OpenAI-compatible gateway
                         </option>
                         <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
+                        {editor.data.type === "anthropic" && (
+                          <option value="anthropic" disabled>Anthropic (requires a gateway)</option>
+                        )}
                       </select>
                     </Field>
                   )}
@@ -2398,7 +2374,7 @@ function App() {
                     hint={
                       editor.data.type === "mcp"
                         ? "For example: https://your-server.example.com/mcp"
-                        : "For gateways, include /v1 if required. Leave blank for direct OpenAI or Anthropic."
+                        : "Use a Responses-compatible gateway, including /v1 if required. Leave blank for direct OpenAI."
                     }
                   >
                     <input

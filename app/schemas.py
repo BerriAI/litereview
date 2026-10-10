@@ -40,9 +40,7 @@ class ReviewTarget(BaseModel):
 
 
 class AgentModel(BaseModel):
-    harness: Literal["builtin", "pi", "opencode-v1", "opencode-v2", "codex", "claude-code", "deepagents"] = (
-        "builtin"
-    )
+    harness: Literal["codex"] = "codex"
     connection_id: str
     model: str = Field(min_length=1)
     capabilities: list[Literal["terminal", "browser", "computer"]] = Field(

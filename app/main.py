@@ -264,7 +264,7 @@ def validate_resource(kind, data, db, resource_id):
         if conn.data["type"] == "mcp":
             raise HTTPException(400, "Choose a model connection.")
         try:
-            validate_connection(data.get("harness", "builtin"), conn.data["type"])
+            validate_connection(data.get("harness", "codex"), conn.data["type"])
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
         for sid in data["skill_ids"]:

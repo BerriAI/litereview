@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 import sys
 import time
@@ -159,6 +161,7 @@ def test_failures_do_not_wait_out_minimum_and_job_limits_are_independent(client)
 async def test_codex_early_exit_resumes_same_thread_and_keeps_tools(tmp_path, monkeypatch):
     cfg = {
         "harness": "codex",
+        "model": "openai/gpt-6-sol",
         "capabilities": [],
         "mcp_definitions": [],
         "minimum_review_seconds": 60,
@@ -170,24 +173,52 @@ async def test_codex_early_exit_resumes_same_thread_and_keeps_tools(tmp_path, mo
     tools.clock = ReviewClock(60)
     tools.clock.start()
     monkeypatch.setattr(harness, "STATE", tmp_path)
+    monkeypatch.setattr(harness, "ROOT", tmp_path)
     monkeypatch.setattr(tools, "child_env", lambda: dict(os.environ))
     attempts = []
+    build_command = harness.command
+
+    # The full PR exceeds both exec's argument limit and Codex's 1 MiB input
+    # limit. It stays readable on disk while the CLI receives a short prompt.
+    executable = tmp_path / "harness/node_modules/.bin/codex"
+    executable.parent.mkdir(parents=True)
+    executable.write_text(f"#!{sys.executable}\n" + r'''import json,sys,urllib.request
+from pathlib import Path
+data=json.loads(Path("test-input.json").read_text())
+prompt=sys.stdin.buffer.read().decode("utf-8")
+assert prompt == data["prompt"]
+assert json.loads(Path("review-context.json").read_text())["diff"].endswith("世界\n")
+assert Path("agent-instructions.md").read_text() == data["instructions"]
+assert sys.argv[-1] == "-"
+resuming="resume" in sys.argv
+if resuming:
+    assert sys.argv[-3:] == ["resume", "same-thread", "-"]
+Path("received-resume.txt" if resuming else "received-start.txt").write_text(prompt)
+print(json.dumps({"type":"thread.started","thread_id":"same-thread"}),flush=True)
+body={"name":"lr_finish_review","arguments":{"summary":"Verified","findings":[],"limitations":[]}}
+r=urllib.request.urlopen(urllib.request.Request(data["url"]+"/call",data=json.dumps(body).encode(),headers={"content-type":"application/json"}))
+print(r.read().decode(),flush=True)
+''')
+    executable.chmod(0o755)
 
     def command(cfg, url, instructions, prompt, env, resume_id=None):
         attempts.append(resume_id)
         if resume_id:
             tools.clock.started -= 60
-        script = """import json,sys,urllib.request
-print(json.dumps({"type":"thread.started","thread_id":"same-thread"}),flush=True)
-body={"name":"lr_finish_review","arguments":{"summary":"Verified","findings":[],"limitations":[]}}
-r=urllib.request.urlopen(urllib.request.Request(sys.argv[1]+"/call",data=json.dumps(body).encode(),headers={"content-type":"application/json"}))
-print(r.read().decode(),flush=True)
-"""
-        return [sys.executable, "-c", script, url]
+        (tmp_path / "test-input.json").write_text(json.dumps({
+            "url": url, "prompt": prompt, "instructions": instructions,
+        }))
+        return build_command(cfg, url, instructions, prompt, env, resume_id)
 
     monkeypatch.setattr(harness, "command", command)
-    await harness.run_external(tools, relay, {"config": cfg}, "system", "review")
+    prompt = json.dumps({"diff": "+ Full diff: café 世界\n" * 100_000}, ensure_ascii=False)
+    instructions = "Review carefully. Préserver les instructions.\n" * 10_000
+    await asyncio.wait_for(harness.run_external(tools, relay, {"config": cfg}, instructions, prompt), 15)
     assert attempts == [None, "same-thread"]
+    assert (tmp_path / "review-context.json").read_text() == prompt
+    assert str(tmp_path / "review-context.json") in (tmp_path / "received-start.txt").read_text()
+    assert len((tmp_path / "received-start.txt").read_bytes()) < 1024
+    assert (tmp_path / "received-resume.txt").read_text().startswith("Continue this review in the same thread.")
     assert relay.call_args.args == (
         "finish",
         {"summary": "Verified", "findings": [], "limitations": [], "status": "completed"},

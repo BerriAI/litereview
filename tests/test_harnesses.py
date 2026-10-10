@@ -92,9 +92,9 @@ def test_harness_defaults_and_incompatible_connections(owner):
     }
     response = owner.post("/api/resources/agents", json=agent)
     assert response.status_code == 200
-    assert response.json()["harness"] == "builtin"
+    assert response.json()["harness"] == "codex"
     agent.update(name="claude", harness="claude-code")
-    assert owner.post("/api/resources/agents", json=agent).status_code == 400
+    assert owner.post("/api/resources/agents", json=agent).status_code == 422
     agent.update(harness="untrusted-package")
     assert owner.post("/api/resources/agents", json=agent).status_code == 422
     assert {h["id"] for h in owner.get("/api/harnesses").json()} == set(HARNESS_VERSIONS)
@@ -198,7 +198,7 @@ async def test_capability_checks_never_publish_to_github(client, monkeypatch):
     from app.agent_checks import enqueue
     from app.schemas import AgentModel
 
-    data = AgentModel(connection_id="provider", model="test", harness="pi")
+    data = AgentModel(connection_id="provider", model="test", harness="codex")
     created = enqueue(data, {"id": "provider", "type": "gateway", "api_key": "secret"})
     github = AsyncMock(side_effect=AssertionError("Must never call GitHub"))
     monkeypatch.setattr(reviews.github, "repo_request", github)
@@ -206,7 +206,7 @@ async def test_capability_checks_never_publish_to_github(client, monkeypatch):
     with Session() as db:
         job = db.query(Job).filter(Job.run_id == created["id"]).one()
         assert "secret" not in json.dumps(job.config)
-        assert job.config["harness_version"] == HARNESS_VERSIONS["pi"]
+        assert job.config["harness_version"] == HARNESS_VERSIONS["codex"]
         job.status = "completed"
         job.result = {"limitations": []}
         db.commit()
@@ -295,3 +295,51 @@ async def test_bridge_keeps_screenshot_as_image_and_tool_errors_recoverable():
     result = {"summary": "Could not inspect repository", "findings": [], "limitations": ["MCP unavailable"]}
     assert not (await bridge.call("lr_finish_review", result))["isError"]
     assert bridge.result["limitations"]
+
+
+@pytest.mark.parametrize("old_harness", [None, "builtin", "pi", "opencode-v1", "opencode-v2", "claude-code", "deepagents"])
+def test_saved_reviewers_migrate_to_codex_without_changing_jobs(owner, old_harness):
+    from test_reviews import setup
+
+    from app.db import Resource, init_db
+
+    _, _, agent, _, _ = setup(owner)
+    seed_job()
+    with Session() as db:
+        row = db.get(Resource, agent["id"])
+        previous = {k: v for k, v in row.data.items() if k != "harness"}
+        row.data = {**previous, **({"harness": old_harness} if old_harness else {})}
+        db.get(Job, "test-job").config = {"harness": old_harness, "model": "unchanged-model"}
+        db.commit()
+    init_db()
+    with Session() as db:
+        row = db.get(Resource, agent["id"])
+        assert row.data == {**previous, "harness": "codex"}
+        migrated_at = row.updated_at
+        assert db.get(Job, "test-job").config == {"harness": old_harness, "model": "unchanged-model"}
+    init_db()
+    with Session() as db:
+        assert db.get(Resource, agent["id"]).updated_at == migrated_at
+    assert next(a for a in owner.get("/api/resources/agents").json() if a["id"] == agent["id"])["harness"] == "codex"
+
+
+def test_direct_anthropic_reviewers_get_gateway_recovery(owner):
+    from fastapi import HTTPException
+    from test_reviews import create, setup
+
+    from app.db import Resource
+
+    _, _, agent, _, group = setup(owner)
+    connection = create(owner, "connections", name="Anthropic", type="anthropic")
+    response = owner.put("/api/resources/agents/" + agent["id"], json={**agent, "connection_id": connection["id"]})
+    assert response.status_code == 400
+    assert "Responses-compatible gateway in Models" in response.json()["detail"]
+    # Existing saved reviewers cannot bypass validation when a PR is queued.
+    with Session() as db:
+        row = db.get(Resource, agent["id"])
+        row.data = {**row.data, "harness": "claude-code", "connection_id": connection["id"]}
+        db.commit()
+        resources = {r.id: r for r in db.query(Resource).all()}
+        with pytest.raises(HTTPException, match="Responses-compatible gateway in Models"):
+            reviews.expand([group], resources)
+    assert not next(a for a in owner.get("/api/workspace/readiness").json()["agents"] if a["id"] == agent["id"])["checked"]

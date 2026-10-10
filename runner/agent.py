@@ -14,7 +14,7 @@ import httpx
 
 from .catalog import review_capabilities
 from .instructions import agent_instructions
-from .tools import REPO, SKILLS, Toolset, definitions
+from .tools import REPO, SKILLS, Toolset
 
 
 class Relay:
@@ -142,106 +142,21 @@ async def run(relay, data):
         await relay.event("Review clock started: " + json.dumps(tools.clock.status()))
         skills = skill_context(cfg["skills"])
         system = agent_instructions(cfg, tools.clock, skills)
-        messages = [
-            {
-                "role": "system",
-                "content": system,
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "review": data["pr"],
-                        "environment": {
-                            "repo": str(REPO),
-                            "checkout": "GitHub source archive of the supplied immutable head SHA; .git history is not included. Use the supplied SHA and source files to identify the checkout; do not fabricate a local commit.",
-                            "readiness_url": data["repository"].get("readiness_url"),
-                            "capabilities": cfg["capabilities"],
-                        },
-                    },
-                    ensure_ascii=False,
-                ),
-            },
-        ]
-        if cfg.get("harness", "builtin") != "builtin":
-            from .harness import run_external
+        from .harness import run_external
 
-            await run_external(tools, relay, data, system, messages[-1]["content"])
-            return
-        if "computer" in cfg["capabilities"]:
-            shot = await tools.screen()
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Initial desktop screenshot; inspect this before interacting.",
-                        },
-                        {"type": "image_url", "image_url": {"url": shot["image"]}},
-                    ],
-                }
-            )
-        rounds = 0
-        while data.get("max_rounds") is None or rounds < data["max_rounds"]:
-            rounds += 1
-            reply = await relay("model", {"messages": messages, "tools": definitions(cfg)})
-            messages.append(reply)
-            calls = reply.get("tool_calls", [])
-            if not calls:
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": "Continue inspecting with your tools, or submit your structured result with finish_review.",
-                    }
-                )
-                continue
-            visuals = []
-            for call in calls:
-                name = call["function"]["name"]
-                await relay.event("Using " + name)
-                try:
-                    args = json.loads(call["function"]["arguments"])
-                    if name == "finish_review":
-                        tools.clock.require_elapsed()
-                        if len(calls) != 1:
-                            raise ValueError(
-                                "Submit finish_review in a separate turn after inspecting all tool results."
-                            )
-                        args["status"] = "completed"
-                        await relay.event("Review clock at finish: " + json.dumps(tools.clock.status()))
-                        await relay("finish", args)
-                        return
-                    result = await tools.execute(name, args)
-                    images = result.pop("images", [])
-                    if result.get("image"):
-                        images.append(result.pop("image"))
-                    for picture in images:
-                        visuals.extend(
-                            [
-                                {
-                                    "type": "text",
-                                    "text": f"Visual output of {name}; evidence artifact: {result.get('artifact_id', 'unsaved')}. Inspect the visible result.",
-                                },
-                                {"type": "image_url", "image_url": {"url": picture}},
-                            ]
-                        )
-                    text = json.dumps(result, ensure_ascii=False)
-                except Exception as exc:
-                    text = json.dumps({"error": str(exc)})
-                messages.append({"role": "tool", "tool_call_id": call["id"], "content": text})
-            if visuals:
-                # Image inputs use standard user image parts supported by both adapters.
-                messages.append({"role": "user", "content": visuals})
-        await relay(
-            "finish",
+        prompt = json.dumps(
             {
-                "status": "timed_out",
-                "summary": "The agent reached its model round limit.",
-                "findings": [],
-                "limitations": ["The review did not finish within the configured limit."],
+                "review": data["pr"],
+                "environment": {
+                    "repo": str(REPO),
+                    "checkout": "GitHub source archive of the supplied immutable head SHA; .git history is not included. Use the supplied SHA and source files to identify the checkout; do not fabricate a local commit.",
+                    "readiness_url": data["repository"].get("readiness_url"),
+                    "capabilities": cfg["capabilities"],
+                },
             },
+            ensure_ascii=False,
         )
+        await run_external(tools, relay, data, system, prompt)
     finally:
         await tools.close()
 

@@ -8,21 +8,22 @@ Run the commands in [CONTRIBUTING.md](../CONTRIBUTING.md). The suite covers auth
 
 The October 10, 2026 pre-release baseline at commit `7a6238b` passed **273 tests with 1 skipped** using SQLite, plus Ruff and the TypeScript/Vite production build. The skipped check requires PostgreSQL to enforce a legacy column length. Gitleaks found no secrets in the 67 commits reachable through locally available refs at that point. These checks are bounded evidence, not a complete security audit.
 
-## Selectable harness validation
+## Codex runtime validation
 
-The September 2026 integration matrix exercised the pinned versions below in independent Modal sandboxes using compatible gateway models. Each harness completed a sample skill check, terminal command, internet request, browser and desktop interaction, configured MCP call, and a seeded defect review.
+LiteReview runs Codex 0.158.0, pinned in `runner/catalog.py`. Automated tests exercise large Unicode review contexts, process startup, instruction preservation, same-session continuation, saved-reviewer migration, and incompatible connection recovery. The full review context stays on disk so neither operating-system argument limits nor Codex's initial input limit truncate a PR.
 
-| Harness | Pinned runtime |
-| --- | --- |
-| Built-in | 1 |
-| Pi | 0.87.1 |
-| OpenCode V1 | 1.18.33 |
-| OpenCode V2 | 2.0.18 |
-| Codex | 0.158.0 |
-| Claude Code Agent SDK | 0.3.284 |
-| Deep Agents | 0.7.19 |
+The September 2026 live checks exercised this Codex version in Modal with a compatible gateway model, including sample skills, terminal commands, internet access, browser and desktop interaction, a configured MCP call, and a seeded defect review. Prior integration checks also covered signed GitHub webhooks, installation-authenticated source downloads, App-authored results, duplicate-delivery handling, and simultaneous sandboxes. Historical evidence is not a claim that a new deployment has completed a review.
 
-The authoritative pins are in `runner/catalog.py`. Prior live checks also exercised signed GitHub webhooks, installation-authenticated source downloads, App-authored results, duplicate-delivery handling, and simultaneous sandboxes in an isolated test deployment. Direct-provider account authentication was not tested in that matrix; adapter behavior is covered by protocol fixtures. Historical evidence is not a claim that your new deployment has completed a review.
+CI also installs the pinned Codex package and runs `scripts.codex_smoke` against a local model fixture. This checks a complete 2.7 MB Unicode context file, native terminal execution, instruction preservation, structured MCP submission, and the same session and cache key after a timed continuation. It uses no provider credentials or paid inference and does not measure actual cache hits. To repeat it from the repository root:
+
+```sh
+codex_test_dir="$(mktemp -d)"
+codex_version="$(uv run python -c 'from runner.catalog import HARNESS_VERSIONS; print(HARNESS_VERSIONS["codex"])')"
+npm install --prefix "$codex_test_dir" --omit=dev --no-package-lock "@openai/codex@$codex_version"
+uv run python -m scripts.codex_smoke --codex "$codex_test_dir/node_modules/.bin/codex"
+```
+
+The command succeeds when its JSON output reports `structured_review_completed`, `same_thread`, and `same_prompt_cache_key` as `true`. A fixture failure is a runtime compatibility issue; it does not test a production provider's credentials or model quality.
 
 ## Check your own deployment
 

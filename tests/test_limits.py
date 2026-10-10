@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -12,7 +13,7 @@ from app import providers, reviews, runtime
 from app.db import Job, Session
 from app.limits import SANDBOX_MAX_SECONDS, job_timeout, model_rounds
 from app.settings import Settings, settings
-from runner import agent
+from runner import agent, harness
 
 
 def test_legacy_environment_never_imposes_limits(monkeypatch):
@@ -115,8 +116,7 @@ def test_sandbox_uses_selected_timeout_or_full_platform_lifetime(monkeypatch, ti
     assert create.call_args.kwargs["timeout"] == expected
 
 
-@pytest.mark.parametrize("limit,expected,status", [(None, 205, "completed"), (3, 3, "timed_out")])
-async def test_builtin_has_no_implicit_round_limit(monkeypatch, limit, expected, status):
+async def test_runner_uses_codex_and_preserves_full_review_context(monkeypatch):
     relay = AsyncMock()
     monkeypatch.setattr(agent, "prepare_repository", AsyncMock())
     monkeypatch.setattr(agent, "stage_skills", lambda *_: None)
@@ -124,41 +124,21 @@ async def test_builtin_has_no_implicit_round_limit(monkeypatch, limit, expected,
     tools.clock.instructions.return_value = ""
     tools.clock.status.return_value = {}
     monkeypatch.setattr(agent, "Toolset", lambda *_: tools)
-    calls = 0
-
-    async def respond(endpoint, body):
-        nonlocal calls
-        if endpoint == "model":
-            calls += 1
-            if calls == 205:
-                return {
-                    "role": "assistant",
-                    "tool_calls": [
-                        {
-                            "id": "done",
-                            "function": {
-                                "name": "finish_review",
-                                "arguments": '{"summary":"Done","findings":[],"limitations":[]}',
-                            },
-                        }
-                    ],
-                }
-            return {"role": "assistant", "content": "Continuing"}
-
-    relay.side_effect = respond
-    await agent.run(
-        relay,
-        {
-            "config": {"skills": [], "capabilities": [], "instructions": "Review"},
-            "pr": {},
-            "repository": {},
-            "max_rounds": limit,
-        },
-    )
-    assert calls == expected
-    assert relay.call_args.args[0] == "finish"
-    assert relay.call_args.args[1]["status"] == status
+    run_codex = AsyncMock()
+    monkeypatch.setattr(harness, "run_external", run_codex)
+    data = {
+        "config": {"skills": [], "capabilities": [], "instructions": "Review in French"},
+        "pr": {"diff": "large diff\n" * 200_000},
+        "repository": {},
+    }
+    await agent.run(relay, data)
+    run_codex.assert_awaited_once()
+    args = run_codex.call_args.args
+    assert args[:3] == (tools, relay, data)
+    assert "Review in French" in args[3]
+    assert json.loads(args[4])["review"] == data["pr"]
     tools.close.assert_awaited_once()
+
 
 
 @pytest.mark.parametrize("timeout", [None, 0.01])

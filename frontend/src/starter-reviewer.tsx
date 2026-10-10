@@ -23,7 +23,6 @@ export function StarterReviewer({
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<any>(null);
   const connection = connections.find((c) => c.id === connectionId);
-  const harness = connection?.type === "anthropic" ? "claude-code" : "codex";
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -59,7 +58,7 @@ export function StarterReviewer({
           send("POST", {
             name,
             minimum_minutes: minimumMinutes,
-            harness,
+            harness: "codex",
             model,
             connection_id: connectionId,
             capabilities: ["terminal"],
@@ -153,7 +152,7 @@ export function StarterReviewer({
             disabled={!!saved || busy}
           />
           <p className="starter-note">
-            Harness: {harness === "codex" ? "Codex" : "Claude Code"}. Review
+            Reviews run with Codex. Review
             instructions, skills, and MCP tools remain editable in Agents. No
             run time or model-call limit is set. Optional limits are in the
             agent editor; Modal has a 24-hour sandbox lifetime.
@@ -172,7 +171,7 @@ export function StarterReviewer({
         </div>
         <footer>
           <p>
-            Checks the harness and model on a sample project. Uses Modal and
+            Checks Codex and the model on a sample project. Uses Modal and
             model credits.
           </p>
           <button className="primary" disabled={busy || loading}>

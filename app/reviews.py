@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from runner.catalog import HARNESS_VERSIONS, review_capabilities
+from runner.catalog import HARNESS_VERSIONS, review_capabilities, validate_connection
 
 from . import github, tracing
 from .access import caller_grant, caller_permits, permits
@@ -58,13 +58,17 @@ def expand(groups, resources):
                 raise HTTPException(409, "A group references a missing agent.")
             data = agent.data.copy()
             data["capabilities"] = review_capabilities(data.get("capabilities", []))
-            data.setdefault("harness", "builtin")
+            data["harness"] = "codex"
             data["harness_version"] = HARNESS_VERSIONS[data["harness"]]
             minutes = data.get("minimum_minutes", 0)
             data.update(timing_limits(minutes, data.get("maximum_minutes"), data.get("max_model_calls")))
             conn = resources.get(data["connection_id"])
             if not conn or conn.kind != "connections" or conn.data["type"] == "mcp":
                 raise HTTPException(409, "An agent needs a model connection.")
+            try:
+                validate_connection("codex", conn.data["type"])
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from None
             data["connection"] = {"id": conn.id, **conn.data}
             data["skills"] = [{"id": sid, **resources[sid].data} for sid in data["skill_ids"]]
             data["mcp_definitions"] = []

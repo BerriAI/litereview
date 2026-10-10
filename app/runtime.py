@@ -8,13 +8,12 @@ import modal
 
 from runner.catalog import HARNESS_VERSIONS, NPM_PACKAGES, validate_connection
 
-from . import providers
 from .db import Job, Session
 from .limits import SANDBOX_MAX_SECONDS, job_timeout
 from .settings import settings
 
 
-def sandbox_image(harness="builtin"):
+def sandbox_image(harness="codex"):
     if harness not in HARNESS_VERSIONS:
         raise ValueError("Unknown harness.")
     image = (
@@ -28,15 +27,9 @@ def sandbox_image(harness="builtin"):
         )
         .run_commands("playwright install --with-deps chromium")
     )
-    if harness != "builtin":
-        image = image.pip_install("mcp>=1.26,<2", "uvicorn==0.34.3", "starlette>=0.49,<1")
-    if harness in NPM_PACKAGES:
-        package = NPM_PACKAGES[harness] + "@" + HARNESS_VERSIONS[harness]
-        image = image.run_commands(f"npm install --prefix /opt/litereview/harness --omit=dev {package}")
-    elif harness == "deepagents":
-        image = image.pip_install(
-            "deepagents==0.7.19", "langchain-openai==1.6.6", "langchain-anthropic>=1,<2"
-        )
+    image = image.pip_install("mcp>=1.26,<2", "uvicorn==0.34.3", "starlette>=0.49,<1")
+    package = NPM_PACKAGES[harness] + "@" + HARNESS_VERSIONS[harness]
+    image = image.run_commands(f"npm install --prefix /opt/litereview/harness --omit=dev {package}")
     return image.add_local_dir(
         str(Path(__file__).resolve().parent.parent / "runner"), "/opt/litereview/runner"
     )
@@ -58,7 +51,7 @@ def _app(name, token_id, token_secret):
     return modal.App.lookup(name, create_if_missing=True, client=c)
 
 
-def create_sandbox(job_id, token, harness="builtin", timeout=None):
+def create_sandbox(job_id, token, harness="codex", timeout=None):
     s = settings()
     c = client()
     with _app_lock:
@@ -98,17 +91,13 @@ async def launch(job_id, token):
             job = db.get(Job, job_id)
             cfg = job.config
         harness = cfg.get("harness", "builtin")
+        if harness != "codex":
+            raise RuntimeError("This review was queued with a retired harness. Start a new review to use Codex.")
         if cfg.get("harness_version", HARNESS_VERSIONS[harness]) != HARNESS_VERSIONS[harness]:
             raise RuntimeError(
                 "The harness version changed after this review was queued. Start a new review."
             )
         validate_connection(harness, cfg["connection"]["type"])
-        if harness == "builtin":
-            await providers.probe(
-                providers.snapshot_connection(cfg["connection"]),
-                cfg["model"],
-                bool({"browser", "computer"} & set(cfg["capabilities"])),
-            )
         if not settings().public_url.startswith("https://"):
             raise RuntimeError(
                 "Modal requires a publicly reachable HTTPS PUBLIC_URL. Deploy to Render or use a development tunnel."
