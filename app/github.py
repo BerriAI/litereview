@@ -189,6 +189,7 @@ async def connection_status():
         "owner": app.get("owner", {}).get("login", ""),
         "owner_type": app.get("owner", {}).get("type", ""),
         "public": app.get("public"),
+        "review_events_enabled": "pull_request" in app.get("events", []),
         "repositories": sorted(repos, key=lambda r: r["name"].lower()),
         "installations": [
             {"account": i["account"]["login"], "suspended": bool(i.get("suspended_at"))} for i in installs

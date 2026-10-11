@@ -21,7 +21,7 @@ export function Documentation() {
       <main className="docs-content">
         <h1>Documentation</h1>
         <p className="docs-intro">
-          LiteReview runs your PR review agents from a GitHub comment. Each
+          LiteReview runs your PR review agents from a GitHub comment or a saved automatic review rule. Each
           agent has its own model, instructions, and tools. Agents run in
           parallel in separate Modal sandboxes and report back on the PR.
         </p>
@@ -421,6 +421,15 @@ export function Documentation() {
             return from OAuth in the same tab. Choose Resume editing to continue
             with the new resources.
           </p>
+        </section>
+        <section>
+          <h2>Automatic reviews</h2>
+          <p>Open Repositories → repository options → Automatic reviews. Add a rule, choose an agent or group, and save. Leave PR authors blank for everyone, or enter one or more GitHub usernames separated by commas. Bot accounts such as <code>dependabot[bot]</code> work too.</p>
+          <p>Choose PR opened, Ready for review, New commits pushed, PR reopened, or Label added. A label trigger also needs a Trigger label. Enabled rules start paid reviews and post results on GitHub, including for external authors who have not signed in to LiteReview. Repository Review permissions still apply.</p>
+          <p>For an existing GitHub App, enable Pull request under its Permissions &amp; events and keep Issue comment enabled. Return to Repositories to refresh the connection check. Apps created by this version include both subscriptions.</p>
+          <p>After a matching event, check Runs for the automatic trigger and reviewed commit. If nothing starts, check the event subscription, enabled rule, author and label filters, and repository permissions. Drafts and closed PRs are skipped. Saving a rule does not run reviews retroactively.</p>
+          <p>Each agent instance runs automatically once per PR commit, including when rules overlap. Failed reviews are not retried automatically; use an explicit <code>@litereview agent-name</code> comment to run again. Disabling a rule stops future triggers and lets accepted runs finish. Automatic review spend is attributed to the PR author.</p>
+          <p>PR agents sorts by Times used: the number of PR runs that used each agent, including group use and incomplete runs. Model checks and fusion branches are excluded. Ties sort by name.</p>
         </section>
         <section>
           <h2>License and contributions</h2>

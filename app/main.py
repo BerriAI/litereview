@@ -254,6 +254,11 @@ def validate_resource(kind, data, db, resource_id):
             raise HTTPException(400, f"A selected {expected} item no longer exists.")
         return r
 
+    if kind == "repos":
+        for rule in data["review_rules"]:
+            target = db.get(Resource, rule["target_id"])
+            if not target or target.kind not in ("agents", "groups"):
+                raise HTTPException(400, "Choose an existing agent or group for each automatic review.")
     if kind == "agents":
         for branch in (data.get("fusion") or {}).get("branches", []):
             branch_conn = exists(branch["connection_id"], "connections")
@@ -325,6 +330,15 @@ def list_resources(kind: str):
         ).all()
         if kind == "access" and settings().sso_required:
             return [public_resource(r) for r in rows if r.data["subject"] == "repo"] + people(db, rows)
+        if kind == "agents":
+            agent_id = Job.config["agent_id"].as_string()
+            counts = dict(db.execute(select(agent_id, func.count(func.distinct(Run.id)))
+                          .join(Run, Run.id == Job.run_id)
+                          .where(Run.pr > 0, Run.snapshot["harness_check"].as_boolean().is_not(True),
+                                 Job.config["fusion_parent_id"].as_string().is_(None))
+                          .group_by(agent_id)).all())
+            output = [{**public_resource(r), "usage_count": counts.get(r.id, 0)} for r in rows]
+            return sorted(output, key=lambda r: (-r["usage_count"], r["name"].lower(), r["id"]))
         return [public_resource(r) for r in rows]
 
 
@@ -440,6 +454,10 @@ def delete_resource(kind: str, resource_id: str):
         if not row or row.kind != kind:
             raise HTTPException(404)
         for other in db.scalars(select(Resource).where(Resource.id != resource_id)):
+            if other.kind == "repos" and any(
+                rule["target_id"] == resource_id for rule in other.data.get("review_rules", [])
+            ):
+                raise HTTPException(409, f'Remove this reviewer from automatic reviews in "{other.data["name"]}" first.')
             if other.kind == "agents" and (
                 resource_id == other.data["connection_id"]
                 or any(b["connection_id"] == resource_id for b in (other.data.get("fusion") or {}).get("branches", []))
@@ -828,7 +846,7 @@ async def manifest(request: Request):
             "pull_requests": "write",
             "issues": "write",
         },
-        "default_events": ["issue_comment"],
+        "default_events": ["issue_comment", "pull_request"],
     }
     owner_type = body.get("owner_type", "personal")
     url = "https://github.com/settings/apps/new"
@@ -942,20 +960,24 @@ async def webhook(request: Request):
 
         await sync_repositories()
         return {"synced": True}
-    if event != "issue_comment":
+    if event not in ("issue_comment", "pull_request"):
         return {"ignored": True}
     delivery = request.headers.get("x-github-delivery")
     if not delivery or len(delivery) > 150:
         raise HTTPException(400, "Missing GitHub delivery ID.")
-    run_id = await reviews.accept(json.loads(body), delivery)
+    if event == "pull_request":
+        from .automatic_reviews import accept
+    else:
+        accept = reviews.accept
+    run_id = await accept(json.loads(body), delivery)
     return {"run_id": run_id, "ignored": not bool(run_id)}
 
 
 def run_public(run):
-    return {
+    return {"trigger": run.snapshot.get("trigger"), **{
         k: getattr(run, k)
         for k in ("id", "repo", "pr", "actor", "head", "base", "status", "comment_id", "created_at", "error")
-    }
+    }}
 
 
 @app.get("/api/spend", dependencies=[Depends(require_user)])

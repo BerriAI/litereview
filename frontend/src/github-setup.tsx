@@ -19,6 +19,7 @@ type Status = {
   owner_type?: string;
   public?: boolean;
   app_url?: string;
+  review_events_enabled?: boolean;
   repositories: { name: string; installation_id: number }[];
   installations: { account: string; suspended: boolean }[];
   excluded?: string[];
@@ -538,13 +539,17 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
                       )
                     : checked.some((a) => a.id === r.id),
                 );
+              const automaticRuleCount = repo.review_rules?.filter((r: { enabled: boolean }) => r.enabled).length || 0;
               return (
                 <li key={repo.id}>
-                  <button className="row-name" onClick={() => p.onEdit(repo)}>
+                  <button className="row-name" onClick={() => p.onEdit({ ...repo, review_events_enabled: status?.review_events_enabled })}>
                     {repo.name}
                   </button>
                   <span className="repo-reviewers">
                     {allowed.map((a) => a.name).join(", ") || "None permitted"}
+                    {automaticRuleCount > 0 && <small>
+                      {automaticRuleCount} automatic review {automaticRuleCount === 1 ? "rule" : "rules"}
+                    </small>}
                   </span>
                   <span className={ready ? "connected-label" : "muted"}>
                     {ready && <Check size={14} />}
@@ -563,7 +568,10 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
                       <ChevronRight size={16} />
                     </summary>
                     <div>
-                      <button onClick={() => p.onEdit(repo)}>
+                      <button onClick={() => p.onEdit({ ...repo, review_events_enabled: status?.review_events_enabled })}>
+                        Automatic reviews
+                      </button>
+                      <button onClick={() => p.onEdit({ ...repo, review_events_enabled: status?.review_events_enabled })}>
                         Review environment
                       </button>
                       <button onClick={() => p.onAccess(repo)}>

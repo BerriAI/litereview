@@ -129,6 +129,23 @@ Running sandboxes and review history retain their original configuration. A queu
 
 Agent and group command names share one case-insensitive unique namespace. **People** and each repository’s **Review permissions** control invocation centrally. With SSO enabled, membership comes from approved Google sign-ins and verified GitHub links. People defaults to all current/future agents and groups. **Edit access** can limit a person to specific selections; an empty selection blocks reviews. **Reset access** restores the default. Repository permissions and any person restriction must allow every name in the command, and the caller must also have GitHub repository access. Without SSO, People remains a manual allowlist. Group grants permit running the group’s members through that group. Connected repositories start with All access. Restrictions follow the Google identity across GitHub renames and relinks, and persist across restarts. Linked users remain connected in People after their browser sessions expire. People shows when Google sign-in or GitHub linking is still needed; a saved grant never establishes membership by itself. Groups are optional references to shared agents. Instance counts belong to group membership. Selecting the same name twice deduplicates it; selecting two groups that share an agent runs each membership independently. Calling an agent directly and through a group runs both selections independently. Accepted runs snapshot their configuration and commit SHA.
 
+## Run reviews automatically
+
+Open **Repositories → repository options → Automatic reviews**, then:
+
+1. Choose **Add rule** and select an agent or group.
+2. Leave **PR authors** blank for everyone, or enter one or more GitHub usernames separated by commas. This matches the PR author, including bot accounts such as `dependabot[bot]`, rather than the person pushing a commit. The list is saved with the rule.
+3. Choose **Run when**: **PR opened**, **Ready for review**, **New commits pushed**, **PR reopened**, or **Label added**. For a label trigger, enter the required **Trigger label**.
+4. Save the repository. Enabled rules start paid reviews and post results on GitHub. They apply to external contributors and bots without requiring the author to sign in to LiteReview; repository **Review permissions** still limit which reviewers can run.
+
+Apps created by this version subscribe to **Pull request** events. For an existing App, open its GitHub **Permissions & events**, enable **Pull request**, and save. Keep **Issue comment** enabled for mentions. Return to **Repositories** to refresh the connection check.
+
+Trigger a matching event on an open, non-draft PR. The resulting entry in **Runs** shows the automatic trigger and reviewed commit. Spend is attributed to the PR author. If nothing starts, check the App event subscription, enabled rule, author/label filter, and repository permissions. Saving a rule does not review existing PRs retroactively.
+
+Drafts, closed PRs, and obsolete webhook deliveries are skipped. Overlapping rules run each agent instance at most once per PR commit; groups retain their requested instance count. Failed attempts are not automatically retried on the same commit. Use an explicit `@litereview agent-name` comment to request another review. Disabling a rule stops future triggers; accepted runs keep their configuration and continue.
+
+**PR agents** lists the most-used agents first. **Times used** counts PR runs, including group use and incomplete runs, once per agent per run. Private model checks and fusion branches do not increase the count. Ties sort by name.
+
 ## Connect MCP tools
 
 Open **MCP servers** in the left sidebar and choose **Add MCP server**. Enter a name and the Streamable HTTP endpoint URL, keep **OAuth**, and choose **Save & connect**. Approve access with the provider. LiteReview then runs a real connection test and displays the discovered tools. Open a PR agent and select which tools it can use. The account’s selected tools are shared with agents using that connection.
@@ -195,7 +212,7 @@ Configure **Repositories → Use existing App** (or **Settings → GitHub App �
 - `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY` (PEM, escaped newlines supported), and `GITHUB_WEBHOOK_SECRET`.
 - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` for GitHub sign-in.
 - Callback URL: `PUBLIC_URL/api/auth/github/callback`.
-- Webhook URL: `PUBLIC_URL/api/webhook/github`; subscribe to **Issue comment** events.
+- Webhook URL: `PUBLIC_URL/api/webhook/github`; subscribe to **Issue comment** and **Pull request** events.
 - Repository permissions: **Contents read**, **Metadata read**, **Pull requests write**, **Issues write**. Issues write permits top-level PR conversation comments.
 
 With Google SSO enabled, GitHub OAuth links a caller’s account after Google sign-in and cannot sign in on its own. In local access-key mode, only `ADMIN_USERS` can sign in with GitHub, and `ADMIN_TOKEN` remains available.
