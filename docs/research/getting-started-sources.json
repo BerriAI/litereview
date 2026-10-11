@@ -1,0 +1,183 @@
+{
+  "captured_date_utc": "2026-10-11",
+  "query": "stars:>10000 archived:false is:public",
+  "sort": "stars",
+  "order": "desc",
+  "repositories": [
+    {
+      "rank": 1,
+      "repository": "codecrafters-io/build-your-own-x",
+      "stars": 552429,
+      "readme_url": "https://github.com/codecrafters-io/build-your-own-x/blob/master/README.md",
+      "readme_blob_sha": "9a553c729b29bc69296d7092fc1c314c2c811bad"
+    },
+    {
+      "rank": 2,
+      "repository": "sindresorhus/awesome",
+      "stars": 517337,
+      "readme_url": "https://github.com/sindresorhus/awesome/blob/main/readme.md",
+      "readme_blob_sha": "0acaa99d5f45582ecf70f987213f59ae1855226f"
+    },
+    {
+      "rank": 3,
+      "repository": "public-apis/public-apis",
+      "stars": 487338,
+      "readme_url": "https://github.com/public-apis/public-apis/blob/master/README.md",
+      "readme_blob_sha": "54946946455d459cb4d6698c9a71fcaffedb33e5"
+    },
+    {
+      "rank": 4,
+      "repository": "freeCodeCamp/freeCodeCamp",
+      "stars": 456843,
+      "readme_url": "https://github.com/freeCodeCamp/freeCodeCamp/blob/main/README.md",
+      "readme_blob_sha": "c82f1a4976d0a58963641054598aebeb4e3f124f"
+    },
+    {
+      "rank": 5,
+      "repository": "EbookFoundation/free-programming-books",
+      "stars": 398712,
+      "readme_url": "https://github.com/EbookFoundation/free-programming-books/blob/main/README.md",
+      "readme_blob_sha": "8f0dbeae6419706aeeffda712ca32992cf491776"
+    },
+    {
+      "rank": 6,
+      "repository": "openclaw/openclaw",
+      "stars": 391653,
+      "readme_url": "https://github.com/openclaw/openclaw/blob/main/README.md",
+      "readme_blob_sha": "cf37326bfe36929d79f90be549be3ec6ac1a0434"
+    },
+    {
+      "rank": 7,
+      "repository": "donnemartin/system-design-primer",
+      "stars": 373719,
+      "readme_url": "https://github.com/donnemartin/system-design-primer/blob/master/README.md",
+      "readme_blob_sha": "9e2cdb88dec86c34c9b49b657f5629a1866c6976"
+    },
+    {
+      "rank": 8,
+      "repository": "nilbuild/developer-roadmap",
+      "stars": 369116,
+      "readme_url": "https://github.com/nilbuild/developer-roadmap/blob/master/readme.md",
+      "readme_blob_sha": "82a8e6b5ec1ad49657693c8cb50032fc2c4a2242"
+    },
+    {
+      "rank": 9,
+      "repository": "jwasham/coding-interview-university",
+      "stars": 362382,
+      "readme_url": "https://github.com/jwasham/coding-interview-university/blob/main/README.md",
+      "readme_blob_sha": "95a0d31a935c01c94f4b04ea5d8b7fc436c3dcf4"
+    },
+    {
+      "rank": 10,
+      "repository": "vinta/awesome-python",
+      "stars": 326450,
+      "readme_url": "https://github.com/vinta/awesome-python/blob/master/README.md",
+      "readme_blob_sha": "11548a7698fd62fe11f1da07002b736a6b2d5d1f"
+    },
+    {
+      "rank": 11,
+      "repository": "awesome-selfhosted/awesome-selfhosted",
+      "stars": 325409,
+      "readme_url": "https://github.com/awesome-selfhosted/awesome-selfhosted/blob/master/README.md",
+      "readme_blob_sha": "53e35790282edb17c05750469e1e9e3498b10d47"
+    },
+    {
+      "rank": 12,
+      "repository": "obra/superpowers",
+      "stars": 297321,
+      "readme_url": "https://github.com/obra/superpowers/blob/main/README.md",
+      "readme_blob_sha": "e40ddfa8f87a374e1b9a3663b80c1aa954cf8eec"
+    },
+    {
+      "rank": 13,
+      "repository": "practical-tutorials/project-based-learning",
+      "stars": 286322,
+      "readme_url": "https://github.com/practical-tutorials/project-based-learning/blob/master/README.md",
+      "readme_blob_sha": "b5906c7ef98aa98401f51d10469da76eaa288091"
+    },
+    {
+      "rank": 14,
+      "repository": "mattpocock/skills",
+      "stars": 284839,
+      "readme_url": "https://github.com/mattpocock/skills/blob/main/README.md",
+      "readme_blob_sha": "f7038f139299985eea6c3e18398dbafb379a0010"
+    },
+    {
+      "rank": 15,
+      "repository": "996icu/996.ICU",
+      "stars": 277116,
+      "readme_url": "https://github.com/996icu/996.ICU/blob/master/README.md",
+      "readme_blob_sha": "3375c459ce6883cdc24c49ebb2ac29fe19b619b2"
+    },
+    {
+      "rank": 16,
+      "repository": "affaan-m/ECC",
+      "stars": 276642,
+      "readme_url": "https://github.com/affaan-m/ECC/blob/main/README.md",
+      "readme_blob_sha": "b8074ef4f9142b3a4b03cb912def2be25afdec3c"
+    },
+    {
+      "rank": 17,
+      "repository": "NousResearch/hermes-agent",
+      "stars": 252600,
+      "readme_url": "https://github.com/NousResearch/hermes-agent/blob/main/README.md",
+      "readme_blob_sha": "93bab974fd07608879e36a2e7ef833ffdd3b7555"
+    },
+    {
+      "rank": 18,
+      "repository": "torvalds/linux",
+      "stars": 251482,
+      "readme_url": "https://github.com/torvalds/linux/blob/master/README",
+      "readme_blob_sha": "010c587224224ba1254657b42b091a6c62c39e92"
+    },
+    {
+      "rank": 19,
+      "repository": "react/react",
+      "stars": 250830,
+      "readme_url": "https://github.com/react/react/blob/main/README.md",
+      "readme_blob_sha": "88f8e827b0255cf639043c83833c7a0c40ec0991"
+    },
+    {
+      "rank": 20,
+      "repository": "trimstray/the-book-of-secret-knowledge",
+      "stars": 249131,
+      "readme_url": "https://github.com/trimstray/the-book-of-secret-knowledge/blob/master/README.md",
+      "readme_blob_sha": "2c1b9e4ee145961275b20df550d190446a65e579"
+    },
+    {
+      "rank": 21,
+      "repository": "deepseek-ai/deepseek-harness",
+      "stars": 247143,
+      "readme_url": "https://github.com/deepseek-ai/deepseek-harness/blob/master/README.md",
+      "readme_blob_sha": "7941e30f7bdca9391befe39b9115d211157fa42d"
+    },
+    {
+      "rank": 22,
+      "repository": "TheAlgorithms/Python",
+      "stars": 225162,
+      "readme_url": "https://github.com/TheAlgorithms/Python/blob/master/README.md",
+      "readme_blob_sha": "e9a19fa15499332843dd51e0c9bced3b0b750988"
+    },
+    {
+      "rank": 23,
+      "repository": "multica-ai/andrej-karpathy-skills",
+      "stars": 218445,
+      "readme_url": "https://github.com/multica-ai/andrej-karpathy-skills/blob/main/README.md",
+      "readme_blob_sha": "7cf07a786532bebe01c65179c8e2c3a98cc0a09b"
+    },
+    {
+      "rank": 24,
+      "repository": "anomalyco/opencode",
+      "stars": 212599,
+      "readme_url": "https://github.com/anomalyco/opencode/blob/dev/README.md",
+      "readme_blob_sha": "b5a4c8ddd9794e8c20bd287603bfa0c336522796"
+    },
+    {
+      "rank": 25,
+      "repository": "vuejs/vue",
+      "stars": 212589,
+      "readme_url": "https://github.com/vuejs/vue/blob/main/README.md",
+      "readme_blob_sha": "274642ee3ae2f5ac647853cf43d123277188a0f5"
+    }
+  ]
+}
