@@ -6,7 +6,7 @@ from collections import Counter
 
 from fastapi import HTTPException
 from markdown_it import MarkdownIt
-from sqlalchemy import func, select, update
+from sqlalchemy import String, and_, cast, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from runner.catalog import HARNESS_VERSIONS, review_capabilities, validate_connection
@@ -56,6 +56,21 @@ def is_command(body):
         return bool(command_requests(body))
     except ValueError:
         return True
+
+
+def comment_run(db, repo, comment_id, delivery=None):
+    keys = [delivery] if delivery else []
+    if comment_id is not None:
+        keys.append(f"comment:{comment_id}")
+    matches = [Run.delivery.in_(keys)]
+    if comment_id is not None:
+        # Older runs retain the original delivery GUID. Preserve their history
+        # and recognize them when polling or redelivering after an upgrade.
+        matches.append(and_(
+            func.lower(Run.repo) == repo.lower(),
+            cast(Run.snapshot["trigger_comment_id"].as_string(), String) == str(comment_id),
+        ))
+    return db.scalar(select(Run.id).where(or_(*matches)).order_by(Run.created_at).limit(1))
 
 
 def expand(groups, resources):
@@ -143,6 +158,7 @@ async def accept(payload, delivery):
         return None
     comment_data = payload.get("comment", {})
     comment_id = comment_data.get("id")
+    original_delivery = delivery
     if comment_id is not None:
         delivery = f"comment:{comment_id}"
     if comment_data.get("user", {}).get("type") == "Bot":
@@ -159,9 +175,9 @@ async def accept(payload, delivery):
     pr = payload["issue"]["number"]
     installation = payload.get("installation", {}).get("id", 0)
     with Session() as db:
-        existing = db.scalar(select(Run).where(Run.delivery == delivery))
+        existing = comment_run(db, repo, comment_id, original_delivery)
         if existing:
-            return existing.id
+            return existing
         resources = {r.id: r for r in db.scalars(select(Resource)).all()}
     repos = [r for r in resources.values() if r.kind == "repos" and r.data["name"].lower() == repo.lower()]
     if not repos or repos[0].data["installation_id"] != installation:

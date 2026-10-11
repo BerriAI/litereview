@@ -1,12 +1,16 @@
+import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
 from sqlalchemy import select
 from test_reviews import create, mock_github, payload, setup, webhook
 
-from app import comment_sweep, github
-from app.db import Job, Run, Session
+from app import comment_sweep, github, reviews
+from app.db import CommentSweepCursor, Job, Resource, Run, Session
+from app.settings import settings
 
 
 def make_comment(
@@ -278,3 +282,187 @@ async def test_sweep_continues_after_repository_github_error(owner, monkeypatch)
         "owner/repo",
         "owner/other",
     ]
+
+
+async def test_first_sweep_recovers_comments_from_before_startup(owner, monkeypatch):
+    setup(owner)
+    now = 1_700_000_000
+    monkeypatch.setattr(comment_sweep, "time", SimpleNamespace(time=lambda: now))
+    stub_sweep_github(monkeypatch, {"owner/repo": [make_comment(3001, now - 60)]})
+
+    assert await comment_sweep.sweep_once() == 1
+    with Session() as db:
+        assert db.scalar(select(CommentSweepCursor)).scanned_through == now
+        assert db.scalar(select(Run)).delivery == "comment:3001"
+
+
+@pytest.mark.parametrize("failure", ["repository", "comment", "first_request"])
+async def test_checkpoint_recovers_after_outage_longer_than_lookback(owner, monkeypatch, failure):
+    setup(owner)
+    now = 1_700_000_000
+    monkeypatch.setattr(comment_sweep, "time", SimpleNamespace(time=lambda: now))
+    comments = {"owner/repo": []}
+    failed_repos = set()
+    failed_issues = set()
+    calls = stub_sweep_github(
+        monkeypatch, comments, fail_repos=failed_repos, fail_issue_fetches=failed_issues
+    )
+    if failure == "first_request":
+        failed_repos.add("owner/repo")
+    assert await comment_sweep.sweep_once() == 0
+    with Session() as db:
+        checkpoint = db.scalar(select(CommentSweepCursor)).scanned_through
+
+    now += 60
+    comments["owner/repo"] = [make_comment(3002, now)]
+    if failure == "comment":
+        failed_issues.add(("owner/repo", 1))
+    else:
+        failed_repos.add("owner/repo")
+    assert await comment_sweep.sweep_once() == 0
+    with Session() as db:
+        assert db.scalar(select(CommentSweepCursor)).scanned_through == checkpoint
+
+    # A new process has only the database checkpoint, not the old process time.
+    now += 7200
+    failed_repos.clear()
+    failed_issues.clear()
+    calls.clear()
+    assert await comment_sweep.sweep_once() == 1
+    since = datetime.fromisoformat(calls[0][2]["since"]).timestamp()
+    assert since <= checkpoint
+    with Session() as db:
+        assert db.scalar(select(Run)).delivery == "comment:3002"
+        assert db.scalar(select(CommentSweepCursor)).scanned_through == now
+    assert await comment_sweep.sweep_once() == 0
+
+
+@pytest.mark.parametrize("comment_id", [3003, 6_107_062_032])
+async def test_upgrade_recognizes_old_runs_without_restarting_jobs(owner, monkeypatch, comment_id):
+    setup(owner)
+    mock_github(monkeypatch)
+    run_id = webhook(owner, payload(comment_id=comment_id), "legacy-guid").json()["run_id"]
+    with Session.begin() as db:
+        run = db.get(Run, run_id)
+        run.delivery = "legacy-guid"
+        run.status = "completed"
+    calls = stub_sweep_github(monkeypatch, {"owner/repo": [make_comment(comment_id, 1_700_000_000)]})
+
+    assert await comment_sweep.sweep_once(1_700_000_000) == 0
+    assert [suffix for _, suffix, _ in calls] == ["issues/comments"]
+    assert webhook(owner, payload(comment_id=comment_id), "legacy-guid").json()["run_id"] == run_id
+    assert webhook(owner, payload(comment_id=comment_id), "another-guid").json()["run_id"] == run_id
+    with Session() as db:
+        assert len(db.scalars(select(Run)).all()) == 1
+        assert len(db.scalars(select(Job)).all()) == 2
+        assert db.get(Run, run_id).status == "completed"
+        assert db.get(Run, run_id).delivery == "legacy-guid"
+
+
+def test_upgrade_recognizes_redelivered_rejection_without_snapshot_id(owner, monkeypatch):
+    setup(owner)
+    mock_github(monkeypatch)
+    data = payload(body="@litereview unknown", comment_id=3004)
+    run_id = webhook(owner, data, "legacy-rejected-guid").json()["run_id"]
+    with Session.begin() as db:
+        run = db.get(Run, run_id)
+        run.delivery = "legacy-rejected-guid"
+        assert "trigger_comment_id" not in run.snapshot
+    assert webhook(owner, data, "legacy-rejected-guid").json()["run_id"] == run_id
+    with Session() as db:
+        assert len(db.scalars(select(Run)).all()) == 1
+        assert db.scalars(select(Job)).all() == []
+
+
+async def test_simultaneous_webhook_and_sweep_enqueue_once(owner, monkeypatch):
+    setup(owner)
+    since = 1_700_000_000
+    stub_sweep_github(monkeypatch, {"owner/repo": [make_comment(3005, since)]})
+    entered = 0
+    both_entered = asyncio.Event()
+
+    async def permission(*args):
+        nonlocal entered
+        entered += 1
+        if entered == 2:
+            both_entered.set()
+        await both_entered.wait()
+        return "write"
+
+    monkeypatch.setattr(github, "permission", permission)
+    webhook_run, _ = await asyncio.wait_for(asyncio.gather(
+        reviews.accept(payload(comment_id=3005), "webhook-guid"),
+        comment_sweep.sweep_once(since),
+    ), timeout=5)
+    with Session() as db:
+        runs = db.scalars(select(Run)).all()
+        assert len(runs) == 1
+        assert runs[0].id == webhook_run
+        assert len(db.scalars(select(Job)).all()) == 2
+
+
+@pytest.mark.parametrize("denial", ["github_permission", "user_grant", "repo_grant", "sso"])
+async def test_sweep_enforces_caller_and_repository_access(owner, monkeypatch, denial):
+    setup(owner)
+    since = 1_700_000_000
+    stub_sweep_github(monkeypatch, {"owner/repo": [make_comment(3006, since)]})
+    if denial == "github_permission":
+        monkeypatch.setattr(github, "permission", AsyncMock(return_value="none"))
+    elif denial == "sso":
+        monkeypatch.setattr(settings(), "google_sso_required", True)
+    else:
+        subject = "user" if denial == "user_grant" else "repo"
+        with Session.begin() as db:
+            grant = next(r for r in db.scalars(select(Resource).where(Resource.kind == "access"))
+                         if r.data["subject"] == subject)
+            grant.data = {**grant.data, "scope": "selected", "target_ids": []}
+
+    await comment_sweep.sweep_once(since)
+    await comment_sweep.sweep_once(since)
+    with Session() as db:
+        assert db.scalars(select(Job)).all() == []
+        runs = db.scalars(select(Run)).all()
+        if denial == "github_permission":
+            assert runs == []
+        else:
+            assert len(runs) == 1
+            assert runs[0].status == "rejected"
+
+
+async def test_sweep_scans_beyond_ten_pages(owner, monkeypatch):
+    setup(owner)
+    since = 1_700_000_000
+    pages = {
+        ("owner/repo", page): [
+            make_comment(page * 100 + offset, since + 2000 - page * 100 - offset, body="not a command")
+            for offset in range(100)
+        ]
+        for page in range(1, 11)
+    }
+    pages[("owner/repo", 11)] = [make_comment(3007, since + 1)]
+    calls = stub_sweep_github(monkeypatch, {}, pages_by_repo=pages)
+
+    assert await comment_sweep.sweep_once(since) == 1
+    assert [params["page"] for _, suffix, params in calls if suffix == "issues/comments"] == list(range(1, 12))
+    with Session() as db:
+        assert db.scalar(select(Run)).delivery == "comment:3007"
+
+
+async def test_stalled_repository_does_not_block_other_repositories(owner, monkeypatch):
+    setup(owner)
+    create(owner, "repos", name="owner/other", installation_id=43)
+    since = 1_700_000_000
+    stub_sweep_github(monkeypatch, {"owner/other": [make_comment(3008, since)]})
+    request = github.repo_request
+    timeout = asyncio.timeout
+    monkeypatch.setattr(comment_sweep.asyncio, "timeout", lambda seconds: timeout(0.05))
+
+    async def stalled(repo, *args, **kwargs):
+        if repo == "owner/repo":
+            await asyncio.Event().wait()
+        return await request(repo, *args, **kwargs)
+
+    monkeypatch.setattr(github, "repo_request", stalled)
+    assert await comment_sweep.sweep_once(since) == 1
+    with Session() as db:
+        assert db.scalar(select(Run)).repo == "owner/other"
