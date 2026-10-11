@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api } from "./api";
+import { api, ApiError } from "./api";
 
 type Cost = { cost_usd: number | null; complete: boolean; estimated: boolean };
 type Summary = { runs: number; cost_usd: number | null; average_cost_usd: number | null; priced_runs: number; unpriced_runs: number; estimated: boolean };
@@ -26,7 +26,12 @@ export function SpendPage() {
       try {
         const next = await api("/spend");
         if (active) { setData(next); setError(""); }
-      } catch (err) { if (active) setError((err as Error).message); }
+      } catch (err) {
+        if (active) {
+          if (err instanceof ApiError && [401, 403].includes(err.status)) setData(null);
+          setError((err as Error).message);
+        }
+      }
       finally { if (active) timer = setTimeout(load, 15000); }
     };
     load();

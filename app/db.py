@@ -123,6 +123,13 @@ class ReviewPublication(Base):
     data: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class AutomaticReviewClaim(Base):
+    __tablename__ = "automatic_review_claims"
+    # Atomic with Run/Job insertion; survives redeliveries and overlapping rules.
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(40), index=True)
+
+
 class ReviewTiming(Base):
     __tablename__ = "review_timing"
     job_id: Mapped[str] = mapped_column(String(40), primary_key=True)

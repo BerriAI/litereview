@@ -20,7 +20,7 @@ This beta runs **one trusted workspace per deployment**. Every admitted member c
 
 ## Track review spend
 
-Open **Spend** for all-time model cost, PR run count, and average cost per run. Use **By user** or **By repository** for the same breakdown. **Runs** shows each review’s model cost, including every fusion branch and the final review pass.
+Admins can open **Spend** for all-time model cost, PR run count, and average cost per run. Use **By user** or **By repository** for the same breakdown. Admins also see each review’s model cost in **Runs**, including every fusion branch and the final review pass. Other members see no costs; the API enforces the same restriction. Configure spend admins with [`ADMIN_EMAILS`](docs/DEPLOYMENT.md#spend-admins).
 
 Costs use the gateway’s reported amount when available. Otherwise, LiteReview estimates from token usage, cached tokens, and available model rates; these amounts are labeled **est.** Unknown costs appear as **Unavailable**, and a **+** marks a partial total. Older runs have no recorded costs. Average cost includes only finished runs with complete cost data. Agent checks, Modal charges, and hosting are excluded. These totals are usage tracking, not an invoice or spending limit.
 
@@ -52,7 +52,7 @@ Follow the [deployment guide](docs/DEPLOYMENT.md) to obtain credentials, deploy,
 
 1. Fork this repository, then create a **Blueprint** in Render from your fork. `render.yaml` provisions one paid Docker web service and Postgres. An organization owner may need to approve Render’s access to your repository.
 2. Set `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`, your Google OAuth client, and `GOOGLE_ALLOWED_DOMAINS` to domains you control. The Blueprint requires Google SSO. The app uses Render’s assigned HTTPS URL; set `PUBLIC_URL` for a custom domain. Keep the generated `SECRET_KEY` stable. Set `GITHUB_ORGANIZATION` to your GitHub organization, or leave it empty for account selection during setup.
-3. Sign in with Google. Link GitHub to request reviews, or choose **Workspace** to configure agents and connections first. Every member has the same interface.
+3. Sign in with Google. Link GitHub to request reviews, or choose **Workspace** to configure agents and connections first. Every member can manage the workspace; spend is visible only to configured admins.
 4. Open **Repositories → Connect GitHub** (the button names your organization when configured). Use an App owned by the account that owns your repositories. Continue to GitHub in the same tab; the guided flow registers the App, stores its credentials encrypted, and opens installation. An organization owner or organization-wide App Manager can create the App; installation may need an owner’s approval. A private personal App cannot be installed in an organization.
 5. Select repositories on GitHub and return to **Repositories**. LiteReview imports the selection automatically; installation IDs and a second repository picker are unnecessary. Public and private repositories are supported. New selections allow existing approved People to call their permitted reviewers. Open a repository’s **Review permissions** to narrow that access.
 6. If no model connection exists, add one under **Models**. Reuse an existing Responses-compatible gateway or OpenAI connection where possible. **Configure reviewer** asks for its name and model, then **Save and check reviewer** runs a private harness check using Modal and model credits. Every reviewer uses Codex; Anthropic models require a Responses-compatible gateway. Full instructions, capabilities, skills, and MCP tools remain in the agent editor.
@@ -80,7 +80,7 @@ Use an **Internal** Google OAuth web client for your Google Workspace organizati
 
 In Render’s LiteReview environment settings, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_DOMAINS` to your domain (for example, `example.com`), and `GOOGLE_SSO_REQUIRED=true`, then deploy. Register the callback before enabling SSO on an existing workspace: `redirect_uri_mismatch` means the URI is missing from that Google client. Never commit the client secret.
 
-Verify that a workspace account can sign in, an outside account is denied, and the old workspace access key no longer works. Enabling SSO also invalidates existing access-key/GitHub-only sessions. Every admitted Google member can manage agents, groups, skills, shared model/MCP connections, repositories, review access settings, and run history. There is no separate LiteReview administrator role. Shared connections use their connected accounts’ permissions and shared model credits. `GOOGLE_ADMIN_EMAILS` is no longer used; `ADMIN_USERS` only controls legacy GitHub-only sign-in when SSO is disabled. GitHub still controls App installation permissions. Approved Google users appear in **People** automatically. Linked users can call all reviewers unless an explicit person restriction or repository permission disallows them. Existing restrictions are preserved.
+Verify that a workspace account can sign in, an outside account is denied, and the old workspace access key no longer works. Enabling SSO also invalidates existing access-key/GitHub-only sessions. Every admitted Google member can manage agents, groups, skills, shared model/MCP connections, repositories, review access settings, and run history. Only verified Google emails listed in `ADMIN_EMAILS` can view spend; this admin distinction does not change other management permissions. Shared connections use their connected accounts’ permissions and shared model credits. `GOOGLE_ADMIN_EMAILS` is no longer used; `ADMIN_USERS` only controls legacy GitHub-only sign-in when SSO is disabled. GitHub still controls App installation permissions. Approved Google users appear in **People** automatically. Linked users can call all reviewers unless an explicit person restriction or repository permission disallows them. Existing restrictions are preserved.
 
 The server verifies the Google token signature, issuer, audience, expiry, nonce, verified email, and hosted-domain claim. PKCE and single-use, browser-bound state protect login. Linking verifies GitHub’s stable user ID through OAuth; a typed GitHub username cannot establish membership. Once linked, that GitHub account can request reviews without signing in again. Browser sessions expire after `SSO_SESSION_SECONDS` (12 hours by default); expiry and signing out do not revoke the GitHub link. Every request still checks the linked identity against the configured Google client and allowed domains, GitHub repository permission, and any explicit per-person restrictions. To stop a person from requesting reviews, use **People → Edit access** and leave the selection empty. Unlinking GitHub also stops requests from that account. There is no Google Directory sync: suspending a Google account prevents future Google sign-ins but does not automatically revoke its existing GitHub review access. Signed GitHub webhooks and expiring per-job worker tokens remain the machine entry points.
 
@@ -128,6 +128,23 @@ Running sandboxes and review history retain their original configuration. A queu
 - **Skills**: Markdown or ZIP with `SKILL.md` and supporting files. Attach the same skill to several agents. Skills do not grant tools.
 
 Agent and group command names share one case-insensitive unique namespace. **People** and each repository’s **Review permissions** control invocation centrally. With SSO enabled, membership comes from approved Google sign-ins and verified GitHub links. People defaults to all current/future agents and groups. **Edit access** can limit a person to specific selections; an empty selection blocks reviews. **Reset access** restores the default. Repository permissions and any person restriction must allow every name in the command, and the caller must also have GitHub repository access. Without SSO, People remains a manual allowlist. Group grants permit running the group’s members through that group. Connected repositories start with All access. Restrictions follow the Google identity across GitHub renames and relinks, and persist across restarts. Linked users remain connected in People after their browser sessions expire. People shows when Google sign-in or GitHub linking is still needed; a saved grant never establishes membership by itself. Groups are optional references to shared agents. Instance counts belong to group membership. Selecting the same name twice deduplicates it; selecting two groups that share an agent runs each membership independently. Calling an agent directly and through a group runs both selections independently. Accepted runs snapshot their configuration and commit SHA.
+
+## Run reviews automatically
+
+Open **Repositories → repository options → Automatic reviews**, then:
+
+1. Choose **Add rule** and select an agent or group.
+2. Leave **PR authors** blank for everyone, or enter one or more GitHub usernames separated by commas. This matches the PR author, including bot accounts such as `dependabot[bot]`, rather than the person pushing a commit. The list is saved with the rule.
+3. Choose **Run when**: **PR opened**, **Ready for review**, **New commits pushed**, **PR reopened**, or **Label added**. For a label trigger, enter the required **Trigger label**.
+4. Save the repository. Enabled rules start paid reviews and post results on GitHub. They apply to external contributors and bots without requiring the author to sign in to LiteReview; repository **Review permissions** still limit which reviewers can run.
+
+Apps created by this version subscribe to **Pull request** events. For an existing App, open its GitHub **Permissions & events**, enable **Pull request**, and save. Keep **Issue comment** enabled for mentions. Return to **Repositories** to refresh the connection check.
+
+Trigger a matching event on an open, non-draft PR. The resulting entry in **Runs** shows the automatic trigger and reviewed commit. Spend is attributed to the PR author. If nothing starts, check the App event subscription, enabled rule, author/label filter, and repository permissions. Saving a rule does not review existing PRs retroactively.
+
+Drafts, closed PRs, and obsolete webhook deliveries are skipped. Overlapping rules run each agent instance at most once per PR commit; groups retain their requested instance count. Failed attempts are not automatically retried on the same commit. Use an explicit `@litereview agent-name` comment to request another review. Disabling a rule stops future triggers; accepted runs keep their configuration and continue.
+
+**PR agents** lists the most-used agents first. **Times used** counts PR runs, including group use and incomplete runs, once per agent per run. Private model checks and fusion branches do not increase the count. Ties sort by name.
 
 ## Connect MCP tools
 
@@ -195,7 +212,7 @@ Configure **Repositories → Use existing App** (or **Settings → GitHub App �
 - `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY` (PEM, escaped newlines supported), and `GITHUB_WEBHOOK_SECRET`.
 - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` for GitHub sign-in.
 - Callback URL: `PUBLIC_URL/api/auth/github/callback`.
-- Webhook URL: `PUBLIC_URL/api/webhook/github`; subscribe to **Issue comment** events.
+- Webhook URL: `PUBLIC_URL/api/webhook/github`; subscribe to **Issue comment** and **Pull request** events.
 - Repository permissions: **Contents read**, **Metadata read**, **Pull requests write**, **Issues write**. Issues write permits top-level PR conversation comments.
 
 With Google SSO enabled, GitHub OAuth links a caller’s account after Google sign-in and cannot sign in on its own. In local access-key mode, only `ADMIN_USERS` can sign in with GitHub, and `ADMIN_TOKEN` remains available.

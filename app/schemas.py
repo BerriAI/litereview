@@ -1,5 +1,6 @@
 import re
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -120,6 +121,33 @@ class Access(BaseModel):
         return self
 
 
+class ReviewRule(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex, min_length=1, max_length=40)
+    target_id: str = Field(min_length=1)
+    enabled: bool = True
+    events: list[Literal["opened", "ready_for_review", "synchronize", "reopened", "labeled"]] = Field(
+        default_factory=lambda: ["opened", "ready_for_review"], min_length=1
+    )
+    authors: list[str] = Field(default_factory=list)
+    label: str = ""
+
+    @field_validator("authors")
+    @classmethod
+    def usernames(cls, values):
+        names = [v.strip().removeprefix("@").lower() for v in values]
+        if any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?(?:\[bot\])?", v) for v in names):
+            raise ValueError("Enter GitHub usernames, including [bot] for bot accounts.")
+        return list(dict.fromkeys(names))
+
+    @model_validator(mode="after")
+    def trigger_settings(self):
+        self.events = list(dict.fromkeys(self.events))
+        self.label = self.label.strip()
+        if "labeled" in self.events and not self.label:
+            raise ValueError("Choose the label that triggers this review.")
+        return self
+
+
 class Repository(BaseModel):
     name: str = Field(pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
     installation_id: int = 0
@@ -127,6 +155,14 @@ class Repository(BaseModel):
     start_command: str = ""
     readiness_url: str = ""
     test_secrets: dict[str, str] = Field(default_factory=dict)
+    review_rules: list[ReviewRule] = Field(default_factory=list)
+
+    @field_validator("review_rules")
+    @classmethod
+    def unique_rules(cls, rules):
+        if len({r.id for r in rules}) != len(rules):
+            raise ValueError("Automatic review rules must have unique IDs.")
+        return rules
 
     @field_validator("readiness_url")
     @classmethod

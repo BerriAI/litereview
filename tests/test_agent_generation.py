@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -79,3 +80,16 @@ def test_generation_settings_and_requests_require_sign_in(client):
     assert client.get("/api/settings/agent-generation").status_code == 401
     assert client.put("/api/settings/agent-generation", json={"connection_id": "id", "model": "model"}).status_code == 401
     assert client.post("/api/agents/generate", json={"prompt": "Review code"}).status_code == 401
+
+
+async def test_agent_drafting_leaves_output_capacity_to_provider(monkeypatch):
+    content = json.dumps({"name": "regressions", "instructions": "Review regression risks."})
+    completion = AsyncMock(return_value=SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+    ))
+    monkeypatch.setattr(providers.litellm, "acompletion", completion)
+    result = await providers.draft_completion(
+        {"type": "gateway", "api_key": "test"}, "model", [{"role": "user", "content": "Draft"}],
+    )
+    assert result == content
+    assert not {"max_tokens", "max_output_tokens", "max_completion_tokens"} & completion.call_args.kwargs.keys()

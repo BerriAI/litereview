@@ -10,6 +10,8 @@ Security fixes target the current `main` branch during the beta. Older snapshots
 
 LiteReview is a single-workspace application for trusted teams. Every admitted workspace member can manage shared model/MCP connections, agents, repositories, permissions, and review history. It does not isolate mutually untrusted tenants or provide a read-only member role. A member can exercise a shared connection's permissions through an agent even though its saved credential is not returned by the UI.
 
+Spend is restricted to admins in both the interface and API. With Google SSO, admins are the verified email addresses in the deployment's `ADMIN_EMAILS` allowlist; an empty list grants nobody spend access. Google domain membership, GitHub permissions, and People review grants do not confer this role. Without SSO, the workspace access-key owner and `ADMIN_USERS` accounts are admins. Other workspace management permissions remain shared. See [spend admin configuration](docs/DEPLOYMENT.md#spend-admins).
+
 Use Google Workspace SSO for a hosted team deployment, restrict `GOOGLE_ALLOWED_DOMAINS` to domains you control, and protect the service with HTTPS. Workspace access-key mode is intended for local development. Keep `SECRET_KEY` private and stable; it protects both encrypted credentials and signed sessions. Back it up separately from the database.
 
 Each Google browser session has its own expiry and revocable token. **Sign out** revokes the current browser session; other browsers remain signed in until they sign out or reach `SSO_SESSION_SECONDS` (12 hours by default).

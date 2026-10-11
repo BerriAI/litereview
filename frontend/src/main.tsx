@@ -41,6 +41,7 @@ import { ReviewResult } from "./review-result";
 import { AgentModels, FusionResults } from "./fusion";
 import { RunCost, SpendPage } from "./spend";
 import { AgentFromPrompt, AgentGenerationSettings } from "./agent-generation";
+import { AutomaticReviews, reviewEvents } from "./automatic-reviews";
 import { api, send } from "./api";
 import { GitHubSetup, GitHubSettings } from "./github-setup";
 import { MemberStart } from "./member-start";
@@ -109,6 +110,7 @@ const descriptions = {
 };
 function App() {
   const [session, setSession] = useState<any>(undefined);
+  const isAdmin = session?.is_admin === true;
   const [store, setStore] = useState<Store>(empty);
   const [path, setPath] = useState(location.pathname);
   const [error, setError] = useState(() => {
@@ -470,6 +472,7 @@ function App() {
         start_command: "",
         readiness_url: "",
         test_secrets: {},
+        review_rules: [],
       },
     };
     setEditor({
@@ -803,7 +806,7 @@ function App() {
         </div>
         <nav aria-label="Main navigation">
           {[
-            ["Review", ["agents", "groups", "runs", "spend"]],
+            ["Review", ["agents", "groups", "runs", ...(isAdmin ? ["spend"] : [])]],
             ["Resources", ["mcp", "skills", "models"]],
             ["Workspace", ["repos", "access", "connections"]],
           ].map(([label, keys]) => (
@@ -1102,7 +1105,9 @@ function App() {
               }
             />
           )}
-          {active === "spend" ? <SpendPage /> : active === "runs" && path.split("/")[2] ? (
+          {active === "spend" ? (
+            isAdmin ? <SpendPage /> : <p role="status">Spend is available to workspace admins only.</p>
+          ) : active === "runs" && path.split("/")[2] ? (
             <>
               <button className="back" onClick={() => navigate("/runs")}>
                 <ArrowLeft size={14} /> All runs
@@ -1131,10 +1136,10 @@ function App() {
                     <code>{run.head.slice(0, 12)}</code>
                   </div>
                   <dl className="run-summary">
-                    <div>
+                    {isAdmin && <div>
                       <dt>Model cost</dt>
                       <dd><RunCost value={run.spend} /></dd>
-                    </div>
+                    </div>}
                     <div>
                       <dt>Reviewers</dt>
                       <dd>
@@ -1158,8 +1163,8 @@ function App() {
                       </dd>
                     </div>
                     <div>
-                      <dt>Triggered by</dt>
-                      <dd className="summary-caller">{run.actor}</dd>
+                      <dt>{run.trigger?.type === "automatic" ? "Automatic review" : "Triggered by"}</dt>
+                      <dd className="summary-caller">{run.trigger?.type === "automatic" ? `${reviewEvents[run.trigger.event] || run.trigger.event} · @${run.actor}` : run.actor}</dd>
                     </div>
                   </dl>
                   {run.error && <div className="error">{run.error}</div>}
@@ -1167,7 +1172,7 @@ function App() {
                     <details className="job" key={job.id}>
                       <summary className="job-title">
                         <h3>{job.config.name}</h3>
-                        <span className="job-cost"><RunCost value={job.spend} /></span>
+                        {isAdmin && <span className="job-cost"><RunCost value={job.spend} /></span>}
                         {job.config.target_kind !== "agent" && (
                           <span>{job.config.group}</span>
                         )}
@@ -1445,7 +1450,8 @@ function App() {
                                     ? "Started"
                                     : "Connection"}
                         </th>
-                        {active === "runs" && <th>Model cost</th>}
+                        {active === "runs" && isAdmin && <th>Model cost</th>}
+                        {active === "agents" && <th aria-sort="descending" title="PR runs using this agent, including groups. Counts each run once; excludes model checks and fusion branches.">Times used ↓</th>}
                         <th><span className="sr-only">Actions</span></th>
                       </tr>
                     </thead>
@@ -1471,7 +1477,7 @@ function App() {
                                 : active === "agents"
                                   ? `${row.skill_ids.length} ${row.skill_ids.length === 1 ? "skill" : "skills"} · ${row.mcps.length} MCP ${row.mcps.length === 1 ? "connection" : "connections"}`
                                   : active === "runs"
-                                    ? row.head.slice(0, 12)
+                                    ? `${row.head.slice(0, 12)}${row.trigger?.type === "automatic" ? ` · Automatic: ${reviewEvents[row.trigger.event] || row.trigger.event}` : ""}`
                                     : ""}
                             </small>
                           </td>
@@ -1587,7 +1593,8 @@ function App() {
                               </span>
                             )}
                           </td>
-                          {active === "runs" && <td><RunCost value={row.spend} /></td>}
+                          {active === "runs" && isAdmin && <td><RunCost value={row.spend} /></td>}
+                          {active === "agents" && <td>{(row.usage_count || 0).toLocaleString()}</td>}
                           <td className="row-actions">
                             {active === "agents" && (
                               setup?.default_reviewer_id === row.id ? (
@@ -1701,7 +1708,7 @@ function App() {
               access:
                 "Choose which agents and groups can be called from PR comments.",
               skills: "Write instructions once and attach them to any agent.",
-              repos: "Configure the environment used to run this repository.",
+              repos: "Set automatic reviews and the environment used to review this repository.",
               connections:
                 "Make a provider or tool server available to your agents.",
             }[editor.kind]
@@ -2461,6 +2468,13 @@ function App() {
                     </div>
                   )}
                 </FormSection>
+              )}
+              {editor.kind === "repos" && (
+                <AutomaticReviews rules={editor.data.review_rules || []} targets={[...store.agents, ...store.groups]}
+                  allowedTargetIds={[...store.agents, ...store.groups].filter(t => {
+                    const grant = store.access.find(a => a.subject === "repo" && a.name.toLowerCase() === editor.data.name.toLowerCase());
+                    return !editor.id || (grant && (grant.scope === "all" || grant.target_ids.includes(t.id)));
+                  }).map(t => t.id)} eventsEnabled={editor.data.review_events_enabled} onChange={rules => update("review_rules", rules)} />
               )}
               {editor.kind === "repos" && (
                 <FormSection

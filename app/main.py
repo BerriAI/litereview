@@ -26,7 +26,17 @@ from .limits import count_model_call, job_timeout, model_rounds
 from .onboarding import exclude_repository, include_repository
 from .onboarding import router as onboarding_router
 from .schemas import SCHEMAS, AgentModel, DefaultReviewer, ReviewResult
-from .security import decrypt, digest, encrypt, require_user, signed, unsign, verify_signature
+from .security import (
+    decrypt,
+    digest,
+    encrypt,
+    is_admin,
+    require_admin,
+    require_user,
+    signed,
+    unsign,
+    verify_signature,
+)
 from .settings import settings
 from .sso import router as sso_router
 
@@ -115,6 +125,7 @@ def session(request: Request):
 
     return {
         "user": user,
+        "is_admin": is_admin(user),
         "github_login": bool(github.config().get("client_id")),
         "google_login": configured(),
         "sso_required": settings().sso_required,
@@ -254,6 +265,11 @@ def validate_resource(kind, data, db, resource_id):
             raise HTTPException(400, f"A selected {expected} item no longer exists.")
         return r
 
+    if kind == "repos":
+        for rule in data["review_rules"]:
+            target = db.get(Resource, rule["target_id"])
+            if not target or target.kind not in ("agents", "groups"):
+                raise HTTPException(400, "Choose an existing agent or group for each automatic review.")
     if kind == "agents":
         for branch in (data.get("fusion") or {}).get("branches", []):
             branch_conn = exists(branch["connection_id"], "connections")
@@ -325,6 +341,15 @@ def list_resources(kind: str):
         ).all()
         if kind == "access" and settings().sso_required:
             return [public_resource(r) for r in rows if r.data["subject"] == "repo"] + people(db, rows)
+        if kind == "agents":
+            agent_id = Job.config["agent_id"].as_string()
+            counts = dict(db.execute(select(agent_id, func.count(func.distinct(Run.id)))
+                          .join(Run, Run.id == Job.run_id)
+                          .where(Run.pr > 0, Run.snapshot["harness_check"].as_boolean().is_not(True),
+                                 Job.config["fusion_parent_id"].as_string().is_(None))
+                          .group_by(agent_id)).all())
+            output = [{**public_resource(r), "usage_count": counts.get(r.id, 0)} for r in rows]
+            return sorted(output, key=lambda r: (-r["usage_count"], r["name"].lower(), r["id"]))
         return [public_resource(r) for r in rows]
 
 
@@ -440,6 +465,10 @@ def delete_resource(kind: str, resource_id: str):
         if not row or row.kind != kind:
             raise HTTPException(404)
         for other in db.scalars(select(Resource).where(Resource.id != resource_id)):
+            if other.kind == "repos" and any(
+                rule["target_id"] == resource_id for rule in other.data.get("review_rules", [])
+            ):
+                raise HTTPException(409, f'Remove this reviewer from automatic reviews in "{other.data["name"]}" first.')
             if other.kind == "agents" and (
                 resource_id == other.data["connection_id"]
                 or any(b["connection_id"] == resource_id for b in (other.data.get("fusion") or {}).get("branches", []))
@@ -828,7 +857,7 @@ async def manifest(request: Request):
             "pull_requests": "write",
             "issues": "write",
         },
-        "default_events": ["issue_comment"],
+        "default_events": ["issue_comment", "pull_request"],
     }
     owner_type = body.get("owner_type", "personal")
     url = "https://github.com/settings/apps/new"
@@ -942,42 +971,48 @@ async def webhook(request: Request):
 
         await sync_repositories()
         return {"synced": True}
-    if event != "issue_comment":
+    if event not in ("issue_comment", "pull_request"):
         return {"ignored": True}
     delivery = request.headers.get("x-github-delivery")
     if not delivery or len(delivery) > 150:
         raise HTTPException(400, "Missing GitHub delivery ID.")
-    run_id = await reviews.accept(json.loads(body), delivery)
+    if event == "pull_request":
+        from .automatic_reviews import accept
+    else:
+        accept = reviews.accept
+    run_id = await accept(json.loads(body), delivery)
     return {"run_id": run_id, "ignored": not bool(run_id)}
 
 
 def run_public(run):
-    return {
+    return {"trigger": run.snapshot.get("trigger"), **{
         k: getattr(run, k)
         for k in ("id", "repo", "pr", "actor", "head", "base", "status", "comment_id", "created_at", "error")
-    }
+    }}
 
 
-@app.get("/api/spend", dependencies=[Depends(require_user)])
+@app.get("/api/spend", dependencies=[Depends(require_admin)])
 def spend_dashboard():
     from . import spend
     with Session() as db:
         return spend.dashboard(db)
 
 
-@app.get("/api/runs", dependencies=[Depends(require_user)])
-def runs():
+@app.get("/api/runs")
+def runs(user=Depends(require_user)):
     from . import spend
     with Session() as db:
         rows = db.scalars(select(Run)
             .where(Run.snapshot["harness_check"].as_boolean().is_not(True))
             .order_by(Run.created_at.desc())).all()
-        costs = spend.run_costs(db, rows)
-        return [{**run_public(r), "spend": costs[r.id]} for r in rows]
+        if is_admin(user):
+            costs = spend.run_costs(db, rows)
+            return [{**run_public(r), "spend": costs[r.id]} for r in rows]
+        return [run_public(r) for r in rows]
 
 
-@app.get("/api/runs/{run_id}", dependencies=[Depends(require_user)])
-def run_detail(run_id: str):
+@app.get("/api/runs/{run_id}")
+def run_detail(run_id: str, user=Depends(require_user)):
     from . import spend
     with Session() as db:
         run = db.get(Run, run_id)
@@ -985,9 +1020,11 @@ def run_detail(run_id: str):
             raise HTTPException(404)
         all_jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
         jobs = reviews.ordered_jobs(run, all_jobs)
-        costs = spend.job_costs(db, [j.id for j in all_jobs])
+        show_spend = is_admin(user)
+        costs = spend.job_costs(db, [j.id for j in all_jobs]) if show_spend else {}
         result = run_public(run)
-        result["spend"] = spend.cost_summary(all_jobs, costs)
+        if show_spend:
+            result["spend"] = spend.cost_summary(all_jobs, costs)
         result["jobs"] = []
         for job in jobs:
             data = {
@@ -1017,7 +1054,8 @@ def run_detail(run_id: str):
                     select(Artifact).where(Artifact.job_id == child.id))],
             } for child in children]
             data["aggregator_model_calls"] = job.model_calls
-            data["spend"] = spend.cost_summary([job, *children], costs)
+            if show_spend:
+                data["spend"] = spend.cost_summary([job, *children], costs)
             data["model_calls"] += sum(child.model_calls for child in children)
             result["jobs"].append(data)
         return result

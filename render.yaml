@@ -24,6 +24,8 @@ services:
         sync: false
       - key: GOOGLE_ALLOWED_DOMAINS
         sync: false
+      - key: ADMIN_EMAILS
+        sync: false
       - key: GITHUB_ORGANIZATION
         sync: false
       - key: MODAL_TOKEN_ID

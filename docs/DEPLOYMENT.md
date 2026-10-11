@@ -35,6 +35,7 @@ You need a Render account, a Modal account with sandbox capacity, a Google Works
    | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | Token from your Modal workspace |
    | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Your Google web OAuth client |
    | `GOOGLE_ALLOWED_DOMAINS` | Comma-separated Workspace domains you control, for example `example.com` |
+   | `ADMIN_EMAILS` | Google emails allowed to view spend, for example `owner@example.com,finance@example.com`; blank hides spend from every SSO member |
    | `GITHUB_ORGANIZATION` | Your GitHub organization slug, or blank to choose the owner during setup |
 
    The Blueprint sets `GOOGLE_SSO_REQUIRED=true`, generates `SECRET_KEY` and `ADMIN_TOKEN`, and wires `DATABASE_URL` to Postgres. The access key cannot bypass required SSO. Keep the encryption key stable across deploys. Existing Blueprint users must keep their own domain and organization values when syncing this configuration.
@@ -71,6 +72,14 @@ Modal workers must reach this public HTTPS origin. Keep one API worker and one s
 For an existing App, see [manual credentials and permissions](../README.md#existing-github-app). For repository-specific build commands, browser checks, skills, and MCP tools, use the in-app **Documentation** page. Add only disposable test credentials to review environments.
 
 ## Operate and update
+
+### Spend admins
+
+In Render, open your LiteReview service → **Environment** and set `ADMIN_EMAILS` to the comma-separated Google email addresses that should see costs, for example `owner@example.com,finance@example.com`. Use full addresses from the allowed Workspace domains. Save and redeploy to load the setting. Preserve any existing addresses when adding an admin. Matching is case-insensitive; an empty list grants nobody access to spend. GitHub linking is not required for this permission. `GOOGLE_ADMIN_EMAILS` is not used.
+
+After deployment, refresh LiteReview as a listed admin: **Spend** and **Runs → Model cost** should be visible. Sign in as an unlisted member and confirm both are absent; opening `/spend` shows an access restriction, and `/api/spend` returns 403. Members can still read review results and manage the workspace. Remove an address and redeploy to revoke its spend access, including for existing sessions. Without Google SSO, access-key owners and accounts admitted by `ADMIN_USERS` retain spend access.
+
+### Maintenance
 
 Retain the database, environment settings, and the same `SECRET_KEY`. Losing the database loses configuration and review history. Losing or replacing `SECRET_KEY` prevents decryption of saved connections and invalidates signed sessions. Key rotation with re-encryption is not automated. The upgrade to independent browser sessions preserves currently valid Google sessions with their original expiry; signing in from another browser no longer invalidates them.
 

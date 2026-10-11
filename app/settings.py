@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     secret_key: str = ""
     admin_token: str = ""
     admin_users: str = ""  # Legacy GitHub-only sign-in allowlist; ignored for Google workspace access.
+    admin_emails: str = ""  # Verified Google emails allowed to view workspace spend.
     google_sso_required: bool = False
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -47,6 +48,10 @@ class Settings(BaseSettings):
     @property
     def admins(self):
         return {u.strip().lower() for u in self.admin_users.split(",") if u.strip()}
+
+    @property
+    def spend_admin_emails(self):
+        return {email.strip().lower() for email in self.admin_emails.split(",") if email.strip()}
 
     @property
     def sso_required(self):

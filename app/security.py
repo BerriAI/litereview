@@ -3,7 +3,7 @@ import hashlib
 import hmac
 
 from cryptography.fernet import Fernet
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from .settings import settings
@@ -47,6 +47,24 @@ def require_user(request: Request):
     user = unsign(token)
     if user.get("login") != "owner" and user.get("login", "").lower() not in settings().admins:
         raise HTTPException(403, "This account is not approved for this workspace.")
+    return user
+
+
+def is_admin(user):
+    """Authorize an authenticated identity using current server configuration."""
+    if not user:
+        return False
+    if settings().sso_required:
+        return (
+            user.get("auth") == "google"
+            and user.get("email", "").lower() in settings().spend_admin_emails
+        )
+    return user.get("login") == "owner" or user.get("login", "").lower() in settings().admins
+
+
+def require_admin(user=Depends(require_user)):
+    if not is_admin(user):
+        raise HTTPException(403, "Spend is available to workspace admins only.")
     return user
 
 
