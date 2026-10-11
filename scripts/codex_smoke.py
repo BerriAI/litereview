@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import errno
+import gzip
 import hashlib
 import json
 import os
@@ -55,7 +56,8 @@ async def check(native, workdir, model):
     toolset.clock.start()
 
     async def handle_request(request):
-        body = json.loads(request.content)
+        assert request.headers["content-encoding"] == "gzip"
+        body = json.loads(gzip.decompress(request.content))
         requests.append(body)
         index = len(requests)
         assert index <= 3, f"Unexpected model call {index}"

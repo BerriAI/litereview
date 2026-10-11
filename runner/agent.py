@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import gzip
 import io
 import json
 import os
@@ -32,7 +33,11 @@ class Relay:
         for attempt in range(3):
             try:
                 response = await (
-                    self.client.get(endpoint) if data is None else self.client.post(endpoint, json=data)
+                    self.client.get(endpoint) if data is None else self.client.post(
+                        endpoint,
+                        content=gzip.compress(json.dumps(data).encode()),
+                        headers={"content-type": "application/json", "content-encoding": "gzip"},
+                    )
                 )
                 if response.is_success:
                     return response.json()

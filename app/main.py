@@ -39,6 +39,7 @@ from .security import (
 )
 from .settings import settings
 from .sso import router as sso_router
+from .worker_transport import worker_json
 
 
 @asynccontextmanager
@@ -1157,9 +1158,9 @@ def start_review(job_id: str, request: Request):
 async def model_relay(job_id: str, request: Request):
     from . import spend
     job = worker(request, job_id)
+    body = await worker_json(request)
     if not count_model_call(job):
         raise HTTPException(429, "Model round limit reached.")
-    body = await request.json()
     trace = tracing.ModelTrace(job, body)
     connection = providers.snapshot_connection(job.config["connection"])
     meter = spend.UsageMeter(job, await spend.lookup_rates(connection, job.config["model"]))
@@ -1185,7 +1186,7 @@ async def model_relay(job_id: str, request: Request):
 @app.post("/api/internal/jobs/{job_id}/mcp")
 async def mcp_relay(job_id: str, request: Request):
     job = worker(request, job_id)
-    body = await request.json()
+    body = await worker_json(request)
     allowed = next((m for m in job.config["mcp_definitions"] if m["id"] == body.get("connection_id")), None)
     if not allowed or body.get("name") not in {t["name"] for t in allowed["tools"]}:
         raise HTTPException(403, "This MCP tool is not enabled for this agent.")
@@ -1204,7 +1205,7 @@ async def harness_model(job_id: str, path: str, request: Request):
 @app.post("/api/internal/jobs/{job_id}/event")
 async def job_event(job_id: str, request: Request):
     worker(request, job_id)
-    body = await request.json()
+    body = await worker_json(request)
     with Session() as db:
         job = db.get(Job, job_id)
         event = {"time": time.time(), "message": str(body.get("message", ""))}
@@ -1216,7 +1217,7 @@ async def job_event(job_id: str, request: Request):
 @app.post("/api/internal/jobs/{job_id}/artifact")
 async def job_artifact(job_id: str, request: Request):
     worker(request, job_id)
-    body = await request.json()
+    body = await worker_json(request)
     try:
         raw = base64.b64decode(body["data"], validate=True)
     except (ValueError, KeyError):
@@ -1244,7 +1245,7 @@ async def finish(job_id: str, request: Request):
             return {"ok": True}
     worker(request, job_id)
     try:
-        result = ReviewResult.model_validate(await request.json()).model_dump()
+        result = ReviewResult.model_validate(await worker_json(request)).model_dump()
     except ValidationError as exc:
         fields = ", ".join(".".join(map(str, error["loc"])) for error in exc.errors())
         raise HTTPException(
