@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import providers, spend, tracing
 from .limits import count_model_call
+from .worker_transport import worker_json
 
 PROTOCOLS = {"chat/completions", "responses", "messages", "messages/count_tokens"}
 
@@ -13,6 +14,7 @@ PROTOCOLS = {"chat/completions", "responses", "messages", "messages/count_tokens
 async def relay_model(job, request, path):
     if path not in PROTOCOLS:
         raise HTTPException(404, "Unsupported model endpoint.")
+    body = await worker_json(request)
     cfg = job.config
     connection = providers.snapshot_connection(cfg["connection"])
     kind = connection["type"]
@@ -23,7 +25,6 @@ async def relay_model(job, request, path):
     if path != "messages/count_tokens":
         if not count_model_call(job):
             raise HTTPException(429, "Model round limit reached.")
-    body = await request.json()
     for key in (
         "api_key",
         "api_base",

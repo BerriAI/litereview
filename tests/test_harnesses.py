@@ -1,3 +1,4 @@
+import gzip
 import json
 import time
 from unittest.mock import AsyncMock
@@ -160,7 +161,8 @@ def seed_job():
         db.commit()
 
 
-def test_native_relay_is_scoped_streaming_and_counts_calls(client, monkeypatch):
+@pytest.mark.parametrize("compressed", [False, True])
+def test_native_relay_is_scoped_streaming_and_counts_calls(client, monkeypatch, compressed):
     seed_job()
     sent = []
     monkeypatch.setattr(
@@ -187,14 +189,23 @@ def test_native_relay_is_scoped_streaming_and_counts_calls(client, monkeypatch):
     assert client.post(path + "responses", json={}).status_code == 401
     headers = {"authorization": "Bearer job-token"}
     assert client.post(path + "admin/keys", headers=headers, json={}).status_code == 404
-    response = client.post(
-        path + "responses", headers=headers, json={"model": "other-model", "stream": True, "store": True}
-    )
+    source = "Review `curl -X POST <proxy>/v1/systemone`\nUnicode: café 🧪"
+    payload = {"model": "other-model", "stream": True, "store": True, "input": source}
+    if compressed:
+        response = client.post(
+            path + "responses",
+            headers={**headers, "content-type": "application/json", "content-encoding": "gzip"},
+            content=gzip.compress(json.dumps(payload).encode()),
+        )
+    else:
+        response = client.post(path + "responses", headers=headers, json=payload)
     assert response.status_code == 200
     assert response.text.endswith("data: [DONE]\n\n")
     body = json.loads(sent[-1].content)
     assert body["model"] == "chosen-model"
     assert body["store"] is False
+    assert body["input"] == source
+    assert "content-encoding" not in sent[-1].headers
     assert sent[-1].headers["authorization"] == "Bearer private-provider-key"
     assert "private-provider-key" not in response.text
     client.post(path + "messages", headers=headers, json={"model": "other"})
