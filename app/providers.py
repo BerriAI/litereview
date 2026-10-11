@@ -111,13 +111,13 @@ async def models(conn):
 
 
 async def draft_completion(conn, model, messages):
-    """One bounded text request; drafting does not run agent tools or a sandbox."""
+    """One text request; drafting does not run agent tools or a sandbox."""
     prefix = "anthropic" if conn["type"] == "anthropic" else "openai"
     model_name = model if model.startswith(prefix + "/") and conn["type"] != "gateway" else prefix + "/" + model
     try:
         response = await litellm.acompletion(
             model=model_name, api_key=conn["api_key"], api_base=conn.get("base_url") or None,
-            messages=messages, max_tokens=4096, timeout=60, num_retries=0,
+            messages=messages, timeout=60, num_retries=0,
         )
         return response.choices[0].message.content
     except Exception as exc:
