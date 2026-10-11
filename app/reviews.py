@@ -6,7 +6,7 @@ from collections import Counter
 
 from fastapi import HTTPException
 from markdown_it import MarkdownIt
-from sqlalchemy import String, and_, cast, func, or_, select, update
+from sqlalchemy import String, cast, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from runner.catalog import HARNESS_VERSIONS, review_capabilities, validate_connection
@@ -62,15 +62,16 @@ def comment_run(db, repo, comment_id, delivery=None):
     keys = [delivery] if delivery else []
     if comment_id is not None:
         keys.append(f"comment:{comment_id}")
-    matches = [Run.delivery.in_(keys)]
-    if comment_id is not None:
-        # Older runs retain the original delivery GUID. Preserve their history
-        # and recognize them when polling or redelivering after an upgrade.
-        matches.append(and_(
-            func.lower(Run.repo) == repo.lower(),
-            cast(Run.snapshot["trigger_comment_id"].as_string(), String) == str(comment_id),
-        ))
-    return db.scalar(select(Run.id).where(or_(*matches)).order_by(Run.created_at).limit(1))
+    # Keep normal polling on the delivery index without scanning JSON history.
+    existing = db.scalar(select(Run.id).where(Run.delivery.in_(keys)).limit(1))
+    if existing or comment_id is None:
+        return existing
+    # Older runs retain the original delivery GUID. Preserve their history
+    # and recognize them when polling or redelivering after an upgrade.
+    return db.scalar(select(Run.id).where(
+        func.lower(Run.repo) == repo.lower(),
+        cast(Run.snapshot["trigger_comment_id"].as_string(), String) == str(comment_id),
+    ).order_by(Run.created_at).limit(1))
 
 
 def expand(groups, resources):
