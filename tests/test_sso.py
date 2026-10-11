@@ -311,7 +311,9 @@ def test_signed_webhook_uses_linked_github_after_browser_session_ends(owner, mon
     owner.cookies.clear()
     identity(owner)
     browser_cookie = owner.cookies.get("lr_session")
+    data["comment"]["id"] = 12346
     accepted = webhook(owner, data, "with-sso").json()["run_id"]
+    data["comment"]["id"] = 12347
     data["comment"]["user"]["id"] = 43
     wrong_id = webhook(owner, data, "wrong-id").json()["run_id"]
     with Session() as db:
@@ -328,6 +330,7 @@ def test_signed_webhook_uses_linked_github_after_browser_session_ends(owner, mon
         owner.cookies.set("lr_session", browser_cookie)
     assert owner.get("/api/resources/agents").status_code == 401
     assert sso.eligible_caller({"id": 42, "login": "trusted"})
+    data["comment"]["id"] = 12348
     data["comment"]["user"]["id"] = 42
     later = webhook(owner, data, "after-session").json()["run_id"]
     with Session() as db:
@@ -514,6 +517,7 @@ def test_person_restrictions_follow_google_identity_after_github_changes(owner, 
     with Session() as db:
         assert db.get(Run, rid).status == "rejected"
     owner.put("/api/resources/access/" + person["id"], json={**person, "scope": "all"}).raise_for_status()
+    data["comment"]["id"] = 12346
     rid = webhook(owner, data, "allowed").json()["run_id"]
     with Session() as db:
         assert db.get(Run, rid).status == "queued"

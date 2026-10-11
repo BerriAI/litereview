@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 
 from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
 
-from . import fusion, github, mcp_oauth, providers, reviews, tracing
+from . import comment_sweep, fusion, github, mcp_oauth, providers, reviews, tracing
 from .access import bind_existing_people, initialize_access, people
 from .agent_generation import router as agent_generation_router
 from .db import Artifact, Job, MCPOAuth, Resource, ReviewTiming, Run, Session, SSOIdentity, init_db, uid
@@ -76,12 +76,18 @@ async def lifespan(app):
                 )
         db.commit()
     tracing.start()
-    task = asyncio.create_task(reviews.dispatcher()) if settings().dispatcher_enabled else None
+    dispatcher_task = asyncio.create_task(reviews.dispatcher()) if settings().dispatcher_enabled else None
+    sweeper_task = (
+        asyncio.create_task(comment_sweep.sweeper())
+        if settings().dispatcher_enabled and settings().comment_sweep_seconds > 0
+        else None
+    )
     yield
-    if task:
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+    for task in (dispatcher_task, sweeper_task):
+        if task:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
     await asyncio.to_thread(tracing.shutdown)
 
 

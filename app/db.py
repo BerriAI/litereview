@@ -130,6 +130,13 @@ class AutomaticReviewClaim(Base):
     run_id: Mapped[str] = mapped_column(String(40), index=True)
 
 
+class CommentSweepCursor(Base):
+    __tablename__ = "comment_sweep_cursors"
+    # Scope progress to the connected repository and installation.
+    key: Mapped[str] = mapped_column(String(90), primary_key=True)
+    scanned_through: Mapped[float] = mapped_column(Float)
+
+
 class ReviewTiming(Base):
     __tablename__ = "review_timing"
     job_id: Mapped[str] = mapped_column(String(40), primary_key=True)

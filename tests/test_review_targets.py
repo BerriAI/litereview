@@ -68,7 +68,7 @@ def test_each_access_rule_must_allow_every_selected_target(owner, monkeypatch, s
     with Session() as db:
         assert db.get(Run, rejected.json()["run_id"]).status == "rejected"
         assert not db.scalars(select(Job)).all()
-    accepted = webhook(owner, payload(body="@litereview general"), "group-only")
+    accepted = webhook(owner, payload(body="@litereview general", comment_id=12346), "group-only")
     with Session() as db:
         assert db.get(Run, accepted.json()["run_id"]).status == "queued"
         assert len(db.scalars(select(Job)).all()) == 2

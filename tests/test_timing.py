@@ -68,7 +68,7 @@ def test_saved_times_apply_independently_to_direct_agents_and_group_instances(ow
             600,
             600,
         ]
-    fresh = webhook(owner, payload(body="@litereview reviewer"), "new-time")
+    fresh = webhook(owner, payload(body="@litereview reviewer", comment_id=12346), "new-time")
     with Session() as db:
         assert (
             db.scalar(select(Job).where(Job.run_id == fresh.json()["run_id"])).config[
@@ -76,7 +76,7 @@ def test_saved_times_apply_independently_to_direct_agents_and_group_instances(ow
             ]
             == 180
         )
-    bad = webhook(owner, payload(body="@litereview general t=1"), "invalid-time")
+    bad = webhook(owner, payload(body="@litereview general t=1", comment_id=12347), "invalid-time")
     with Session() as db:
         assert db.get(Run, bad.json()["run_id"]).status == "rejected"
         assert len(db.scalars(select(Job)).all()) == 5
