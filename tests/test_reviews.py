@@ -28,7 +28,7 @@ async def test_dispatcher_across_ten_reviews(owner, monkeypatch, cap, expected):
     setup(owner)
     mock_github(monkeypatch)
     for i in range(10):
-        await reviews.accept(payload(), f"concurrent-{i}")
+        await reviews.accept(payload(comment_id=12345 + i), f"concurrent-{i}")
     monkeypatch.setattr(settings(), "concurrency", cap)
     started = set()
     ready = asyncio.Event()
@@ -101,13 +101,13 @@ def setup(owner):
     return connection, skill, agent, repo, group
 
 
-def payload(actor="trusted", body="@litereview general"):
+def payload(actor="trusted", body="@litereview general", comment_id=12345):
     return {
         "action": "created",
         "repository": {"full_name": "owner/repo"},
         "issue": {"number": 1, "pull_request": {}},
         "installation": {"id": 42},
-        "comment": {"id": 12345, "user": {"login": actor, "type": "User"}, "body": body},
+        "comment": {"id": comment_id, "user": {"login": actor, "type": "User"}, "body": body},
     }
 
 

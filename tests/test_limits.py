@@ -39,7 +39,9 @@ def test_agent_limits_snapshot_and_clear_independently(owner, monkeypatch):
         assert all(j.config["timeout_seconds"] == 1800 and j.config["max_rounds"] == 250 for j in jobs)
     reviewer.update(maximum_minutes=None, max_model_calls=None)
     assert owner.put(path, json=reviewer).status_code == 200
-    second = webhook(owner, payload(body="@litereview reviewer general"), "no-limits").json()["run_id"]
+    second = webhook(
+        owner, payload(body="@litereview reviewer general", comment_id=12346), "no-limits"
+    ).json()["run_id"]
     with Session() as db:
         jobs = db.scalars(select(Job).where(Job.run_id == second)).all()
         assert all(j.config["minimum_review_seconds"] == 300 for j in jobs)

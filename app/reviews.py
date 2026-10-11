@@ -51,6 +51,13 @@ def command_requests(body):
     return list(unique.values())
 
 
+def is_command(body):
+    try:
+        return bool(command_requests(body))
+    except ValueError:
+        return True
+
+
 def expand(groups, resources):
     jobs = []
     for group in groups:
@@ -135,6 +142,9 @@ async def accept(payload, delivery):
     if payload.get("action") != "created" or "pull_request" not in payload.get("issue", {}):
         return None
     comment_data = payload.get("comment", {})
+    comment_id = comment_data.get("id")
+    if comment_id is not None:
+        delivery = f"comment:{comment_id}"
     if comment_data.get("user", {}).get("type") == "Bot":
         return None
     parse_error = None

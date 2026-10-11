@@ -30,9 +30,13 @@ def test_all_grants_include_future_targets_and_still_require_github_access(owner
         assert db.get(Run, response.json()["run_id"]).status == "queued"
         assert db.scalar(select(Job)).config["agent_id"] == later["id"]
     mock_github(monkeypatch, "none")
-    assert webhook(owner, payload(body="@litereview later-reviewer"), "denied-github").json()["ignored"]
+    assert webhook(
+        owner, payload(body="@litereview later-reviewer", comment_id=12346), "denied-github"
+    ).json()["ignored"]
     mock_github(monkeypatch, "admin")
-    denied = webhook(owner, payload(actor="unlisted", body="@litereview later-reviewer"), "unlisted")
+    denied = webhook(
+        owner, payload(actor="unlisted", body="@litereview later-reviewer", comment_id=12347), "unlisted"
+    )
     with Session() as db:
         assert db.get(Run, denied.json()["run_id"]).status == "rejected"
         assert len(db.scalars(select(Job)).all()) == 1

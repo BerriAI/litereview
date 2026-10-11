@@ -20,8 +20,8 @@ def test_first_agent_default_and_delivery_snapshot(owner, monkeypatch):
     other = create(owner, "agents", **{**agent, "name": "other"})
     owner.put("/api/default-reviewer", json={"agent_id": other["id"]}).raise_for_status()
     assert webhook(owner, payload(body="@litereview")).json()["run_id"] == run_id
-    second = webhook(owner, payload(body="@litereview"), "new-default").json()["run_id"]
-    named = webhook(owner, payload(body="@litereview reviewer"), "named").json()["run_id"]
+    second = webhook(owner, payload(body="@litereview", comment_id=12346), "new-default").json()["run_id"]
+    named = webhook(owner, payload(body="@litereview reviewer", comment_id=12347), "named").json()["run_id"]
     with Session() as db:
         for rid, aid in [(run_id, agent["id"]), (second, other["id"]), (named, agent["id"])]:
             jobs = db.scalars(select(Job).where(Job.run_id == rid)).all()
