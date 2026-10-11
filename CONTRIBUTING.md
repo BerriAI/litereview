@@ -1,6 +1,6 @@
 # Contributing to LiteReview
 
-Start with the [local development guide](README.md#local-development). Use Python 3.12, Node 22, and uv 0.10.9. Core automated tests use disposable fixtures and do not require Modal, GitHub, or model credentials.
+Start with the [local development guide](docs/DEVELOPMENT.md). Use Python 3.12, Node 22, and uv 0.10.9. Core automated tests use disposable fixtures and do not require Modal, GitHub, or model credentials.
 
 ## Propose a change
 

@@ -12,7 +12,7 @@ Every admitted member can manage shared connections, agents, repository access, 
 
 ## Prepare your accounts
 
-You need a Render account, a Modal account with sandbox capacity, a Google Workspace organization, a model provider or compatible gateway, and permission to create/install a GitHub App for your target repositories. The hosted path uses Google Workspace SSO. For a local UI/API trial without SSO, use [local development](../README.md#local-development).
+You need a Render account, a Modal account with sandbox capacity, a Google Workspace organization, a model provider or compatible gateway, and permission to create/install a GitHub App for your target repositories. The hosted path uses Google Workspace SSO. For a local UI/API trial without SSO, use [local development](DEVELOPMENT.md).
 
 1. **Modal:** create a token for the account/workspace that will run reviews. Follow [Modal's token setup](https://modal.com/docs/reference/cli/token). With uv installed, the command is:
 
@@ -55,21 +55,52 @@ Modal workers must reach this public HTTPS origin. Keep one API worker and one s
 
 ## Get your first review
 
-1. Open **Repositories → Connect GitHub**. Choose the account that owns your repositories. Follow the same-tab GitHub registration and installation flow; LiteReview saves App credentials encrypted. Select one repository you control for the initial review. Return to Repositories to import the installation automatically.
-2. If you cannot create or install the App, use **Copy setup request** for the appropriate organization owner. Wait for approval, then return and use **Check installation** or **GitHub connection options → Sync repositories**. A private personal App cannot stand in for an organization-owned App.
-3. Open **Models → Add connection**, choose your provider or gateway, and enter its API key. For a gateway, use the API base URL supplied by its operator. Save and test the connection.
-4. In Repositories, choose **Configure reviewer**, name it `review`, choose a model, and use **Save and check reviewer**. This executes a sample project in a real Modal sandbox and consumes model/Modal credits. It does not post to GitHub. Resolve any reported compatibility or credential error before proceeding.
-5. Open the reviewer under **PR agents** to set its instructions and optional maximum run time/model-call limits. Set `CONCURRENCY` in the deployment environment if you want a workspace-wide sandbox cap; `0` leaves concurrency to Modal quotas. Configure provider and Modal budgets in those services.
-6. The first reviewer becomes the default automatically. To change it, open **PR agents** and choose **Set default** on the agent’s row. Choose **Start a review**, link your GitHub identity, and copy the permitted command. Post it as a new comment on an open PR in your connected repository:
+Stay in your deployed workspace for these steps. Use one repository and one model first. The default reviewer already has instructions for finding actionable defects; skills, MCP tools, Fusion, and automatic reviews can wait.
 
-   ```text
-   @litereview
-   ```
+### 1. Connect a repository
 
-   An accepted request gets 👀 and each agent gets a separate progress comment. As an agent finishes, its comment shows ✅, its response, and links to finding threads where you can reply. Findings without a usable diff line stay in that comment. The agent’s 👀 reaction disappears on completion; the request’s disappears when all agents finish. Expand an agent in **Runs** to read its report and open its findings, checks, screenshots, or activity. An incomplete result lists the work that could not finish. Read the result before accepting findings as correct.
-7. Invite trusted colleagues to your deployment URL. They sign in with Google and link GitHub. **People → Edit access** and each repository's **Review permissions** can restrict who invokes which reviewers; these controls do not remove workspace management access.
+Open **Repositories → Connect GitHub** (the button names your organization when configured). Choose the account that owns your repositories. Follow GitHub's registration and installation flow, select one repository you control, and return to LiteReview. The repository should appear automatically. LiteReview creates and stores the App credentials for you; there is no installation ID to copy or second repository picker.
 
-For an existing App, see [manual credentials and permissions](../README.md#existing-github-app). For repository-specific build commands, browser checks, skills, and MCP tools, use the in-app **Documentation** page. Add only disposable test credentials to review environments.
+For organization repositories, an owner or organization-wide App Manager must create the App, and installation may need an owner's approval. If blocked, use **Copy setup request**, then return after approval and choose **Check installation** or **GitHub connection options → Sync repositories**. If you already have an App, use [existing App setup](GITHUB.md#existing-github-app).
+
+### 2. Connect a model
+
+Open **Models → Add connection**. If a suitable connection already exists, reuse it and continue to the next step.
+
+- Give the connection a name you will recognize, such as `Review models`.
+- Under **Connection type**, choose **OpenAI** for a direct OpenAI key and leave **API base URL** blank. For another provider, choose **OpenAI-compatible gateway** and enter the API base URL supplied by its operator, including `/v1` if required. Use the base URL, not a full `/responses` endpoint or dashboard URL. The LiteReview API service must be able to reach it.
+- Paste the provider or gateway key into **API key** and choose **Save & test**. Confirm that available models load. The next step tests an actual model request and the review tools.
+
+All reviewers use Codex and need the Responses API. For Anthropic models, use a gateway that supports this API; a direct Anthropic connection cannot run a reviewer. Browser and computer-use checks also need an image-capable model.
+
+### 3. Check your first reviewer
+
+Return to **Repositories → Configure reviewer**. Keep the default **Reviewer name** (`reviewer`), choose an available **Model**, and choose **Save and check reviewer**. If you have several connections, choose the one you just tested. Leave **Minimum review time (minutes)** at `0` for this first check.
+
+This runs Codex on a sample project in a real Modal sandbox and consumes Modal/model credits. It does not access your repository or post to GitHub. The first check may take several minutes while Modal builds its image. Wait for **Ready to review** in Repositories before continuing. If the check fails, inspect its error and retry the saved reviewer; you do not need another agent.
+
+The first reviewer becomes the default automatically. No maximum run time or model-call limit is set. If you need a limit before your first PR review, open **PR agents → reviewer → Review instructions → Optional limits** and set it there. Configure spending budgets with your model provider and Modal. The [reviewer guide](REVIEWERS.md#review-instructions) explains how limits and minimum review time interact.
+
+### 4. Review an open PR
+
+Choose **Start a review** in Repositories and **Connect GitHub** if your personal identity is not linked. Use the GitHub account you will comment from. Installing the workspace's App and linking your own identity are separate steps; every teammate links their own account.
+
+Choose your repository and reviewer if prompted, then choose **Copy comment**. Post it as a **new comment** on an open PR in the connected repository. For your default reviewer:
+
+```text
+@litereview
+```
+
+**Success:** LiteReview reacts with 👀 and posts a progress comment. That comment becomes a review report with the reviewed commit and links to findings. Follow **View review** or open **Runs** to inspect the checks, screenshots, and activity. A saved connection or successful sample check is not yet a PR review.
+
+A ✅ marks completion, not an issue-free PR. **Review incomplete** lists unfinished work; completed reviews can still identify bugs or skipped checks. Read the report before accepting its findings. See [troubleshooting](#troubleshoot) if no review appears.
+
+### After your first review
+
+- Send trusted colleagues your deployment URL. They choose **Sign in with Google → Connect GitHub**; they reuse the shared setup. **People → Edit access** and repository **Review permissions** can restrict which reviewers they invoke, but do not remove workspace management access.
+- Customize [review instructions, models, skills, and tools](REVIEWERS.md). For repository-specific setup/start commands and readiness URLs, open **Repositories**, edit the repository, and use the in-app **Documentation** page. Add only disposable test credentials to review environments.
+- Set `CONCURRENCY` in Render if you want to cap simultaneous sandboxes; `0` leaves concurrency to Modal quotas. Each configured agent can also have optional run time and model-call limits.
+- Open **Spend** as a configured admin to inspect recorded model costs. If the page is missing, check [spend admins](#spend-admins).
 
 ## Operate and update
 
@@ -81,7 +112,7 @@ After deployment, refresh LiteReview as a listed admin: **Spend** and **Runs →
 
 ### Maintenance
 
-Retain the database, environment settings, and the same `SECRET_KEY`. Losing the database loses configuration and review history. Losing or replacing `SECRET_KEY` prevents decryption of saved connections and invalidates signed sessions. Key rotation with re-encryption is not automated. The upgrade to independent browser sessions preserves currently valid Google sessions with their original expiry; signing in from another browser no longer invalidates them.
+Retain the database, environment settings, and the same `SECRET_KEY`. Losing the database loses configuration and review history. Losing or replacing `SECRET_KEY` prevents decryption of saved connections and invalidates signed sessions. Key rotation with re-encryption is not automated. Each browser has its own session; signing in from another browser does not invalidate an existing session.
 
 - Enable database backups in your hosting provider and verify a restore into a separate, access-restricted deployment using the matching encryption key. Keep `DISPATCHER_ENABLED=false` there while inspecting data so restored queued jobs cannot launch or publish reviews.
 - Monitor database size, service memory, provider spend, and Modal usage. Screenshots, activity logs, uploads, and review results have no automatic retention policy or application size cap. Choose per-agent limits and a concurrency cap to suit your budget.
@@ -101,6 +132,8 @@ After deployment, check `/health`, sign-in, saved connections/repositories, and 
 | Request origin does not match | Make `PUBLIC_URL` match the HTTPS origin used in your browser. Restart after changing the environment. |
 | GitHub App exists but no repositories appear | Check the App owner, pending organization approval, and installed repository selection; then sync in Repositories. |
 | Reviewer check fails before execution | Check Modal credentials, account capacity, and whether Modal can reach `PUBLIC_URL` over HTTPS. Retry the saved reviewer check. |
+| No reaction or run after a PR comment | Confirm that **Start a review** shows a permitted command, use the linked GitHub account, and post a new comment on an open PR in a connected repository. Check the App's **Issue comment** subscription and **Advanced → Recent deliveries** on GitHub. A rejected webhook never reaches the review worker; inspect the delivery response and hosting logs. |
+| Spend is missing for an admin | Set `ADMIN_EMAILS` to the verified Google email, preserve other admins, and redeploy. `ADMIN_USERS` does not grant spend access with Google SSO. |
 | Model discovery works but review fails | Confirm the endpoint supports the Responses API, then check tool/image support, provider credits, and the failure details under Runs. |
 | Work is incomplete or expensive | Inspect Checks and execution details, narrow instructions/tools, and configure optional limits and upstream budgets. |
 
