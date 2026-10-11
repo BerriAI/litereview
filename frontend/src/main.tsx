@@ -110,6 +110,7 @@ const descriptions = {
 };
 function App() {
   const [session, setSession] = useState<any>(undefined);
+  const isAdmin = session?.is_admin === true;
   const [store, setStore] = useState<Store>(empty);
   const [path, setPath] = useState(location.pathname);
   const [error, setError] = useState(() => {
@@ -805,7 +806,7 @@ function App() {
         </div>
         <nav aria-label="Main navigation">
           {[
-            ["Review", ["agents", "groups", "runs", "spend"]],
+            ["Review", ["agents", "groups", "runs", ...(isAdmin ? ["spend"] : [])]],
             ["Resources", ["mcp", "skills", "models"]],
             ["Workspace", ["repos", "access", "connections"]],
           ].map(([label, keys]) => (
@@ -1104,7 +1105,9 @@ function App() {
               }
             />
           )}
-          {active === "spend" ? <SpendPage /> : active === "runs" && path.split("/")[2] ? (
+          {active === "spend" ? (
+            isAdmin ? <SpendPage /> : <p role="status">Spend is available to workspace admins only.</p>
+          ) : active === "runs" && path.split("/")[2] ? (
             <>
               <button className="back" onClick={() => navigate("/runs")}>
                 <ArrowLeft size={14} /> All runs
@@ -1133,10 +1136,10 @@ function App() {
                     <code>{run.head.slice(0, 12)}</code>
                   </div>
                   <dl className="run-summary">
-                    <div>
+                    {isAdmin && <div>
                       <dt>Model cost</dt>
                       <dd><RunCost value={run.spend} /></dd>
-                    </div>
+                    </div>}
                     <div>
                       <dt>Reviewers</dt>
                       <dd>
@@ -1169,7 +1172,7 @@ function App() {
                     <details className="job" key={job.id}>
                       <summary className="job-title">
                         <h3>{job.config.name}</h3>
-                        <span className="job-cost"><RunCost value={job.spend} /></span>
+                        {isAdmin && <span className="job-cost"><RunCost value={job.spend} /></span>}
                         {job.config.target_kind !== "agent" && (
                           <span>{job.config.group}</span>
                         )}
@@ -1447,7 +1450,7 @@ function App() {
                                     ? "Started"
                                     : "Connection"}
                         </th>
-                        {active === "runs" && <th>Model cost</th>}
+                        {active === "runs" && isAdmin && <th>Model cost</th>}
                         {active === "agents" && <th aria-sort="descending" title="PR runs using this agent, including groups. Counts each run once; excludes model checks and fusion branches.">Times used ↓</th>}
                         <th><span className="sr-only">Actions</span></th>
                       </tr>
@@ -1590,7 +1593,7 @@ function App() {
                               </span>
                             )}
                           </td>
-                          {active === "runs" && <td><RunCost value={row.spend} /></td>}
+                          {active === "runs" && isAdmin && <td><RunCost value={row.spend} /></td>}
                           {active === "agents" && <td>{(row.usage_count || 0).toLocaleString()}</td>}
                           <td className="row-actions">
                             {active === "agents" && (

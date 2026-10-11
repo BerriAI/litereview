@@ -444,10 +444,12 @@ export function Documentation() {
         <section>
           <h2>Track review spend</h2>
           <p>
-            Open <a href="/spend">Spend</a> for total model cost, PR run count,
+            Admins can open <a href="/spend">Spend</a> for total model cost, PR run count,
             and average cost per run. Choose By user or By repository to see
             the same breakdown. Runs also shows each review’s model cost,
-            including every fusion model and the final review pass.
+            including every fusion model and the final review pass. Other members
+            see no costs. The deployment’s ADMIN_EMAILS setting controls which
+            Google accounts can view spend.
           </p>
           <p>
             Costs use reported gateway amounts or estimates from token usage,
