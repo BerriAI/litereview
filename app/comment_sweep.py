@@ -24,7 +24,7 @@ async def _sweep_repository(repo, installation, since):
                 params={
                     "since": datetime.fromtimestamp(since, timezone.utc).isoformat(),
                     "sort": "created",
-                    "direction": "asc",
+                    "direction": "desc",
                     "per_page": 100,
                     "page": page,
                 },
@@ -33,6 +33,9 @@ async def _sweep_repository(repo, installation, since):
             for comment in comments:
                 created_at = datetime.fromisoformat(comment["created_at"].replace("Z", "+00:00"))
                 if created_at.timestamp() < since:
+                    return started
+                updated_at = datetime.fromisoformat(comment["updated_at"].replace("Z", "+00:00"))
+                if updated_at > created_at:
                     continue
                 if comment.get("user", {}).get("type") == "Bot" or not reviews.is_command(
                     comment.get("body", "")
@@ -42,21 +45,28 @@ async def _sweep_repository(repo, installation, since):
                 with Session() as db:
                     if db.scalar(select(Run.id).where(Run.delivery == delivery)):
                         continue
-                number = int(comment["issue_url"].rstrip("/").rsplit("/", 1)[-1])
-                issue = (
-                    await github.repo_request(repo, installation, "GET", f"issues/{number}")
-                ).json()
-                if "pull_request" not in issue:
-                    continue
-                payload = {
-                    "action": "created",
-                    "issue": issue,
-                    "comment": comment,
-                    "repository": {"full_name": repo},
-                    "installation": {"id": installation},
-                }
-                if await reviews.accept(payload, delivery):
-                    started += 1
+                try:
+                    number = int(comment["issue_url"].rstrip("/").rsplit("/", 1)[-1])
+                    issue = (
+                        await github.repo_request(repo, installation, "GET", f"issues/{number}")
+                    ).json()
+                    if "pull_request" not in issue:
+                        continue
+                    payload = {
+                        "action": "created",
+                        "issue": issue,
+                        "comment": comment,
+                        "repository": {"full_name": repo},
+                        "installation": {"id": installation},
+                    }
+                    if await reviews.accept(payload, delivery):
+                        started += 1
+                except Exception:
+                    logger.exception(
+                        "Comment sweep failed for repository %s and comment %s",
+                        repo,
+                        comment["id"],
+                    )
             if len(comments) < 100:
                 break
     except Exception:

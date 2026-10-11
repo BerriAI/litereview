@@ -9,29 +9,50 @@ from app import comment_sweep, github
 from app.db import Job, Run, Session
 
 
-def make_comment(comment_id, since, body="@litereview general", user_type="User", issue_number=1):
+def make_comment(
+    comment_id,
+    since,
+    body="@litereview general",
+    user_type="User",
+    issue_number=1,
+    updated_at=None,
+):
+    created_at = datetime.fromtimestamp(since, timezone.utc)
     return {
         "id": comment_id,
-        "created_at": datetime.fromtimestamp(since, timezone.utc).isoformat().replace("+00:00", "Z"),
+        "created_at": created_at.isoformat().replace("+00:00", "Z"),
+        "updated_at": (updated_at or created_at).isoformat().replace("+00:00", "Z"),
         "issue_url": f"https://api.github.com/repos/owner/repo/issues/{issue_number}",
         "user": {"login": "trusted", "type": user_type},
         "body": body,
     }
 
 
-def stub_sweep_github(monkeypatch, comments_by_repo, issues=None, fail_repos=()):
+def stub_sweep_github(
+    monkeypatch,
+    comments_by_repo,
+    issues=None,
+    fail_repos=(),
+    pages_by_repo=None,
+    fail_issue_fetches=(),
+):
     calls = []
     monkeypatch.setattr(github, "permission", AsyncMock(return_value="write"))
     issues = issues or {}
+    pages_by_repo = pages_by_repo or {}
 
     async def request(repo, installation, method, suffix, **kwargs):
         calls.append((repo, suffix, kwargs.get("params")))
         if suffix == "issues/comments":
             if repo in fail_repos:
                 raise github.GitHubError(httpx.Response(403), method, suffix)
-            return httpx.Response(200, json=comments_by_repo.get(repo, []))
+            page = kwargs.get("params", {}).get("page", 1)
+            comments = pages_by_repo.get((repo, page), comments_by_repo.get(repo, []))
+            return httpx.Response(200, json=comments)
         if suffix.startswith("issues/"):
             number = int(suffix.rsplit("/", 1)[-1])
+            if (repo, number) in fail_issue_fetches:
+                raise RuntimeError("issue fetch failed")
             return httpx.Response(
                 200,
                 json=issues.get((repo, number), {"number": number, "pull_request": {}}),
@@ -73,10 +94,89 @@ async def test_sweep_accepts_command_without_webhook(owner, monkeypatch):
     assert calls[0][2] == {
         "since": datetime.fromtimestamp(since, timezone.utc).isoformat(),
         "sort": "created",
-        "direction": "asc",
+        "direction": "desc",
         "per_page": 100,
         "page": 1,
     }
+
+
+async def test_sweep_stops_at_first_comment_before_since(owner, monkeypatch):
+    setup(owner)
+    since = 1_700_000_000
+    comments = [
+        make_comment(2010, since + 100),
+        make_comment(2011, since + 99),
+        *[
+            make_comment(2011 + offset, since + 99 - offset, body="not a command")
+            for offset in range(1, 98)
+        ],
+        make_comment(2109, since - 1),
+    ]
+    calls = stub_sweep_github(
+        monkeypatch,
+        {},
+        pages_by_repo={
+            ("owner/repo", 1): comments,
+            ("owner/repo", 2): [make_comment(2110, since - 2)],
+        },
+    )
+
+    run_count = await comment_sweep.sweep_once(since)
+
+    assert [
+        params["page"] for _, suffix, params in calls if suffix == "issues/comments"
+    ] == [1]
+    assert [suffix for _, suffix, _ in calls if suffix == "issues/1"] == ["issues/1", "issues/1"]
+    assert run_count == 2
+    with Session() as db:
+        runs = db.scalars(select(Run)).all()
+        assert {run.delivery for run in runs} == {"comment:2010", "comment:2011"}
+
+
+async def test_sweep_skips_edited_comments_without_fetching_issue(owner, monkeypatch):
+    setup(owner)
+    since = 1_700_000_000
+    comment = make_comment(
+        2013,
+        since + 1,
+        updated_at=datetime.fromtimestamp(since + 2, timezone.utc),
+    )
+    calls = stub_sweep_github(monkeypatch, {"owner/repo": [comment]})
+
+    assert await comment_sweep.sweep_once(since) == 0
+    assert [suffix for _, suffix, _ in calls] == ["issues/comments"]
+    with Session() as db:
+        assert db.scalars(select(Run)).all() == []
+        assert db.scalars(select(Job)).all() == []
+
+
+async def test_sweep_continues_after_comment_issue_fetch_error(owner, monkeypatch, caplog):
+    setup(owner)
+    since = 1_700_000_000
+    comments = [
+        make_comment(2014, since + 1, issue_number=1),
+        make_comment(2015, since + 2, issue_number=2),
+    ]
+    calls = stub_sweep_github(
+        monkeypatch,
+        {"owner/repo": comments},
+        fail_issue_fetches={("owner/repo", 1)},
+    )
+
+    assert await comment_sweep.sweep_once(since) == 1
+    assert any(
+        record.message == "Comment sweep failed for repository owner/repo and comment 2014"
+        for record in caplog.records
+    )
+    assert [suffix for _, suffix, _ in calls if suffix.startswith("issues/")] == [
+        "issues/comments",
+        "issues/1",
+        "issues/2",
+    ]
+    with Session() as db:
+        runs = db.scalars(select(Run)).all()
+        assert len(runs) == 1
+        assert runs[0].delivery == "comment:2015"
 
 
 async def test_webhook_first_is_deduplicated_by_sweep(owner, monkeypatch):
