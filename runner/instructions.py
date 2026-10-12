@@ -5,6 +5,13 @@ from .tools import REPO
 
 def agent_instructions(cfg, clock, skills):
     instructions = cfg['instructions']
+    rules = [r for r in cfg.get("rules", []) if r.get("enabled", True)]
+    if rules:
+        instructions += "\n\n# Additional review rules\nThese saved rules supplement the base instructions and take precedence over conflicting attached skills.\n"
+        for rule in rules:
+            instructions += f"\n## {rule['name']} (rule_id: {rule['id']})\n{rule['instructions']}\n"
+            instructions += "Required check.\n" if rule.get("required", True) else "Optional check.\n"
+        instructions += "\nReturn a check for each enabled rule using its exact rule_id. Explain the evidence and mark passed, failed, or not_run honestly. A missing credential, mock, or skipped run cannot count as executed proof. Follow each rule's required setting; do not silently waive required verification.\n"
     if cfg.get("task") == "reply":
         instructions = f"""Assess the single finding and human reply in review.reply. Read the entire supplied
 thread, inspect the relevant current code, and verify the technical argument. Original review guidance:

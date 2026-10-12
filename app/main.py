@@ -4,7 +4,7 @@ import json
 import secrets
 import time
 import zipfile
-from contextlib import asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlencode
 
@@ -37,8 +37,10 @@ from .db import (
     uid,
 )
 from .limits import count_model_call, job_timeout, model_rounds
+from .mcp_auth import router as mcp_server_auth_router
 from .onboarding import exclude_repository, include_repository
 from .onboarding import router as onboarding_router
+from .review_rules import router as review_rules_router
 from .schemas import SCHEMAS, AgentModel, DefaultReviewer, ReviewResult
 from .security import (
     decrypt,
@@ -91,13 +93,22 @@ async def lifespan(app):
         db.commit()
     tracing.start()
     dispatcher_task = asyncio.create_task(reviews.dispatcher()) if settings().dispatcher_enabled else None
-    yield
-    for task in (dispatcher_task,):
-        if task:
-            task.cancel()
+    from .mcp_server import configure
+    mcp_routes = []
+    try:
+        mcp_server, mcp_routes = configure(app)
+        async with AsyncExitStack() as stack:
+            if mcp_server:
+                await stack.enter_async_context(mcp_server.session_manager.run())
+            yield
+    finally:
+        for route in mcp_routes:
+            app.router.routes.remove(route)
+        if dispatcher_task:
+            dispatcher_task.cancel()
             with suppress(asyncio.CancelledError):
-                await task
-    await asyncio.to_thread(tracing.shutdown)
+                await dispatcher_task
+        await asyncio.to_thread(tracing.shutdown)
 
 
 app = FastAPI(title="LiteReview", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -106,11 +117,15 @@ app.include_router(admins_router)
 app.include_router(onboarding_router)
 app.include_router(mcp_oauth.router)
 app.include_router(agent_generation_router)
+app.include_router(mcp_server_auth_router)
+app.include_router(review_rules_router)
 
 
 @app.middleware("http")
 async def guard(request, call_next):
-    if request.method not in ("GET", "HEAD", "OPTIONS") and not request.url.path.startswith(
+    if request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path not in (
+        "/api/mcp", "/token", "/register", "/revoke"
+    ) and not request.url.path.startswith(
         ("/api/webhook", "/api/internal/")
     ):
         origin = request.headers.get("origin")
@@ -349,15 +364,30 @@ def validate_resource(kind, data, db, resource_id):
 
 
 @app.get("/api/resources/{kind}", dependencies=[Depends(require_user)])
-def list_resources(kind: str):
+def list_resources(kind: str, query: str = "", offset: int = 0, limit: int | None = None):
     if kind not in SCHEMAS:
         raise HTTPException(404)
     with Session() as db:
-        rows = db.scalars(
-            select(Resource).where(Resource.kind == kind).order_by(Resource.updated_at.desc())
-        ).all()
+        stmt = select(Resource).where(Resource.kind == kind)
+        if query and not (kind == "access" and settings().sso_required):
+            stmt = stmt.where(func.lower(Resource.data["name"].as_string()).contains(query.lower(), autoescape=True))
+        if offset < 0 or (limit is not None and not 1 <= limit <= 100):
+            raise HTTPException(422, "Use a nonnegative offset and a limit between 1 and 100.")
+        total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+        paged = stmt.order_by(Resource.updated_at.desc(), Resource.id)
+        # People includes derived Google identities, so paginate its final list.
+        derived_people = kind == "access" and settings().sso_required
+        if limit is not None and not derived_people:
+            paged = paged.offset(offset).limit(limit)
+        rows = db.scalars(paged).all()
+        output = [public_resource(r) for r in rows]
         if kind == "access" and settings().sso_required:
-            return [public_resource(r) for r in rows if r.data["subject"] == "repo"] + people(db, rows)
+            output = [public_resource(r) for r in rows if r.data["subject"] == "repo"] + people(db, rows)
+            if query:
+                output = [r for r in output if query.lower() in (r.get("name", "") + r.get("email", "")).lower()]
+            total = len(output)
+            if limit is not None:
+                output = output[offset:offset + limit]
         if kind == "agents":
             agent_id = Job.config["agent_id"].as_string()
             counts = dict(db.execute(select(agent_id, func.count(func.distinct(Run.id)))
@@ -368,27 +398,55 @@ def list_resources(kind: str):
                                  Job.status != "superseded", Run.snapshot["reply"].as_string().is_(None))
                           .group_by(agent_id)).all())
             output = [{**public_resource(r), "usage_count": counts.get(r.id, 0)} for r in rows]
-            return sorted(output, key=lambda r: (-r["usage_count"], r["name"].lower(), r["id"]))
-        return [public_resource(r) for r in rows]
+            output = sorted(output, key=lambda r: (-r["usage_count"], r["name"].lower(), r["id"]))
+        if limit is not None:
+            return {"items": output, "total": total, "has_more": offset + len(output) < total,
+                    "next_offset": offset + len(output) if offset + len(output) < total else None}
+        return output
+
+
+@app.get("/api/resources/{kind}/{resource_id}", dependencies=[Depends(require_user)])
+def get_resource(kind: str, resource_id: str):
+    if kind not in SCHEMAS:
+        raise HTTPException(404)
+    with Session() as db:
+        row = db.get(Resource, resource_id)
+        if not row and kind == "access" and settings().sso_required:
+            grants = db.scalars(select(Resource).where(Resource.kind == "access")).all()
+            person = next((p for p in people(db, grants) if p["id"] == resource_id), None)
+            if person:
+                return person
+        if not row or row.kind != kind:
+            raise HTTPException(404, "Resource not found. List resources to find its current ID.")
+        return public_resource(row)
 
 
 @app.post("/api/resources/{kind}", dependencies=[Depends(require_user)])
 @app.put("/api/resources/{kind}/{resource_id}", dependencies=[Depends(require_user)])
-async def save_resource(kind: str, request: Request, resource_id: str | None = None):
+@app.patch("/api/resources/{kind}/{resource_id}", dependencies=[Depends(require_user)])
+async def save_resource(kind: str, request: Request, resource_id: str | None = None, expected_updated_at: float | None = None):
     if kind not in SCHEMAS:
         raise HTTPException(404)
     from pydantic import ValidationError
 
-    try:
-        data = SCHEMAS[kind].model_validate(await request.json()).model_dump()
-    except ValidationError as exc:
-        raise HTTPException(
-            422, "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
-        ) from None
+    incoming = await request.json()
+    if not isinstance(incoming, dict):
+        raise HTTPException(422, "Provide a JSON object.")
     with Session() as db:
         row = db.get(Resource, resource_id, with_for_update=True) if resource_id else None
         if resource_id and (not row or row.kind != kind):
             raise HTTPException(404)
+        if row and expected_updated_at is not None and row.updated_at != expected_updated_at:
+            raise HTTPException(409, "This resource changed. Read it again before updating.")
+        if request.method == "PATCH":
+            unknown = set(incoming) - SCHEMAS[kind].model_fields.keys()
+            if unknown:
+                raise HTTPException(422, "Unknown fields: " + ", ".join(sorted(unknown)))
+            incoming = {**row.data, **incoming}
+        try:
+            data = SCHEMAS[kind].model_validate(incoming).model_dump()
+        except ValidationError as exc:
+            raise HTTPException(422, "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())) from None
         rid = resource_id or uid()
         if kind == "access":
             # Bind restrictions to the Google person, not their mutable GitHub login.
@@ -498,7 +556,7 @@ def delete_resource(kind: str, resource_id: str):
             if other.kind == "groups" and (any(m["agent_id"] == resource_id for m in other.data["members"])):
                 raise HTTPException(409, f'Remove this item from group "{other.data["name"]}" first.')
         active = db.scalar(
-            select(func.count()).select_from(Job).where(Job.status.in_(["waiting", "queued", "starting", "running"]))
+            select(func.count()).select_from(Job).where(Job.status.in_(["waiting", "queued", "blocked", "starting", "running", "cancelling"]))
         )
         if active and kind in ("connections", "repos"):
             raise HTTPException(
@@ -764,7 +822,7 @@ def reset_github(request: Request):
                 select(Job.id)
                 .join(Run, Job.run_id == Run.id)
                 .where(
-                    Job.status.in_(["waiting", "queued", "starting", "running"]),
+                    Job.status.in_(["waiting", "queued", "blocked", "starting", "running", "cancelling"]),
                     Run.snapshot["harness_check"].as_boolean().is_not(True),
                 )
                 .limit(1)
@@ -1023,16 +1081,29 @@ def spend_dashboard():
 
 
 @app.get("/api/runs")
-def runs(user=Depends(require_user)):
+def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: int = 0, limit: int | None = None):
     from . import spend
     with Session() as db:
-        rows = db.scalars(select(Run)
-            .where(Run.snapshot["harness_check"].as_boolean().is_not(True))
-            .order_by(Run.created_at.desc())).all()
+        stmt = select(Run).where(Run.snapshot["harness_check"].as_boolean().is_not(True))
+        if repo:
+            stmt = stmt.where(func.lower(Run.repo) == repo.lower())
+        if status:
+            stmt = stmt.where(Run.status == status)
+        if offset < 0 or (limit is not None and not 1 <= limit <= 100):
+            raise HTTPException(422, "Use a nonnegative offset and a limit between 1 and 100.")
+        total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+        stmt = stmt.order_by(Run.created_at.desc(), Run.id)
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
+        rows = db.scalars(stmt).all()
+        output = [run_public(r) for r in rows]
         if is_admin(user):
             costs = spend.run_costs(db, rows)
-            return [{**run_public(r), "spend": costs[r.id]} for r in rows]
-        return [run_public(r) for r in rows]
+            output = [{**run_public(r), "spend": costs[r.id]} for r in rows]
+        if limit is not None:
+            return {"items": output, "total": total, "has_more": offset + len(output) < total,
+                    "next_offset": offset + len(output) if offset + len(output) < total else None}
+        return output
 
 
 @app.get("/api/runs/{run_id}")
@@ -1306,6 +1377,8 @@ async def finish(job_id: str, request: Request):
         run = db.get(Run, job.run_id)
         if run.snapshot.get("reply") and result["status"] == "completed" and not result.get("rebuttal"):
             raise HTTPException(422, "A thread follow-up must submit its rebuttal verdict, reason and evidence.")
+        from .review_rules import enforce_checks
+        enforce_checks(job.config, result)
         minimum = job.config.get("minimum_review_seconds", 0)
         if job.config.get("fusion"):
             result["limitations"] = list(dict.fromkeys(

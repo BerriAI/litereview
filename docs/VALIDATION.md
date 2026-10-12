@@ -14,6 +14,24 @@ Regression tests cover simultaneous manual/automatic requests, latest-request qu
 
 The review-scope editor, waiting state, withdrawn findings, session history, and separate comparison costs were checked in an isolated local browser preview. The run layout was also checked at 390px width. These checks used synthetic data with review workers disabled. Provider and GitHub calls in the regression tests are mocked; actual rebuttal judgment, live thread resolution, and incremental-review quality still need an opt-in deployment check. No paid review is required to run the suite.
 
+## Management MCP
+
+`tests/test_mcp_server.py` exercises the real MCP handlers and shared API through ASGI: OAuth discovery, Google handoff, consent binding, PKCE, one-use codes, redirect/client/resource binding, refresh rotation and replay, revocation, current roles, context discovery, rule edits, partial updates, pagination, artifacts and delegated review requests. GitHub calls in review-request tests are mocked.
+
+`tests/test_mcp_sdk.py` starts a disposable server on loopback and connects through the official Python MCP client over HTTP. It exercises dynamic registration, consent, token exchange, initialization, tools/resources/prompts, token refresh, and rule editing. Only the Google identity is seeded; it does not authenticate with Google or Claude. It also verifies the answer key for the ten read-only questions in [MCP_EVAL.xml](MCP_EVAL.xml). This is an evaluation fixture, not a claim that an LLM answered the questions.
+
+For local browser checks or MCP Inspector, run:
+
+```sh
+uv run python -m scripts.mcp_fixture
+```
+
+Open `http://127.0.0.1:8769/__fixture/login` to use the synthetic admin, then connect a client to `http://127.0.0.1:8769/api/mcp`. The temporary database, fake identity and unavailable model connection are isolated from production. Workers are disabled and no external credentials are loaded. Stop the process to remove its database. The fixture-only login route is not part of the application or Docker image.
+
+Before sharing the production connector, verify a real Claude → Google → LiteReview round trip on the deployed version. Local evidence does not establish provider redirect compatibility or the deployed proxy's behavior.
+
+The local October 12, 2026 checks passed 520 tests with one PostgreSQL-only test skipped, Ruff, and the TypeScript/Vite build. MCP Inspector's strict tools/schema check accepted all 41 tools. Browser checks covered adding, disabling, saving and deleting a rule, reload persistence, keyboard scope selection, the 390px Settings layout, consent, and client disconnection, using only the disposable fixture.
+
 ## Codex runtime validation
 
 LiteReview runs Codex 0.158.0, pinned in `runner/catalog.py`. Automated tests exercise large Unicode review contexts, process startup, instruction preservation, same-session continuation, saved-reviewer migration, and incompatible connection recovery. The full review context stays on disk so neither operating-system argument limits nor Codex's initial input limit truncate a PR.

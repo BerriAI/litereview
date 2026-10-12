@@ -1,0 +1,43 @@
+<evaluation>
+  <!-- Use scripts.mcp_fixture's initial workspace. Read-only questions; no model calls required. -->
+  <qa_pair>
+    <question>Which saved direct agent can an external human request on example/widget, and which review scope does it use? Check the agent and repository grant. Answer command,scope using the API scope value.</question>
+    <answer>oss-review,incremental</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>For oss-review, which saved base skill stays attached when its end-to-end requirement is disabled, and what is that requirement's stable rule ID? Answer skill-name,rule-id.</question>
+    <answer>code-review,e2e</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Read code-review's configuration and the scope guide. What scope is saved, and does its independent full comparison publish to GitHub? Answer API-scope,yes-or-no.</question>
+    <answer>compare,no</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Inspect ship-review and example/widget's permissions. How many instances would the group request, and is this group allowed on that repository? Answer count,yes-or-no.</question>
+    <answer>2,no</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Find example/widget's automatic review rule and resolve its target ID to a command name. Answer command,event using the saved event value.</question>
+    <answer>code-review,opened</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Read oss-review's model and connection, then check the model compatibility guide. Answer model-id,connection-type,required-API-family.</question>
+    <answer>fixture-cheap-model,gateway,Responses</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Read oss-review's enabled required rule and the rule guide. If a completed worker omits that rule's check, which check status is added and is the review complete? Answer status,yes-or-no.</question>
+    <answer>not_run,no</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Read oss-review and the permissions guide. Can a GitHub commenter who is not a workspace member use this agent's open access to manage agents through the remote MCP? Answer yes or no.</question>
+    <answer>no</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Use workspace discovery and the agent schema to identify the current account's admin status and the default for newly created agents' trigger_access. Answer yes-or-no,default-value.</question>
+    <answer>yes,workspace</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Read oss-review's scope and the rerun guide. If there is no compatible successful baseline, does it review the full diff, and does a repeated request while the same commit is active launch another worker? Answer yes-or-no,yes-or-no.</question>
+    <answer>yes,no</answer>
+  </qa_pair>
+</evaluation>

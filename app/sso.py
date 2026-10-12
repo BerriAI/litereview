@@ -31,6 +31,8 @@ def return_path(value):
     path = (value or "").split("?", 1)[0]
     if re.fullmatch(r"/runs/[a-f0-9]{32}", path):
         return path
+    if re.fullmatch(r"/api/mcp/authorize/[A-Za-z0-9_-]{43}", path):
+        return path
     return (
         path
         if path

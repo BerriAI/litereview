@@ -3,7 +3,7 @@
 from sqlalchemy import select
 
 from . import github, review_sessions, reviews
-from .access import caller_grant, caller_permits, permits
+from .access import allows_anyone, caller_grant, caller_permits, permits
 from .db import Job, Resource, ReviewFinding, ReviewPublication, Run, Session, uid
 from .settings import settings
 
@@ -67,26 +67,28 @@ async def accept(payload, delivery):
                            and r.data["name"].lower() == repo.lower()), None)
         if not repository or installation != repository.data["installation_id"] or installation != original_run.installation:
             return None
-    identity = None
-    if settings().sso_required:
-        from .sso import caller_identity
-        identity = caller_identity(actor)
-        if not identity:
-            return None
     target = resources.get(original.config.get("target_id"))
     if not original.config.get("target_id"):
         target = (resources.get(original.config["agent_id"]) if original.config.get("target_kind") == "agent"
                   else next((r for r in resources.values() if r.kind == "groups"
                              and r.data["name"] == original.config.get("group")), None))
+    identity = None
+    if not allows_anyone(target) and settings().sso_required:
+        from .sso import caller_identity
+        identity = caller_identity(actor)
+        if not identity:
+            return None
     grant = caller_grant(resources.values(), actor["login"], identity.sub if identity else None)
     repo_grant = next((r for r in resources.values() if r.kind == "access"
                        and r.data["subject"] == "repo" and r.data["name"].lower() == repo.lower()), None)
-    if not target or not caller_permits(grant, target.id) or not permits(repo_grant, target.id):
+    if (not target or not permits(repo_grant, target.id)
+            or not (allows_anyone(target) or caller_permits(grant, target.id))):
         return None
     if target.kind == "groups" and not any(m["agent_id"] == original.config["agent_id"]
                                            for m in target.data["members"]):
         return None
-    if await github.permission(repo, installation, actor["login"]) not in ("read", "triage", "write", "maintain", "admin"):
+    if (not allows_anyone(target)
+            and await github.permission(repo, installation, actor["login"]) not in ("read", "triage", "write", "maintain", "admin")):
         return None
     pr = (await github.repo_request(repo, installation, "GET", f"pulls/{number}")).json()
     if pr["state"] != "open":

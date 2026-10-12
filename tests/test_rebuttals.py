@@ -298,6 +298,32 @@ async def test_removed_group_access_cannot_trigger_followup(publication):
     assert await rebuttals.accept(reply_payload(fake, root), "denied") is None
 
 
+@pytest.mark.parametrize("restriction", [None, "workspace", "repo", "group"])
+async def test_external_replies_follow_current_agent_access(publication, monkeypatch, restriction):
+    from unittest.mock import AsyncMock
+
+    from test_sso import enable
+
+    fake = publication
+    root = await original_finding(fake)
+    with Session.begin() as db:
+        finding = db.scalar(select(ReviewFinding).where(ReviewFinding.comment_id == root))
+        job = db.get(Job, finding.job_id)
+        agent = db.get(Resource, job.config["agent_id"])
+        agent.data = {**agent.data, "trigger_access": "workspace" if restriction == "workspace" else "anyone"}
+        if restriction != "group":
+            job.config = {**job.config, "target_kind": "agent", "target_id": agent.id}
+        if restriction == "repo":
+            for row in db.scalars(select(Resource).where(Resource.kind == "access")):
+                if row.data["subject"] == "repo":
+                    row.data = {**row.data, "scope": "selected", "target_ids": []}
+    enable(monkeypatch)
+    monkeypatch.setattr(github, "permission", AsyncMock(return_value="none"))
+    result = await rebuttals.accept(reply_payload(fake, root, login="outsider", id=99), "outside-reply")
+    assert bool(result) == (restriction is None)
+    github.permission.assert_not_awaited()
+
+
 @pytest.mark.parametrize("changed", [False, True])
 async def test_resolve_uses_correct_thread_and_rechecks_head(monkeypatch, changed):
     from unittest.mock import AsyncMock

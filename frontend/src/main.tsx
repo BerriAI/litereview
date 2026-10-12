@@ -38,6 +38,8 @@ import { Documentation } from "./docs";
 import { MCPAuthFields, MCPServers, People } from "./resources";
 import { MCPToolSelector } from "./mcp-tool-selector";
 import { ReviewResult } from "./review-result";
+import { ReviewRules, ReviewScope } from "./review-settings";
+import { MCPConnect } from "./mcp-connect";
 import { AgentModels, FusionResults } from "./fusion";
 import { RunCost, SpendPage } from "./spend";
 import { AgentFromPrompt, AgentGenerationSettings } from "./agent-generation";
@@ -98,10 +100,10 @@ const titles = {
 const descriptions = {
   repos: "Choose where LiteReview can run.",
   access:
-    "Choose which agents and groups people and repositories can use. Both must have access to start a review.",
+    "Choose which workspace reviewers people can use. Agents open to anyone also accept requests from outside the workspace.",
   agents: "Create reusable reviewers with their own model, tools, and skills.",
   groups: "Optional shortcuts for running several agents together.",
-  connections: "Model generation and GitHub App settings for this workspace.",
+  connections: "AI assistant connections, agent creation, and GitHub App settings.",
   mcp: "Connect your tools, then choose which ones each agent can use.",
   models: "Model providers and gateways available to your agents.",
   skills: "Reusable instructions and files for your agents.",
@@ -434,6 +436,7 @@ function App() {
       agents: {
         name: "",
         harness: "codex",
+        trigger_access: "workspace",
         minimum_minutes: 0,
         maximum_minutes: null,
         max_model_calls: null,
@@ -1040,6 +1043,7 @@ function App() {
             )}
           {active === "connections" && (
             <>
+              {tab === "github" && <MCPConnect />}
               {tab === "github" && (
                 <AgentGenerationSettings connections={store.connections.filter(c => c.type !== "mcp")}
                   onModels={() => navigate("/models")} />
@@ -1504,7 +1508,7 @@ function App() {
                               {active === "groups" || active === "skills"
                                 ? row.description
                                 : active === "agents"
-                                  ? `${row.skill_ids.length} ${row.skill_ids.length === 1 ? "skill" : "skills"} · ${row.mcps.length} MCP ${row.mcps.length === 1 ? "connection" : "connections"}`
+                                  ? `${row.skill_ids.length} ${row.skill_ids.length === 1 ? "skill" : "skills"} · ${row.mcps.length} MCP ${row.mcps.length === 1 ? "connection" : "connections"}${row.trigger_access === "anyone" ? " · Anyone can trigger" : ""}`
                                   : active === "runs"
                                     ? `${row.head.slice(0, 12)}${row.trigger?.type === "automatic" ? ` · Automatic: ${reviewEvents[row.trigger.event] || row.trigger.event}` : ""}`
                                     : ""}
@@ -2039,6 +2043,18 @@ function App() {
                       </p>
                     )}
                   </FormSection>
+                  <FormSection title="Who can trigger this agent" description="Choose whether external PR contributors can request this reviewer.">
+                    <Field label="Trigger access">
+                      <select value={editor.data.trigger_access || "workspace"} onChange={(e) => update("trigger_access", e.target.value)}>
+                        <option value="workspace">Workspace members</option>
+                        <option value="anyone">Anyone who can comment on the PR</option>
+                      </select>
+                      <small>{editor.data.trigger_access === "anyone"
+                        ? "External contributors can request this agent and discuss its findings without signing in to LiteReview. Your workspace pays for each run using this agent’s saved model and limits."
+                        : "Callers need access in People and GitHub access to the repository."}</small>
+                      <small>Repository review permissions still apply. Groups keep their own access rules.</small>
+                    </Field>
+                  </FormSection>
                   <FormSection
                     title="Review instructions"
                     description="These instructions define the agent’s task, scope, workflow, and voice. Attached skills support them."
@@ -2051,14 +2067,7 @@ function App() {
                         required
                       />
                     </Field>
-                    <Field label="Review scope">
-                      <select value={editor.data.review_mode || "full"} onChange={(e) => update("review_mode", e.target.value)}>
-                        <option value="full">Full PR</option>
-                        <option value="incremental">Changes since last successful review</option>
-                        <option value="compare">Incremental + private full-review comparison</option>
-                      </select>
-                      <small>The first review is full. Reruns can focus on new changes while retaining finding history. Comparison runs both modes and uses additional model and sandbox credits.</small>
-                    </Field>
+                    <ReviewScope value={editor.data.review_mode || "full"} onChange={value => update("review_mode", value)} />
                     <MinimumReviewTime
                       value={editor.data.minimum_minutes || 0}
                       onChange={(value) => update("minimum_minutes", value)}
@@ -2069,6 +2078,12 @@ function App() {
                       minimumMinutes={editor.data.minimum_minutes || 0}
                       onChange={update}
                     />
+                  </FormSection>
+                  <FormSection
+                    title="Review rules"
+                    description="Add, edit, disable, or delete requirements without rewriting the base instructions or attached skills."
+                  >
+                    <ReviewRules rules={editor.data.rules || []} onChange={value => update("rules", value)} />
                   </FormSection>
                   <FormSection
                     title="Tools & environment"

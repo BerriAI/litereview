@@ -202,6 +202,45 @@ class MCPOAuth(Base):
     secret: Mapped[str] = mapped_column(Text, default="")
 
 
+class MCPClient(Base):
+    __tablename__ = "mcp_clients"
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON)
+    secret: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[float] = mapped_column(Float, default=time.time)
+
+
+class MCPAuthorization(Base):
+    __tablename__ = "mcp_authorizations"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    client_id: Mapped[str] = mapped_column(String(100), index=True)
+    data: Mapped[dict] = mapped_column(JSON)
+    expires_at: Mapped[float] = mapped_column(Float, index=True)
+
+
+class MCPGrant(Base):
+    __tablename__ = "mcp_grants"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=uid)
+    identity_sub: Mapped[str] = mapped_column(String(255), index=True)
+    client_id: Mapped[str] = mapped_column(String(100), index=True)
+    scopes: Mapped[list] = mapped_column(JSON)
+    resource: Mapped[str] = mapped_column(Text)
+    audience: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[float] = mapped_column(Float, default=time.time)
+    expires_at: Mapped[float] = mapped_column(Float)
+    revoked: Mapped[bool] = mapped_column(default=False)
+
+
+class MCPToken(Base):
+    __tablename__ = "mcp_tokens"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    grant_id: Mapped[str] = mapped_column(String(40), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    expires_at: Mapped[float] = mapped_column(Float)
+    used: Mapped[bool] = mapped_column(default=False)
+
+
 url = settings().database_url
 if url.startswith("postgres://"):
     url = url.replace("postgres://", "postgresql+psycopg://", 1)

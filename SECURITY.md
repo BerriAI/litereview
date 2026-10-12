@@ -16,7 +16,11 @@ Use Google Workspace SSO for a hosted team deployment, restrict `GOOGLE_ALLOWED_
 
 Each Google browser session has its own expiry and revocable token. **Sign out** revokes the current browser session; other browsers remain signed in until they sign out or reach `SSO_SESSION_SECONDS` (12 hours by default).
 
+The remote management MCP delegates Google login to that same SSO flow, then asks for consent to the MCP client's access with the user's current workspace permissions. Google tokens are not passed to clients. MCP access tokens are opaque, hashed at rest, expire after one hour, and are bound to the deployment's `/api/mcp` resource. Refresh tokens rotate; replay revokes the grant. Grants expire after 30 days and can be revoked in **Settings → Connect an AI assistant**. Browser sign-out does not revoke them. Every request checks the saved identity's domain, audience, grant and current role. Google account suspension is not polled; revoke existing connections explicitly during offboarding. Client names and callbacks on the consent screen are supplied by the requesting client, not verified endorsements.
+
 Google sign-out and browser-session expiry do not revoke linked GitHub review access. Suspending a Google account does not automatically revoke that link. To offboard a reviewer, use **People → Edit access** and leave the selection empty, or unlink their GitHub identity. GitHub repository permissions and configured review grants are checked for review requests.
+
+An agent explicitly set to **Anyone who can comment on the PR** permits direct invocation and finding replies by external human commenters without workspace membership. Repository review grants still apply; groups keep their caller restrictions. This exposes paid review invocation, not the dashboard or management MCP. People restrictions do not block access to these open agents; change the agent's trigger policy or repository grant to disable it.
 
 ## Untrusted code and data
 

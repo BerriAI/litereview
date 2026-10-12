@@ -37,6 +37,10 @@ def unsign(value, age=86400):
 
 
 def require_user(request: Request):
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        from .mcp_auth import bearer_user
+        return bearer_user(authorization[7:])
     if settings().sso_required:
         from .sso import current_user
 

@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from runner.catalog import HARNESS_VERSIONS, review_capabilities, validate_connection
 
 from . import fusion, github, review_defaults, review_sessions
-from .access import caller_grant, caller_permits, permits
+from .access import allows_anyone, caller_grant, caller_permits, permits
 from .db import Job, Resource, Run, Session, uid
 from .limits import job_timeout, timing_limits
 from .security import digest
@@ -232,11 +232,20 @@ async def accept(payload, delivery):
     repos = [r for r in resources.values() if r.kind == "repos" and r.data["name"].lower() == repo.lower()]
     if not repos or repos[0].data["installation_id"] != installation:
         return None
-    perm = await github.permission(repo, installation, actor)
-    if perm not in ("read", "triage", "write", "maintain", "admin"):
-        return None
+    targets = {r.data["name"].lower(): r for r in resources.values() if r.kind in ("agents", "groups")}
+    try:
+        requests = command_requests(body, targets)
+    except ValueError as exc:
+        return reject_command(delivery, repo, pr, actor, installation, str(exc))
+    requested_targets = [review_defaults.selected(resources) if not r["name"] else targets.get(r["name"])
+                         for r in requests]
+    restricted = any(not allows_anyone(target) for target in requested_targets)
+    if restricted:
+        perm = await github.permission(repo, installation, actor)
+        if perm not in ("read", "triage", "write", "maintain", "admin"):
+            return None
     identity = None
-    if settings().sso_required:
+    if restricted and settings().sso_required:
         from .sso import caller_identity
 
         identity = caller_identity(comment_data.get("user", {}))
@@ -251,25 +260,19 @@ async def accept(payload, delivery):
                 "once before requesting a review. Your linked GitHub account can then request reviews "
                 "without signing in again.",
             )
-    targets = {r.data["name"].lower(): r for r in resources.values() if r.kind in ("agents", "groups")}
-    try:
-        requests = command_requests(body, targets)
-    except ValueError as exc:
-        return reject_command(delivery, repo, pr, actor, installation, str(exc))
     grants = {(r.data["subject"], r.data["name"]): r for r in resources.values() if r.kind == "access"}
     caller_access = caller_grant(resources.values(), actor, identity.sub if identity else None)
     repo_access = grants.get(("repo", repo.lower()))
     selected, selected_ids = [], set()
-    for selection in requests:
-        name = selection["name"]
-        target = review_defaults.selected(resources) if not name else targets.get(name)
-        if not name and not target:
+    for target in requested_targets:
+        if not target:
             return reject_command(
                 delivery, repo, pr, actor, installation,
                 "Choose a default reviewer in LiteReview → PR agents, then comment @litereview again.",
             )
         group = target.data.copy() if target else None
-        allowed = target and caller_permits(caller_access, target.id) and permits(repo_access, target.id)
+        allowed = permits(repo_access, target.id) and (
+            allows_anyone(target) or caller_permits(caller_access, target.id))
         if not allowed:
             # Generic rejection avoids exposing group membership to unauthorized readers.
             return reject_command(
@@ -406,7 +409,8 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
         icon = (("⚠️ " if incomplete else "✅ ") if job.status in TERMINAL else "👀 ") if agent_comment else ""
         lines += [f"### {icon}{label}", ""]
         if job.status not in TERMINAL:
-            lines += ["Waiting for this agent’s active review to finish." if job.status == "blocked"
+            lines += ["Stopping this review for a newer commit." if job.status == "cancelling"
+                      else "Waiting for this agent’s current work." if job.status == "blocked"
                       else "Review in progress.", ""]
             continue
         result = job.result
@@ -414,7 +418,9 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
             lines += [f"Scope: {c['review_scope']} · {c.get('scope_reason', '')}", ""]
         incomplete = job.status != "completed" or result.get("limitations")
         visible, notes = [], []
-        if incomplete:
+        if job.status == "superseded":
+            visible += ["**Review superseded.**", ""]
+        elif incomplete:
             visible += ["**Review incomplete.**", ""]
         elif any(check["status"] == "not_run" for check in result.get("checks", [])):
             visible += ["**Completed · Some checks not run.**", ""]
@@ -512,9 +518,10 @@ async def publish(run_id):
 
 
 async def dispatcher():
-    from .runtime import launch, terminate, watch_existing
+    from .runtime import cancel_review, launch, terminate, watch_existing
 
     launching = {}
+    stopping = {}
     while True:
         try:
             from . import rebuttals
@@ -524,6 +531,12 @@ async def dispatcher():
             with Session() as db:
                 fusion.advance(db)
                 db.commit()
+                for job in db.scalars(select(Job).where(Job.status == "cancelling")):
+                    # An in-flight create must save its sandbox ID before we can
+                    # confirm termination. After restart, recover it by name.
+                    creating = job.id in launching and not launching[job.id].done()
+                    if job.id not in stopping and (job.sandbox_id or not creating):
+                        stopping[job.id] = asyncio.create_task(cancel_review(job.id))
                 active = db.scalars(select(Job).where(Job.status.in_(["starting", "running"]))).all()
                 for job in active:
                     timeout = job_timeout(job.config)
@@ -551,7 +564,7 @@ async def dispatcher():
                 )
                 if settings().concurrency:
                     count = db.scalar(
-                        select(func.count()).select_from(Job).where(Job.status.in_(["starting", "running"]))
+                        select(func.count()).select_from(Job).where(Job.status.in_(["starting", "running", "cancelling"]))
                     )
                     queued = queued.limit(max(0, settings().concurrency - count))
                 pending = db.scalars(queued).all()
@@ -578,10 +591,11 @@ async def dispatcher():
                             else "GitHub publishing failed; will retry."
                         )
                         db.commit()
-            for job_id, task in list(launching.items()):
-                if task.done():
-                    del launching[job_id]
-                    task.result()
+            for tasks in (launching, stopping):
+                for job_id, task in list(tasks.items()):
+                    if task.done():
+                        del tasks[job_id]
+                        task.result()
         except asyncio.CancelledError:
             raise
         except Exception:

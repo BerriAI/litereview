@@ -112,6 +112,7 @@ def enqueue(db, run, configurations):
                 existing_jobs = jobs_for(db, session, existing_id) if existing else []
                 if (existing and not existing.snapshot.get("reply") and existing.head == run.head
                         and existing.base == run.base and existing_jobs
+                        and not any(j.status == "cancelling" for j in existing_jobs)
                         and existing_jobs[0].config.get("review_fingerprint", signature) == signature):
                     notices.append({"name": configs[0]["name"], "run_id": existing.id,
                                     "head": existing.head, "message": "Already requested"})
@@ -128,6 +129,15 @@ def enqueue(db, run, configurations):
                 notices.append({"name": configs[0]["name"], "run_id": newer.id,
                                 "head": newer.head, "message": "Newer request already queued"})
                 continue
+            if active and not active.snapshot.get("reply") and active.head != run.head:
+                for job in jobs_for(db, session, active.id):
+                    if job.status in TERMINAL:
+                        continue
+                    stopping = job.status in ("starting", "running", "cancelling")
+                    job.status = "cancelling" if stopping else "superseded"
+                    job.finished_at = None if stopping else time.time()
+                    job.result = {"summary": f"Replaced by a requested review of newer commit `{run.head[:12]}`.",
+                                  "findings": [], "limitations": []}
             if session.active_run_id and session.pending_run_id:
                 for job in jobs_for(db, session, session.pending_run_id):
                     if job.status == "blocked":
@@ -211,7 +221,7 @@ async def prepare_session(repo, pr, key):
             return
         jobs = jobs_for(db, session, run.id)
         for job in jobs:
-            if job.config.get("session_prepared"):
+            if job.status not in ("queued", "waiting") or job.config.get("session_prepared"):
                 continue
             job.config = {**job.config, "session_prepared": True, "review_diff": diff,
                           "review_scope": scope, "review_from": start, "scope_reason": reason,
