@@ -3,10 +3,12 @@
 Choose what your reviewers investigate and which tools they can use. For your first review, use the default instructions and a single model in the [deployment guide](DEPLOYMENT.md#get-your-first-review). Customize the reviewer after that works.
 
 - [Review instructions](#review-instructions)
+- [Editable rules](#editable-rules)
 - [Review sessions and reruns](#review-sessions-and-reruns)
 - [Models and runtime](#codex-runtime)
 - [Capabilities and groups](#capabilities)
 - [MCP tools](#connect-mcp-tools)
+- [Configure from Claude or another assistant](MCP.md)
 - [Read review results](#read-review-results)
 
 ## Review instructions
@@ -35,17 +37,23 @@ Every instance uses its reviewer's saved minimum, including when called through 
 
 The harness checks a monotonic clock, asks the agent to keep investigating and verifying, and rejects early completion. The API independently checks elapsed time. Codex continues the same thread if it returns before the minimum without submitting. This does not invoke the interactive `/goal` slash command. Runs have no LiteReview time or model-call limit by default. To set one, expand **Optional limits** in the agent editor and enter **Maximum run time (minutes)**, **Maximum model calls**, or both. Leave a field blank to remove its limit. Maximum run time includes setup and must exceed the minimum; a minimum never creates a maximum. Groups use each agent’s saved limits, and accepted jobs keep their snapshots. Provider failures and reached limits produce an incomplete review, never a successful early completion. [Modal imposes a 24-hour sandbox lifetime](https://modal.com/docs/guide/sandboxes#timeouts); LiteReview uses that full lifetime when no maximum is selected. Runs do not yet resume across sandbox replacements. Existing MCP selections, skills, visual tools, models, and instructions are preserved.
 
+## Editable rules
+
+Open **PR agents → reviewer → Review rules** and choose **Add rule**. Give it a name and instructions, then **Save agent**. Rules supplement the base instructions and attached skills. For example, keep the code-review skill attached and add a separate rule requiring inspectable evidence of a real end-to-end run with no mocked dependencies.
+
+Edit, disable, or delete rules independently. Every enabled rule appears under Checks. A skipped or omitted **Required verification** rule makes the review incomplete; an executed check that fails remains evidence of a failure. Saved changes affect future reviews. Accepted reviews keep their original configuration. Existing prompts are not split into rules automatically.
+
 ## Review sessions and reruns
 
 Each repository, PR, and agent has a persistent review session. **Runs → agent → Review history for this agent and PR** links its reviews and thread follow-ups. Accepted runs keep their original configuration and commit; finding decisions persist across reruns and service restarts.
 
-Repeating a request for the same agent, commit, and configuration while it is queued or running links to the existing review and starts no additional work. Different agents can still run in parallel. If new commits are requested while an agent is busy, one pending review retains the latest requested commit. Older pending work is marked superseded. Manual comments and automatic rules share this protection. Intentional group instances and fusion branches remain part of the original review.
+Repeating a request for the same agent, commit, and configuration while it is queued or running links to the existing review and starts no additional work. Requesting a newer commit stops that agent's outdated review, including its group instances and fusion or comparison workers. The latest requested review starts after the old workers have stopped; further requests replace pending work. Superseded reviews remain in history and do not become incremental baselines. Different agents can still run in parallel. Manual comments and automatic rules share this protection. Finding-thread replies remain queued individually.
 
 Under **PR agents → reviewer → Review instructions → Review scope**, choose:
 
 - **Full PR**: review the full PR each time. This is the default.
-- **Changes since last successful review**: after the first full review, inspect new changes and their effects in the current checkout, with earlier finding decisions supplied as context. Failed or incomplete reviews do not advance the baseline. Changed reviewer configuration, a changed base, or rewritten history falls back to a full review.
-- **Incremental + private full-review comparison**: run an incremental review and an independent full review on the same commit. Only the primary review posts to GitHub. Expand **Private full-review comparison** in Runs to compare findings and false positives. Admins see separate costs; both contribute to total spend. This option uses additional model and sandbox credits. The initial full review does not need a comparison.
+- **New changes**: after the first full review, inspect new changes and their effects in the current checkout, with earlier finding decisions supplied as context. Failed or incomplete reviews do not advance the baseline. Changed reviewer configuration, a changed base, or rewritten history falls back to a full review.
+- **Compare both**: run an incremental review and an independent full review on the same commit. Only the primary review posts to GitHub. Expand **Private full-review comparison** in Runs to compare findings and false positives. Admins see separate costs; both contribute to total spend. This option uses additional model and sandbox credits. The initial full review does not need a comparison.
 
 Change the scope back to **Full PR** to request a complete review. An explicit rerun on an unchanged commit also uses the full diff. Incremental results identify the reviewed commit range; they do not claim to recheck the whole PR.
 
@@ -96,7 +104,9 @@ Running sandboxes and review history retain their original configuration. A queu
 - **MCP**: reusable remote Streamable HTTP connections with per-agent tool selection.
 - **Skills**: Markdown or ZIP with `SKILL.md` and supporting files. Attach the same skill to several agents. Skills do not grant tools.
 
-Agent and group command names share one case-insensitive unique namespace. **People** and each repository’s **Review permissions** control invocation centrally. With SSO enabled, membership comes from approved Google sign-ins and verified GitHub links. People defaults to all current/future agents and groups. **Edit access** can limit a person to specific selections; an empty selection blocks reviews. **Reset access** restores the default. Repository permissions and any person restriction must allow every name in the command, and the caller must also have GitHub repository access. Without SSO, People remains a manual allowlist. Group grants permit running the group’s members through that group. Connected repositories start with All access. Restrictions follow the Google identity across GitHub renames and relinks, and persist across restarts. Linked users remain connected in People after their browser sessions expire. People shows when Google sign-in or GitHub linking is still needed; a saved grant never establishes membership by itself. Groups are optional references to shared agents. Instance counts belong to group membership. Selecting the same name twice deduplicates it; selecting two groups that share an agent runs each membership independently. Calling an agent directly and through a group runs both selections independently. Accepted runs snapshot their configuration and commit SHA.
+Agent and group command names share one case-insensitive unique namespace. For agents using **Workspace members** and for all groups, **People** and each repository’s **Review permissions** control invocation centrally. With SSO enabled, membership comes from approved Google sign-ins and verified GitHub links. People defaults to all current/future agents and groups. **Edit access** can limit a person to specific selections; an empty selection blocks restricted reviewers. **Reset access** restores the default. Repository permissions and any person restriction must allow every name in the command, and the caller must also have GitHub repository access. Without SSO, People remains a manual allowlist. Group grants permit running the group’s members through that group. Connected repositories start with All access. Restrictions follow the Google identity across GitHub renames and relinks, and persist across restarts. Linked users remain connected in People after their browser sessions expire. People shows when Google sign-in or GitHub linking is still needed; a saved grant never establishes membership by itself. Groups are optional references to shared agents. Instance counts belong to group membership. Selecting the same name twice deduplicates it; selecting two groups that share an agent runs each membership independently. Calling an agent directly and through a group runs both selections independently. Accepted runs snapshot their configuration and commit SHA.
+
+For a direct agent intended for external contributors, set **Who can trigger this agent → Anyone who can comment on the PR** in its editor. Human commenters can then invoke that agent and discuss its findings without LiteReview membership or collaborator access. The workspace pays for these reviews. Repository permissions must still allow the agent and the GitHub App must have access. Groups retain their own caller restrictions. This setting grants no dashboard or management MCP access, and bots cannot invoke it manually. Test the real command before adding it to a repository's contributing guidance.
 
 ## Connect MCP tools
 

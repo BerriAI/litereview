@@ -5,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import modal
+from sqlalchemy import update
 
 from runner.catalog import HARNESS_VERSIONS, NPM_PACKAGES, validate_connection
 
@@ -84,11 +85,39 @@ async def terminate(sandbox_id):
         pass  # Modal's lifetime remains the cleanup backstop if its API is unavailable.
 
 
+def finish_cancellation(job_id):
+    with Session.begin() as db:
+        db.execute(update(Job).where(Job.id == job_id, Job.status == "cancelling")
+                   .values(status="superseded", finished_at=time.time()))
+
+
+async def cancel_review(job_id):
+    """Release a replacement only after Modal confirms the old worker stopped."""
+    with Session() as db:
+        job = db.get(Job, job_id)
+        if not job or job.status != "cancelling":
+            return
+        sandbox_id = job.sandbox_id
+    try:
+        sandbox = await asyncio.to_thread(
+            lambda: modal.Sandbox.from_id(sandbox_id, client=client()) if sandbox_id
+            else modal.Sandbox.from_name(settings().modal_app_name, "lr-" + job_id, client=client()))
+        await asyncio.to_thread(sandbox.terminate, wait=True)
+    except (modal.exception.NotFoundError, modal.exception.SandboxTimeoutError):
+        pass  # Modal confirms the worker is already gone.
+    finish_cancellation(job_id)
+
+
 async def launch(job_id, token):
     sandbox = None
     try:
         with Session() as db:
             job = db.get(Job, job_id)
+            if job.status == "cancelling":
+                finish_cancellation(job_id)  # No sandbox creation has started.
+                return
+            if job.status not in ("starting", "running"):
+                return
             cfg = job.config
         harness = cfg.get("harness", "builtin")
         if harness != "codex":
@@ -125,7 +154,7 @@ async def launch(job_id, token):
         )
         with Session() as db:
             job = db.get(Job, job_id)
-            if job and job.status not in ("completed", "failed", "timed_out"):
+            if job and job.status not in ("completed", "failed", "timed_out", "cancelling", "superseded"):
                 job.status = "failed"
                 job.finished_at = time.time()
                 job.result = {
@@ -146,7 +175,7 @@ async def watch(job_id, sandbox):
         await sandbox.wait.aio()
         with Session() as db:
             job = db.get(Job, job_id)
-            if job.status not in ("completed", "failed", "timed_out"):
+            if job.status not in ("completed", "failed", "timed_out", "cancelling", "superseded"):
                 job.status = "failed"
                 job.finished_at = time.time()
                 job.result = {
@@ -156,10 +185,17 @@ async def watch(job_id, sandbox):
                     "limitations": ["Check PUBLIC_URL connectivity and the Modal sandbox logs."],
                 }
                 db.commit()
+    except modal.exception.SandboxTerminatedError:
+        with Session.begin() as db:
+            job = db.get(Job, job_id)
+            if job and job.status in ("starting", "running"):
+                job.status, job.finished_at = "failed", time.time()
+                job.result = {"status": "failed", "summary": "The sandbox was stopped before submitting its review.",
+                              "findings": [], "limitations": ["The sandbox was terminated externally."]}
     except modal.exception.SandboxTimeoutError:
         with Session() as db:
             job = db.get(Job, job_id)
-            if job and job.status not in ("completed", "failed", "timed_out"):
+            if job and job.status not in ("completed", "failed", "timed_out", "cancelling", "superseded"):
                 job.status = "timed_out"
                 job.finished_at = time.time()
                 job.result = {

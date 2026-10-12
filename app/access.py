@@ -17,6 +17,11 @@ def caller_permits(grant, target_id):
     return permits(grant, target_id) if grant else settings().sso_required
 
 
+def allows_anyone(target):
+    # Groups keep their own grants; an open member never opens the whole group.
+    return bool(target and target.kind == "agents" and target.data.get("trigger_access") == "anyone")
+
+
 def caller_grant(resources, login, identity_sub=None):
     grants = [r for r in resources if r.kind == "access" and r.data["subject"] == "user"]
     if settings().sso_required and identity_sub:

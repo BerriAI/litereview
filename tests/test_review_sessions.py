@@ -57,17 +57,24 @@ async def test_latest_pending_commit_replaces_old_pending_and_recovers_after_res
     setup(owner)
     live_pr(monkeypatch)
     first = await reviews.accept(payload(), "first")
+    with Session.begin() as db:
+        for job in db.scalars(select(Job).where(Job.run_id == first)):
+            job.status = "running"
+            job.sandbox_id = "sandbox-" + job.id
     live_pr(monkeypatch, "c" * 40)
     pending = await reviews.accept(payload(comment_id=2), "second")
     live_pr(monkeypatch, "d" * 40)
     latest = await reviews.accept(payload(comment_id=3), "third")
     repeated = await reviews.accept(payload(comment_id=4), "fourth")
     with Session() as db:
-        assert all(j.status == "queued" for j in db.scalars(select(Job).where(Job.run_id == first)))
+        assert all(j.status == "cancelling" for j in db.scalars(select(Job).where(Job.run_id == first)))
         assert all(j.status == "superseded" for j in db.scalars(select(Job).where(Job.run_id == pending)))
         assert all(j.status == "blocked" for j in db.scalars(select(Job).where(Job.run_id == latest)))
         assert db.get(Run, repeated).snapshot["notices"][0]["run_id"] == latest
-    complete(first, "failed")
+    await review_sessions.prepare()
+    with Session() as db:
+        assert all(j.status == "blocked" for j in db.scalars(select(Job).where(Job.run_id == latest)))
+    complete(first, "superseded")
     init_db()
     await review_sessions.prepare()
     with Session() as db:
@@ -75,6 +82,67 @@ async def test_latest_pending_commit_replaces_old_pending_and_recovers_after_res
         assert session.active_run_id == latest and session.pending_run_id is None
         assert session.baseline_run_id is None
         assert all(j.status == "queued" and j.config["session_prepared"] for j in db.scalars(select(Job).where(Job.run_id == latest)))
+
+
+async def test_new_head_replaces_unstarted_work_without_affecting_other_agents(owner, monkeypatch):
+    _, _, agent, _, _ = setup(owner)
+    create(owner, "agents", **{**agent, "name": "other"})
+    live_pr(monkeypatch)
+    first = await reviews.accept(payload(body="@litereview reviewer other"), "first")
+    live_pr(monkeypatch, "c" * 40)
+    latest = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "new-head")
+    await review_sessions.prepare()
+    with Session() as db:
+        old = db.scalars(select(Job).where(Job.run_id == first)).all()
+        assert {j.config["name"]: j.status for j in old} == {"reviewer": "superseded", "other": "queued"}
+        assert db.scalar(select(Job).where(Job.run_id == latest)).status == "queued"
+
+
+async def test_new_head_does_not_discard_a_human_followup(owner, monkeypatch):
+    setup(owner)
+    live_pr(monkeypatch)
+    first = await reviews.accept(payload(body="@litereview reviewer"), "reply")
+    with Session.begin() as db:
+        run = db.get(Run, first)
+        run.snapshot = {**run.snapshot, "reply": {"finding_id": "original"}}
+        db.scalar(select(Job).where(Job.run_id == first)).status = "running"
+    live_pr(monkeypatch, "c" * 40)
+    latest = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "new-head")
+    with Session() as db:
+        assert db.scalar(select(Job).where(Job.run_id == first)).status == "running"
+        assert db.scalar(select(Job).where(Job.run_id == latest)).status == "blocked"
+
+
+async def test_new_head_during_diff_preparation_cannot_launch_old_comparison(owner, monkeypatch):
+    _, _, agent, _, _ = setup(owner)
+    owner.put("/api/resources/agents/" + agent["id"], json={**agent, "review_mode": "compare"}).raise_for_status()
+    live_pr(monkeypatch)
+    first = await reviews.accept(payload(body="@litereview reviewer"), "baseline")
+    complete(first)
+    live_pr(monkeypatch, "c" * 40)
+    old = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "old")
+    original = github.repo_request
+    preparing, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_compare(*args, **kwargs):
+        preparing.set()
+        await release.wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(github, "repo_request", slow_compare)
+    task = asyncio.create_task(review_sessions.prepare())
+    await asyncio.wait_for(preparing.wait(), 2)
+    live_pr(monkeypatch, "d" * 40)
+    latest = await reviews.accept(payload(body="@litereview reviewer", comment_id=3), "latest")
+    release.set()
+    await task
+    with Session() as db:
+        old_jobs = db.scalars(select(Job).where(Job.run_id == old)).all()
+        assert len(old_jobs) == 1 and old_jobs[0].status == "superseded"
+    await review_sessions.prepare()
+    with Session() as db:
+        assert db.scalar(select(ReviewSession)).active_run_id == latest
+        assert db.scalar(select(ReviewSession)).baseline_run_id == first
 
 
 async def test_slow_older_request_cannot_queue_behind_newer_head(owner, monkeypatch):

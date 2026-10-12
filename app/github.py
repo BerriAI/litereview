@@ -100,7 +100,8 @@ async def resolve_review_thread(repo, installation, number, comment_id, *, expec
             "query": """query($owner:String!, $name:String!, $number:Int!, $cursor:String) {
               repository(owner:$owner,name:$name) { pullRequest(number:$number) {
                 reviewThreads(first:100,after:$cursor) {
-                  nodes { id isResolved comments(first:1) { nodes { fullDatabaseId } } }
+                  nodes { id isResolved viewerCanResolve viewerCanUnresolve
+                    comments(first:1) { nodes { fullDatabaseId } } }
                   pageInfo { hasNextPage endCursor }
                 }
               } }
@@ -113,6 +114,10 @@ async def resolve_review_thread(repo, installation, number, comment_id, *, expec
         for thread in threads["nodes"]:
             if any(str(c["fullDatabaseId"]) == str(comment_id) for c in thread["comments"]["nodes"]):
                 if thread["isResolved"] != resolved:
+                    capability = "viewerCanResolve" if resolved else "viewerCanUnresolve"
+                    action = "resolve" if resolved else "reopen"
+                    if thread.get(capability) is False:
+                        raise HTTPException(403, f"GitHub does not allow this App to {action} this thread. A repository maintainer must do it manually.")
                     current = (await repo_request(repo, installation, "GET", f"pulls/{number}")).json()
                     if current["head"]["sha"] != expected_head or current.get("state", "open") != "open":
                         raise HTTPException(409, "The PR changed before the thread could be updated.")
@@ -121,8 +126,14 @@ async def resolve_review_thread(repo, installation, number, comment_id, *, expec
                         "query": f"mutation($id:ID!){{ {mutation}(input:{{threadId:$id}}) {{ thread {{ isResolved }} }} }}",
                         "variables": {"id": thread["id"]},
                     })).json()
-                    if result.get("errors") or result.get("data", {}).get(mutation, {}).get("thread", {}).get("isResolved") is not resolved:
-                        raise HTTPException(502, "GitHub could not resolve the finding thread.")
+                    if result.get("errors"):
+                        errors = result["errors"]
+                        detail = "; ".join(e.get("message", "Unknown GraphQL error") for e in errors)
+                        denied = any(e.get("type") == "FORBIDDEN" for e in errors)
+                        raise HTTPException(403 if denied else 502, f"GitHub could not {action} the finding thread: {detail}")
+                    payload = (result.get("data") or {}).get(mutation) or {}
+                    if (payload.get("thread") or {}).get("isResolved") is not resolved:
+                        raise HTTPException(502, f"GitHub did not confirm that the finding thread was {'resolved' if resolved else 'reopened'}.")
                 return
         if not threads["pageInfo"]["hasNextPage"]:
             raise HTTPException(502, "The original finding thread is no longer available.")

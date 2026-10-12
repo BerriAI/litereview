@@ -131,6 +131,7 @@ Continue with the [development guide](docs/DEVELOPMENT.md) for hot reload, Docke
 | --- | --- |
 | Deploy, configure spend admins, back up, or update | [Deployment](docs/DEPLOYMENT.md) |
 | Configure models, instructions, Fusion, skills, or MCP tools | [Reviewers](docs/REVIEWERS.md) |
+| Manage LiteReview from Claude or another MCP client | [Connect an AI assistant](docs/MCP.md) |
 | Connect an existing GitHub App, resume setup, manage SSO, or add automatic reviews | [GitHub and access](docs/GITHUB.md) |
 | Read costs, export traces to Lens, or understand execution limits | [Operations](docs/OPERATIONS.md) |
 | Run locally, contribute, or check integration evidence | [Development](docs/DEVELOPMENT.md) · [Contributing](CONTRIBUTING.md) · [Validation](docs/VALIDATION.md) |

@@ -72,6 +72,7 @@ def definitions(cfg):
                         "type": "object",
                         "properties": {
                             "name": S,
+                            "rule_id": S,
                             "status": {"type": "string", "enum": ["passed", "failed", "not_run"]},
                             "required": {"type": "boolean"},
                             "details": S,

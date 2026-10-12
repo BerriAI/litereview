@@ -645,3 +645,61 @@ async def test_modal_hard_timeout_is_incomplete_not_start_failure(owner, monkeyp
         assert result.result["limitations"] == [
             "Modal's 24-hour sandbox lifetime was reached. No agent time limit was configured."
         ]
+
+
+async def test_slow_github_work_does_not_block_parallel_launches(owner, monkeypatch):
+    from app import review_sessions, runtime
+    from app.settings import settings
+
+    setup(owner)
+    mock_github(monkeypatch)
+    for number in range(1, 13):
+        await reviews.accept({**payload(comment_id=9000 + number),
+                              'issue': {'number': number, 'pull_request': {}}}, f'parallel-{number}')
+    monkeypatch.setattr(settings(), 'concurrency', 0)
+    prepare = review_sessions.prepare_session
+    slow_session = asyncio.Event()
+    stalled_publisher = asyncio.Event()
+    release_preparation = asyncio.Event()
+    release_workers = asyncio.Event()
+    ready = asyncio.Event()
+    all_ready = asyncio.Event()
+    started = []
+
+    async def prepare_session(repo, pr, key):
+        if pr == 1:
+            slow_session.set()
+            await release_preparation.wait()
+        await prepare(repo, pr, key)
+
+    async def publish(run_id):
+        stalled_publisher.set()
+        await release_workers.wait()
+
+    async def launch(job_id, token):
+        started.append(job_id)
+        if len(started) == 22:
+            ready.set()
+        if len(started) == 24:
+            all_ready.set()
+        await release_workers.wait()
+
+    monkeypatch.setattr(review_sessions, 'prepare_session', prepare_session)
+    monkeypatch.setattr(reviews, 'publish', publish)
+    monkeypatch.setattr(runtime, 'launch', launch)
+    dispatcher = asyncio.create_task(reviews.dispatcher())
+    try:
+        await asyncio.wait_for(slow_session.wait(), 2)
+        await asyncio.wait_for(stalled_publisher.wait(), 2)
+        await asyncio.wait_for(ready.wait(), 5)
+        assert not release_preparation.is_set() and not release_workers.is_set()
+        with Session() as db:
+            jobs = db.scalars(select(Job)).all()
+            assert sum(j.status == 'starting' for j in jobs) == 22
+        release_preparation.set()
+        await asyncio.wait_for(all_ready.wait(), 8)
+        assert len(started) == len(set(started)) == 24
+    finally:
+        dispatcher.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await dispatcher

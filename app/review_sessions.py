@@ -6,10 +6,11 @@ import time
 from collections import defaultdict
 from contextlib import contextmanager
 
+import anyio
 from sqlalchemy import select, text
 
 from . import fusion, github
-from .db import Job, ReviewFinding, ReviewSession, Run, Session
+from .db import Job, ReviewFinding, ReviewPublication, ReviewSession, Run, Session
 
 TERMINAL = {"completed", "failed", "timed_out", "superseded"}
 
@@ -50,7 +51,9 @@ def refresh(db, session):
             return
         run = db.get(Run, session.active_run_id)
         if run and run.snapshot.get("reply") and run.published < 2:
-            return  # Publish the decision before the next task reads finding history.
+            publication = db.get(ReviewPublication, f"reply:{run.id}")
+            if not publication or not publication.data.get("decision_recorded"):
+                return  # Save finding history before the next task; GitHub writes can retry independently.
         primary = [j for j in jobs if not j.config.get("fusion_parent_id")
                    and not j.config.get("comparison_parent_id")]
         for job in primary:
@@ -112,6 +115,7 @@ def enqueue(db, run, configurations):
                 existing_jobs = jobs_for(db, session, existing_id) if existing else []
                 if (existing and not existing.snapshot.get("reply") and existing.head == run.head
                         and existing.base == run.base and existing_jobs
+                        and not any(j.status == "cancelling" for j in existing_jobs)
                         and existing_jobs[0].config.get("review_fingerprint", signature) == signature):
                     notices.append({"name": configs[0]["name"], "run_id": existing.id,
                                     "head": existing.head, "message": "Already requested"})
@@ -128,6 +132,15 @@ def enqueue(db, run, configurations):
                 notices.append({"name": configs[0]["name"], "run_id": newer.id,
                                 "head": newer.head, "message": "Newer request already queued"})
                 continue
+            if active and not active.snapshot.get("reply") and active.head != run.head:
+                for job in jobs_for(db, session, active.id):
+                    if job.status in TERMINAL:
+                        continue
+                    stopping = job.status in ("starting", "running", "cancelling")
+                    job.status = "cancelling" if stopping else "superseded"
+                    job.finished_at = None if stopping else time.time()
+                    job.result = {"summary": f"Replaced by a requested review of newer commit `{run.head[:12]}`.",
+                                  "findings": [], "limitations": []}
             if session.active_run_id and session.pending_run_id:
                 for job in jobs_for(db, session, session.pending_run_id):
                     if job.status == "blocked":
@@ -171,11 +184,16 @@ async def prepare():
         keys = [(s.repo, s.pr, s.id) for s in db.scalars(select(ReviewSession).where(
             ReviewSession.active_run_id.is_not(None)))]
     for repo, pr, key in keys:
-        try:
+        await prepare_one(repo, pr, key)
+
+
+async def prepare_one(repo, pr, key):
+    try:
+        with anyio.fail_after(30):
             await prepare_session(repo, pr, key)
-        except Exception:
-            import logging
-            logging.getLogger("litereview").exception("Could not prepare review session %s; will retry", key)
+    except Exception:
+        import logging
+        logging.getLogger("litereview").exception("Could not prepare review session %s; will retry", key)
 
 
 async def prepare_session(repo, pr, key):
@@ -211,7 +229,7 @@ async def prepare_session(repo, pr, key):
             return
         jobs = jobs_for(db, session, run.id)
         for job in jobs:
-            if job.config.get("session_prepared"):
+            if job.status not in ("queued", "waiting") or job.config.get("session_prepared"):
                 continue
             job.config = {**job.config, "session_prepared": True, "review_diff": diff,
                           "review_scope": scope, "review_from": start, "scope_reason": reason,

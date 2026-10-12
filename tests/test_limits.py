@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -9,8 +10,8 @@ from sqlalchemy import select
 from test_harnesses import seed_job
 from test_reviews import mock_github, payload, setup, webhook
 
-from app import providers, reviews, runtime
-from app.db import Job, Session
+from app import providers, review_sessions, reviews, runtime
+from app.db import Job, ReviewSession, Session
 from app.limits import SANDBOX_MAX_SECONDS, job_timeout, model_rounds
 from app.settings import Settings, settings
 from runner import agent, harness
@@ -229,3 +230,133 @@ async def test_api_shutdown_does_not_kill_running_review(client, monkeypatch):
     with Session() as db:
         job = db.get(Job, "test-job")
         assert job.status == "running" and job.sandbox_id == "persisted-sandbox"
+
+
+async def test_replacement_waits_for_confirmed_modal_stop_and_rejects_old_worker(owner, monkeypatch):
+    from test_review_sessions import live_pr
+
+    from app.security import digest
+
+    setup(owner)
+    live_pr(monkeypatch)
+    first = await reviews.accept(payload(body="@litereview reviewer"), "first")
+    with Session.begin() as db:
+        old = db.scalar(select(Job).where(Job.run_id == first))
+        old.status, old.sandbox_id, old.token_hash = "running", "old-sandbox", digest("old-token")
+    live_pr(monkeypatch, "c" * 40)
+    latest = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "replacement")
+    stopping, release = asyncio.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def terminate(*, wait):
+        assert wait is True
+        loop.call_soon_threadsafe(stopping.set)
+        assert release.wait(5)
+
+    monkeypatch.setattr(runtime, "client", lambda: "client")
+    monkeypatch.setattr(runtime.modal.Sandbox, "from_id", lambda *a, **kw: SimpleNamespace(terminate=terminate))
+    task = asyncio.create_task(runtime.cancel_review(old.id))
+    try:
+        await asyncio.wait_for(stopping.wait(), 2)
+        await review_sessions.prepare()
+        with Session() as db:
+            assert db.scalar(select(Job).where(Job.run_id == latest)).status == "blocked"
+            assert db.get(Job, old.id).status == "cancelling"
+        headers = {"Authorization": "Bearer old-token"}
+        assert owner.get(f"/api/internal/jobs/{old.id}/bootstrap", headers=headers).status_code == 401
+        assert owner.post(f"/api/internal/jobs/{old.id}/finish", headers=headers,
+                          json={"status": "completed", "summary": "Stale", "findings": []}).status_code == 401
+    finally:
+        release.set()
+        await task
+    await review_sessions.prepare()
+    with Session() as db:
+        assert db.get(Job, old.id).status == "superseded"
+        assert db.get(Job, old.id).result["findings"] == []
+        assert db.scalar(select(Job).where(Job.run_id == latest)).status == "queued"
+        assert db.scalar(select(ReviewSession)).baseline_run_id is None
+
+
+@pytest.mark.parametrize("has_id", [False, True])
+async def test_cancellation_recovers_after_restart_and_retries_modal_errors(client, monkeypatch, has_id):
+    seed_job()
+    with Session.begin() as db:
+        job = db.get(Job, "test-job")
+        job.status = "cancelling"
+        job.sandbox_id = "old-sandbox" if has_id else ""
+    stop = Mock(side_effect=RuntimeError("Modal unavailable"))
+    lookup = Mock(return_value=SimpleNamespace(terminate=stop))
+    monkeypatch.setattr(runtime, "client", lambda: "client")
+    monkeypatch.setattr(runtime.modal.Sandbox, "from_id" if has_id else "from_name", lookup)
+    with pytest.raises(RuntimeError, match="Modal unavailable"):
+        await runtime.cancel_review("test-job")
+    with Session() as db:
+        assert db.get(Job, "test-job").status == "cancelling"
+    stop.side_effect = None
+    await runtime.cancel_review("test-job")
+    stop.assert_called_with(wait=True)
+    if not has_id:
+        lookup.assert_called_with(settings().modal_app_name, "lr-test-job", client="client")
+    with Session() as db:
+        assert db.get(Job, "test-job").status == "superseded"
+
+
+async def test_cancel_during_sandbox_creation_keeps_job_until_sandbox_is_stopped(client, monkeypatch):
+    seed_job()
+    with Session.begin() as db:
+        job = db.get(Job, "test-job")
+        job.config = {**job.config, "harness": "codex", "capabilities": []}
+    creating, watching, stopped = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    async def wait():
+        watching.set()
+        await stopped.wait()
+
+    def terminate(*, wait):
+        assert wait is True
+        loop.call_soon_threadsafe(stopped.set)
+
+    sandbox = SimpleNamespace(object_id="created-sandbox", terminate=terminate, wait=SimpleNamespace(aio=wait))
+
+    def create(*args):
+        loop.call_soon_threadsafe(creating.set)
+        assert release.wait(5)
+        return sandbox
+
+    monkeypatch.setattr(settings(), "public_url", "https://review.example")
+    monkeypatch.setattr(runtime, "client", lambda: "client")
+    monkeypatch.setattr(runtime, "create_sandbox", create)
+    monkeypatch.setattr(runtime.modal.Sandbox, "from_id", lambda *a, **kw: sandbox)
+    monkeypatch.setattr(runtime, "terminate", AsyncMock())
+    task = asyncio.create_task(runtime.launch("test-job", "job-token"))
+    try:
+        await asyncio.wait_for(creating.wait(), 2)
+        with Session.begin() as db:
+            db.get(Job, "test-job").status = "cancelling"
+        release.set()
+        await asyncio.wait_for(watching.wait(), 2)
+        with Session() as db:
+            job = db.get(Job, "test-job")
+            assert job.status == "cancelling" and job.sandbox_id == "created-sandbox"
+        await runtime.cancel_review("test-job")
+        await task
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+    with Session() as db:
+        assert db.get(Job, "test-job").status == "superseded"
+
+
+async def test_cancel_before_launch_does_not_create_a_sandbox(client, monkeypatch):
+    seed_job()
+    with Session.begin() as db:
+        db.get(Job, "test-job").status = "cancelling"
+    create = Mock()
+    monkeypatch.setattr(runtime, "create_sandbox", create)
+    await runtime.launch("test-job", "job-token")
+    create.assert_not_called()
+    with Session() as db:
+        assert db.get(Job, "test-job").status == "superseded"

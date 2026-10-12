@@ -155,8 +155,9 @@ export function Documentation() {
               <p>
                 Each agent keeps its review history for that PR. Repeating a
                 request while the same review is active links to the existing
-                run. Requests for newer commits wait, keeping only the latest
-                pending review for that agent. Other agents can run independently.
+                run. A request for a newer commit stops that agent’s outdated
+                review before starting the replacement, keeping only the latest
+                pending request. Other agents can run independently.
               </p>
               <p>
                 Reply in a finding’s inline thread with evidence or a question.
@@ -167,10 +168,10 @@ export function Documentation() {
                 request review comment events for replies to reach LiteReview.
               </p>
               <p>
-                In an agent’s Review instructions, choose Review scope. Full
-                reviews remain the default. Incremental reviews check changes
+                In an agent’s Review instructions, choose Review scope. Full PR
+                remains the default. New changes checks changes
                 since that agent’s last compatible successful review, falling
-                back to a full review when needed. Compare runs both scopes and
+                back to a full review when needed. Compare both runs both scopes and
                 shows the full review privately in Runs; only the incremental
                 review posts to GitHub. Both reviews use credits.
               </p>
@@ -235,7 +236,7 @@ export function Documentation() {
                 in <a href="/people">People</a> after sign-in and link GitHub to
                 start reviews. They can use all reviewers by default. Edit a
                 person’s access to restrict it; an empty selection blocks
-                reviews. Existing restrictions stay in place.
+                Workspace members agents and groups. Existing restrictions stay in place.
               </p>
               <p>
                 Admins can choose Make admin beside a signed-in teammate in People.
@@ -247,10 +248,16 @@ export function Documentation() {
                 New repositories allow all reviewers; narrow access under
                 Repositories → repository options → Review permissions. Callers
                 need a GitHub account linked after Google sign-in and GitHub
-                access to the repository, including public repositories. The
+                access to the repository for Workspace members agents, including public repositories. The
                 account link keeps working after signing out or browser session
                 expiry. Without SSO, add approved GitHub usernames in People
                 manually.
+              </p>
+              <p>
+                For an OSS agent, choose Who can trigger this agent → Anyone who can comment on the PR
+                in its editor. Human commenters can invoke that direct agent and discuss its findings
+                without LiteReview sign-in. Repository permissions still apply and the workspace pays.
+                Groups retain their caller restrictions. This grants no dashboard or management MCP access.
               </p>
             </li>
             <li>
@@ -376,6 +383,30 @@ export function Documentation() {
           </p>
         </section>
 
+        <section id="connect-assistant">
+          <h2>Manage LiteReview from an AI assistant</h2>
+          <p>
+            Open <a href="/settings">Settings → Connect an AI assistant</a>, copy the MCP URL,
+            and add it as a remote connector in Claude or another client supporting Streamable HTTP
+            and OAuth. Sign in with Google and choose Connect. Claude Code users can copy the command
+            from Settings and use <code>/mcp</code> to sign in. No separate API key is needed.
+          </p>
+          <p>
+            Ask “Show my LiteReview agents and their review rules.” The MCP provides workspace context,
+            live option schemas, a guide through <code>litereview_get_guide</code>, and a
+            <code> configure_litereview</code> prompt. Clients can manage agents, individual rules,
+            skills, models, repositories, permissions and runs with your existing workspace permissions.
+            Checks and review requests use credits; admin roles and spend remain admin-only.
+            GitHub App installation and provider consent still use the browser.
+          </p>
+          <p>
+            Disconnect a client in Settings to revoke its access. Browser sign-out does not disconnect
+            MCP clients. See the <a href="https://github.com/BerriAI/litereview/blob/main/docs/MCP.md">operator guide</a>
+            {" "}for every option and workflow. The MCP servers page configures tools used by reviewers;
+            it is separate from this management connector.
+          </p>
+        </section>
+
         <section>
           <h2>Choose what an agent can do</h2>
           <p>
@@ -384,6 +415,13 @@ export function Documentation() {
             the agent instructions take precedence when they conflict. The
             response is shown directly, including for tasks that do not call
             for bug findings.
+          </p>
+          <p>
+            Use Review rules → Add rule for separate requirements such as real end-to-end proof.
+            Give each rule a name and instructions, then Save agent. Edit, disable or delete rules
+            independently while keeping the base skill attached. Every enabled rule appears as a
+            check; a skipped or omitted Required verification rule makes the review incomplete.
+            Changes apply to future reviews. Existing prompts are not split into rules automatically.
           </p>
           <p>
             For relevant checks, agents inspect the project’s setup instructions

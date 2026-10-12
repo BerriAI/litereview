@@ -11,15 +11,17 @@ from .db import engine
 
 
 @contextmanager
-def publication_lock(run_id):
+def publication_lock(run_id, *, parent_run_id=None):
     if engine.dialect.name == "postgresql":
         # A dedicated transaction holds the lock across all GitHub calls and
         # checkpoint writes. Other runs and worker result writes remain free.
         # Connection/process exit releases it without a lease that could expire
         # while a GitHub request is still in flight.
-        key = int.from_bytes(hashlib.sha256(f"publication:{run_id}".encode()).digest()[:8], signed=True)
+        names = sorted({run_id, parent_run_id} if parent_run_id else {run_id})
         with engine.begin() as connection:
-            yield bool(connection.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": key}))
+            yield all(connection.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {
+                "key": int.from_bytes(hashlib.sha256(f"publication:{name}".encode()).digest()[:8], signed=True)
+            }) for name in names)
     else:
         # Local SQLite deployments coordinate processes via the database's
         # adjacent lock file. Do not unlink it: another process may hold its inode.

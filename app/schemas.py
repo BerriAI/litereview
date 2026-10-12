@@ -28,7 +28,7 @@ class Skill(BaseModel):
     name: str = Field(min_length=1)
     description: str = ""
     instructions: str = Field(min_length=1)
-    files: dict[str, str] = Field(default_factory=dict)
+    files: dict[str, str] = Field(default_factory=dict, description="Relative supporting-file paths mapped to base64-encoded content. The instructions field contains SKILL.md text.")
 
 
 class ReviewTarget(BaseModel):
@@ -69,17 +69,29 @@ class AgentModel(ModelSelection):
         return review_capabilities(values)
 
 
+class ReviewRuleInstruction(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex, min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1)
+    instructions: str = Field(min_length=1)
+    enabled: bool = True
+    required: bool = True
+
+
 class Agent(ReviewTarget, AgentModel):
     instructions: str = Field(min_length=1)
-    review_mode: Literal["full", "incremental", "compare"] = "full"
+    trigger_access: Literal["workspace", "anyone"] = Field(default="workspace", description="workspace requires approved callers; anyone allows external human PR commenters. Repository grants still apply. Does not grant dashboard or MCP access.")
+    rules: list[ReviewRuleInstruction] = Field(default_factory=list, description="Named requirements supplementing base instructions and skills. Use rule tools to edit one without replacing the array.")
+    review_mode: Literal["full", "incremental", "compare"] = Field(default="full", description="full: whole PR each time. incremental: new changes since the last compatible successful review, otherwise full. compare: incremental plus a private full review; both cost credits.")
     minimum_minutes: int = Field(default=0, ge=0, strict=True)
     maximum_minutes: int | None = Field(default=None, ge=1, strict=True)
     max_model_calls: int | None = Field(default=None, ge=1, strict=True)
     skill_ids: list[str] = Field(default_factory=list)
-    mcps: list[dict] = Field(default_factory=list)
+    mcps: list[dict] = Field(default_factory=list, description='Tool selections: [{"connection_id": "saved-mcp-connection-id", "tools": ["discovered_tool_name"]}]. Test the connection to discover valid names.')
 
     @model_validator(mode="after")
     def compatible_times(self):
+        if len({rule.id for rule in self.rules}) != len(self.rules):
+            raise ValueError("Review rules must have unique IDs.")
         if self.maximum_minutes is not None and self.maximum_minutes <= self.minimum_minutes:
             raise ValueError("Maximum run time must exceed minimum review time to allow for setup.")
         return self
@@ -195,6 +207,7 @@ class Finding(BaseModel):
 
 
 class ReviewCheck(BaseModel):
+    rule_id: str | None = None
     name: str = Field(min_length=1)
     status: Literal["passed", "failed", "not_run"]
     required: bool

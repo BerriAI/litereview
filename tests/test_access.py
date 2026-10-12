@@ -131,3 +131,49 @@ def test_legacy_explicit_grants_migrate_once_without_dynamic_collaborators(owner
     assert all(
         "caller_policy" not in r and "repos" not in r for r in owner.get("/api/resources/agents").json()
     )
+
+
+@pytest.mark.parametrize("sso", [False, True])
+@pytest.mark.parametrize("body", ["@litereview reviewer review this pls", "@litereview"])
+def test_open_agent_accepts_external_caller_without_workspace_or_repo_membership(owner, monkeypatch, sso, body):
+    from test_sso import enable
+
+    from app import github
+
+    _, _, agent, _, _ = setup(owner)
+    assert agent["trigger_access"] == "workspace"
+    owner.put("/api/resources/agents/" + agent["id"], json={**agent, "trigger_access": "anyone"}).raise_for_status()
+    # Anyone is explicit opt-in, even for a caller restricted in People.
+    grant(owner, "user", "outsider", "selected", [])
+    if sso:
+        enable(monkeypatch)
+    mock_github(monkeypatch, "none")
+    run_id = webhook(owner, payload(actor="outsider", body=body)).json()["run_id"]
+    github.permission.assert_not_awaited()
+    with Session() as db:
+        assert db.get(Run, run_id).status == "queued"
+        assert db.scalar(select(Job)).config["agent_id"] == agent["id"]
+    assert owner.get("/api/resources/agents").status_code == (401 if sso else 200)
+
+
+@pytest.mark.parametrize("restriction", ["repo", "installation", "group", "mixed", "bot", "revoked"])
+def test_open_agent_does_not_bypass_other_boundaries(owner, monkeypatch, restriction):
+    _, _, agent, repo, _ = setup(owner)
+    owner.put("/api/resources/agents/" + agent["id"], json={**agent, "trigger_access": "anyone"}).raise_for_status()
+    mock_github(monkeypatch, "none")
+    data = payload(actor="outsider", body="@litereview reviewer")
+    if restriction == "repo":
+        grant(owner, "repo", repo["name"], "selected", [])
+    elif restriction == "installation":
+        data["installation"]["id"] = 999
+    elif restriction == "group":
+        data["comment"]["body"] = "@litereview general"
+    elif restriction == "mixed":
+        data["comment"]["body"] = "@litereview reviewer general"
+    elif restriction == "bot":
+        data["comment"]["user"]["type"] = "Bot"
+    elif restriction == "revoked":
+        owner.put("/api/resources/agents/" + agent["id"], json=agent).raise_for_status()
+    assert webhook(owner, data).status_code == 200
+    with Session() as db:
+        assert not db.scalar(select(Job))

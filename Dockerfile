@@ -16,6 +16,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 COPY app/ ./app/
 COPY runner/ ./runner/
+COPY docs/MCP.md ./docs/MCP.md
 COPY LICENSE THIRD_PARTY_NOTICES.md ./
 COPY --from=web /web/dist ./frontend/dist/
 RUN useradd --create-home app && mkdir -p /app/data && chown -R app:app /app
