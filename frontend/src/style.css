@@ -16,7 +16,8 @@
   --line: #eeeeee;
   --border: #d3d3d5;
   --ink: #272b37;
-  --muted: #727580;
+  --muted: #646873;
+  --control-border: #888b94;
   --accent: #5b3fd1;
   --tint: #f4f3fb;
   --red: #a3323b;
@@ -59,7 +60,7 @@ button,
   gap: 7px;
   min-height: 36px;
   padding: 7px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
   background: var(--bg);
   color: var(--ink);
@@ -176,7 +177,7 @@ textarea {
   width: 100%;
   min-width: 0;
   padding: 9px 11px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
   background: var(--bg);
   color: var(--ink);
@@ -186,7 +187,7 @@ textarea {
 input::placeholder,
 textarea::placeholder {
   color: var(--muted);
-  opacity: 0.85;
+  opacity: 1;
 }
 textarea {
   resize: vertical;
@@ -266,7 +267,12 @@ nav {
   padding: 6px 11px 10px;
   color: var(--muted);
 }
-nav button {
+.sidebar nav a {
+  display: flex;
+  text-decoration: none;
+  border-radius: 6px;
+  font-size: 13px;
+  align-items: center;
   position: relative;
   width: 100%;
   justify-content: flex-start;
@@ -279,12 +285,12 @@ nav button {
   color: var(--muted);
   font-weight: 400;
 }
-nav button.selected {
+.sidebar nav a.selected {
   background: var(--inset);
   color: var(--ink);
   font-weight: 500;
 }
-nav button.selected::before {
+.sidebar nav a.selected::before {
   content: "";
   position: absolute;
   left: 0;
@@ -294,7 +300,7 @@ nav button.selected::before {
   background: var(--ink);
   border-radius: 2px;
 }
-nav button:hover {
+.sidebar nav a:hover {
   background: var(--inset);
   color: var(--ink);
 }
@@ -1773,6 +1779,8 @@ summary:hover {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
 }
@@ -2002,3 +2010,7 @@ summary:hover {
 .spend-page .tabs { margin-bottom: 18px; }
 .job-cost { margin-left: auto; white-space: nowrap; }
 @media (max-width: 700px) { .spend-summary { grid-template-columns: 1fr; gap: 12px; } }
+
+/* Keep overlays contained and mobile fields readable without automatic zoom. */
+.sidebar nav, dialog, .modal-body, .table-wrap { overscroll-behavior: contain; }
+@media (max-width: 767px) { input, select, textarea { font-size: 16px; } }

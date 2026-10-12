@@ -53,7 +53,7 @@ async def main():
         await dialog.get_by_role("button", name="Save agent", exact=True).click()
         await dialog.wait_for(state="hidden")
         for name, count in [("ui-acceptance-one", 2), ("ui-acceptance-two", 1)]:
-            await page.get_by_role("button", name="Agent groups", exact=True).click()
+            await page.get_by_role("link", name="Agent groups", exact=True).click()
             await page.get_by_role("button", name="Create group", exact=True).click()
             dialog = page.get_by_role("dialog")
             await dialog.get_by_label("Command name").fill(name)
@@ -62,7 +62,7 @@ async def main():
             await dialog.get_by_role("button", name="Save group", exact=True).click()
             await dialog.wait_for(state="hidden")
         await page.screenshot(path=".test-artifacts/groups.png")
-        await page.get_by_role("button", name="PR agents", exact=True).click()
+        await page.get_by_role("link", name="PR agents", exact=True).click()
         await page.get_by_role("button", name="ui-acceptance-reviewer", exact=True).click()
         dialog = page.get_by_role("dialog")
         assert await dialog.get_by_text("Changes apply to future runs in:").count() == 1
@@ -78,7 +78,7 @@ async def main():
         await page.get_by_role("button", name="Code only", exact=True).click()
         assert await page.get_by_role("button", name="ui-acceptance-reviewer", exact=True).count() == 0
         await page.get_by_role("button", name=re.compile("^All agents")).click()
-        await page.get_by_role("button", name="Agent groups", exact=True).click()
+        await page.get_by_role("link", name="Agent groups", exact=True).click()
         await page.get_by_role("button", name="ui-acceptance-one", exact=True).click()
         dialog = page.get_by_role("dialog")
         assert await dialog.get_by_label("Instances").input_value() == "2"
@@ -101,14 +101,14 @@ async def main():
             await page.get_by_role("button", name="Open navigation").get_attribute("aria-expanded") == "false"
         )
         await page.get_by_role("button", name="Open navigation").click()
-        await page.get_by_role("button", name="Skills", exact=True).click()
+        await page.get_by_role("link", name="Skills", exact=True).click()
         await page.get_by_role("heading", name="Skills", exact=True).wait_for()
         await page.get_by_role("button", name="Create skill", exact=True).click()
         dialog = page.get_by_role("dialog")
         assert await dialog.evaluate("el => el.scrollWidth <= el.clientWidth"), "mobile editor overflow"
         await dialog.get_by_role("button", name="Cancel", exact=True).click()
         await page.set_viewport_size({"width": 1440, "height": 1000})
-        await page.get_by_role("button", name="PR agents", exact=True).click()
+        await page.get_by_role("link", name="PR agents", exact=True).click()
         await page.emulate_media(color_scheme="dark")
         assert await page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "light"
         assert (
@@ -124,7 +124,7 @@ async def main():
             await page.get_by_role("button", name=action, exact=True).click()
             dialog = page.get_by_role("dialog")
             await dialog.get_by_role("button", name="Cancel", exact=True).click()
-        await page.get_by_role("button", name="Settings", exact=True).click()
+        await page.get_by_role("link", name="Settings", exact=True).click()
         for tab in ["Models", "MCP servers"]:
             await page.get_by_role("button", name=tab, exact=True).click()
             await (
@@ -132,7 +132,7 @@ async def main():
             )
             dialog = page.get_by_role("dialog")
             await dialog.get_by_role("button", name="Cancel", exact=True).click()
-        await page.get_by_role("button", name="Runs", exact=True).click()
+        await page.get_by_role("link", name="Runs", exact=True).click()
         await page.get_by_role("heading", name="Runs", exact=True).wait_for()
         await page.get_by_role("button", name="Open run", exact=True).first.click()
         await page.get_by_role("heading", name="Review results", exact=True).wait_for()

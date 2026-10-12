@@ -664,9 +664,12 @@ export function GitHubSettings({
       </p>
       <div className="actions">
         <button onClick={onRepositories}>Open repositories</button>
-        <button onClick={onExisting}>App credentials</button>
-        <button onClick={onCreate}>Create App for another account</button>
+        <button onClick={onExisting}>Edit App credentials</button>
       </div>
+      <details className="settings-step"><summary>Set up a different GitHub App</summary>
+        <p>Use this when moving to a different GitHub account or organization.</p>
+        <button onClick={onCreate}>Create another App</button>
+      </details>
       <div className="settings-recovery">
         <h3>
           {setup.github_reset ? "Restore GitHub setup" : "Reset GitHub setup"}
@@ -676,8 +679,10 @@ export function GitHubSettings({
           remains on GitHub. You can undo a reset.
         </p>
         <button
+          className={setup.github_reset ? "" : "danger"}
           disabled={busy}
           onClick={async () => {
+            if (!setup.github_reset && !confirm("Reset GitHub setup? New review requests will stop until you restore or reconnect it. Existing agents and settings will be kept.")) return;
             setBusy(true);
             setError("");
             try {

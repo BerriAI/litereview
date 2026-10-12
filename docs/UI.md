@@ -10,7 +10,7 @@ Use Geist/Geist Mono typography, ink `#272B37`, restrained violet `#5B3FD1`, neu
 
 ## Layout and behavior
 
-- PR agents, groups, and runs sit together under Review. MCP servers, Skills, and Models have direct entries under Resources. Repositories, People, and Settings sit under Workspace. Settings contains Connect an AI assistant and advanced GitHub App recovery. The management MCP URL is distinct from the MCP servers used by review agents.
+- PR agents, groups, and runs sit together under Review. MCP servers, Skills, and Models have direct entries under Resources. Repositories, People, and Settings sit under Workspace. Settings separates AI assistants, Agent creation, and GitHub App recovery. Keep advanced recovery behind a labeled disclosure; preserve unsaved values when switching sections. The management MCP URL is distinct from the MCP servers used by review agents.
 - Agent tables show the model connection, enabled capabilities, and clickable group memberships. Filters separate code-only, browser, and computer agents; search includes model IDs.
 - PR agents sorts by Times used, descending, with stable name ordering for ties. Count PR runs once per agent, including group use; exclude private checks and fusion branches.
 - Repository editors put Automatic reviews before the optional environment settings. Rules select a reviewer, an optional list of PR authors, and GitHub PR events. Show the recurring cost and publication behavior before Save, distinguish missing App event subscriptions from saved rules, and keep disabled rules editable.
@@ -25,6 +25,15 @@ Use flat surfaces, hairline separators, restrained 400/500 type weights, and vio
 ## Onboarding
 
 All approved Google members have workspace management access. Only admins see Spend navigation and model costs on run lists, run summaries, and agent results. A member opening `/spend` sees an access restriction without fetching spend data. The server determines admin status from the deployment configuration and persisted Google identity roles. Admins grant or revoke additional roles in People, separately from review permissions. Spend opens with a By agent breakdown including every instance and fusion stage, counting each agent once per PR run. The home page routes unlinked accounts to `/start`, where they can link GitHub or open the workspace; direct resource links remain usable before linking. Linked members open the workspace. GitHub controls App creation and installation permissions. Repositories has one next action based on verified state. Sync must preserve exclusions and grants. A private harness check establishes model/runtime readiness; a real PR review establishes the first useful result. Expired sessions lead to Google sign-in with a validated return path. Never show sample reviewer names as usable production commands.
+
+## Responsiveness
+
+- Show loading status immediately and keep navigation usable. After eight seconds, explain the delay; failed reads offer Retry. Never display an empty state before the first successful response.
+- Fetch workspace resources once per session and refresh after changes. Keep authorization checks live. Poll visible run pages without overlapping requests; stop work for the previous page when navigating away.
+- Runs shows 30 records per page. Search applies to all runs on the server. Completed runs refresh less frequently than active reviews, and Spend pauses refreshes while hidden.
+- Dashboard queries use small display summaries of stored reviews. Full source snapshots remain available to workers and existing API clients. Fetch artifact metadata separately from its binary content.
+- Do not contact external providers merely to open Settings. Model discovery is an explicit Refresh available models action. Give copy and save actions visible feedback.
+- Use real links for navigation, visible keyboard focus, readable control boundaries and reduced-motion alternatives. Input text stays at least 16px on mobile. Keep scrollable tables within their own region.
 
 ## Validation
 

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { api, send } from "./api";
 import { Field, SearchPicker } from "./ui";
+import { LoadingState } from "./request-state";
 
 type Config = { connection_id: string; model: string };
 
@@ -55,40 +56,52 @@ export function AgentGenerationSettings({ connections, onModels }: { connections
   const [modelError, setModelError] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const modelRequest = useRef(0);
   useEffect(() => {
     let active = true;
     api("/settings/agent-generation").then(data => { if (active) setConfig(data); }).catch(err => { if (active) setError(err.message); });
     return () => { active = false; };
-  }, []);
+  }, [revision]);
   useEffect(() => {
-    let active = true;
-    setModels([]); setModelError("");
-    if (config?.connection_id) api(`/connections/${config.connection_id}/test`, send("POST"))
-      .then(data => { if (active) setModels(data.models || []); })
-      .catch(() => { if (active) setModelError("Could not load models. You can enter a model ID."); });
-    return () => { active = false; };
-  }, [config?.connection_id]);
+    const connection = connections.find(c => c.id === config?.connection_id);
+    modelRequest.current++;
+    setModels(connection?.models || []); setModelError(""); setLoadingModels(false);
+    return () => { modelRequest.current++; };
+  }, [config?.connection_id, connections]);
+  const refreshModels = async () => {
+    if (!config?.connection_id || loadingModels) return;
+    const request = ++modelRequest.current;
+    setLoadingModels(true); setModelError("");
+    try { const result = await api(`/connections/${config.connection_id}/test`, send("POST")); if (request === modelRequest.current) setModels(result.models || []); }
+    catch { if (request === modelRequest.current) setModelError("Couldn’t load models. Retry, or enter a model ID directly."); }
+    finally { if (request === modelRequest.current) setLoadingModels(false); }
+  };
   const update = (next: Config) => { setConfig(next); setSaved(false); };
   const save = async (event: React.FormEvent) => {
-    event.preventDefault(); setBusy(true); setError(""); setSaved(false);
+    event.preventDefault();
+    if (!config?.connection_id || !config.model.trim()) { setError("Choose a connection and enter a model before saving."); return; }
+    setBusy(true); setError(""); setSaved(false);
     try { await api("/settings/agent-generation", send("PUT", config)); setSaved(true); }
     catch (err) { setError((err as Error).message); }
     finally { setBusy(false); }
   };
   return <section className="integration-settings agent-generation-settings">
-    <h2>Agent creation</h2><p>The model used by Create from prompt. New workspaces default to Haiku 5.5. This is separate from the models that review PRs.</p>
+    <h2>Agent creation</h2><p>Choose the model that drafts instructions for Create from prompt. PR reviews use each agent’s own model.</p>
     {!connections.length ? <button onClick={onModels}>Add a model connection</button> : config ? <form onSubmit={save}>
       <div className="form-grid">
         <SearchPicker label="Generation connection" value={config.connection_id} disabled={busy}
           options={connections.map(c => ({ value: c.id, label: c.name }))}
           onChange={connection_id => update({ connection_id, model: "" })} />
-        <SearchPicker label="Generation model" value={config.model} disabled={busy} allowCustom
+        <SearchPicker label="Generation model" value={config.model} disabled={busy} allowCustom loading={loadingModels}
           options={models.map(id => ({ value: id, label: id }))} onChange={model => update({ ...config, model })} />
       </div>
+      <button type="button" className="text-button" disabled={loadingModels || !config.connection_id} onClick={refreshModels}>{loadingModels ? "Loading models…" : "Refresh available models"}</button>
       {modelError && <p className="meta">{modelError}</p>}
-      <button className="primary" disabled={busy || !config.connection_id || !config.model.trim()}>{busy ? "Saving…" : "Save generation settings"}</button>
-    </form> : !error && <p>Loading generation settings…</p>}
-    {error && <p className="error" role="alert">{error}</p>}
-    {saved && <p className="notice" role="status">Generation settings saved.</p>}
+      <div className="actions"><button className="primary" disabled={busy}>{busy ? "Saving…" : "Save generation settings"}</button></div>
+    </form> : <LoadingState label="Loading generation settings…" error={error} retry={() => { setError(""); setRevision(v => v + 1); }} />}
+    {config && error && <p className="error" role="alert">{error}</p>}
+    <div role="status">{saved && <p className="notice">Generation settings saved.</p>}</div>
   </section>;
 }

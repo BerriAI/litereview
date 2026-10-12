@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Bot,
@@ -34,18 +34,19 @@ import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "./style.css";
 import "./onboarding.css";
-import { Documentation } from "./docs";
+const Documentation = lazy(() => import("./docs").then(m => ({ default: m.Documentation })));
 import { MCPAuthFields, MCPServers, People } from "./resources";
 import { MCPToolSelector } from "./mcp-tool-selector";
 import { ReviewResult } from "./review-result";
 import { ReviewRules, ReviewScope } from "./review-settings";
-import { MCPConnect } from "./mcp-connect";
+import { WorkspaceSettings } from "./settings";
+import { LoadingState, RequestActivity } from "./request-state";
 import { AgentModels, FusionResults } from "./fusion";
 import { RunCost, SpendPage } from "./spend";
-import { AgentFromPrompt, AgentGenerationSettings } from "./agent-generation";
+import { AgentFromPrompt } from "./agent-generation";
 import { AutomaticReviews, reviewEvents } from "./automatic-reviews";
 import { api, send } from "./api";
-import { GitHubSetup, GitHubSettings } from "./github-setup";
+import { GitHubSetup } from "./github-setup";
 import { MemberStart } from "./member-start";
 import { StarterReviewer } from "./starter-reviewer";
 import { MinimumReviewTime, OptionalReviewLimits } from "./review-time";
@@ -137,6 +138,13 @@ function App() {
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   const [githubRevision, setGithubRevision] = useState(0);
   const [runs, setRuns] = useState<Row[]>([]);
+  const [runsLoaded, setRunsLoaded] = useState(false);
+  const [runsOffset, setRunsOffset] = useState(0);
+  const [runsTotal, setRunsTotal] = useState(0);
+  const [runsQuery, setRunsQuery] = useState("");
+  const [runsRevision, setRunsRevision] = useState(0);
+  const runCache = useRef(new Map<string, any>());
+  const workspaceRequest = useRef(0);
   const [run, setRun] = useState<any>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [draft, setDraft] = useState<Editor | null>(null);
@@ -225,7 +233,8 @@ function App() {
     setPath(next);
     setMobileNav(false);
     setEditor(null);
-    setRun(null);
+    setRun(runCache.current.get(next.split("/")[2]) || null);
+    setRunsOffset(0);
     setQuery("");
     setError("");
     setNotice("");
@@ -261,7 +270,7 @@ function App() {
     let alive = true;
     const refresh = () => {
       if (document.visibilityState !== "visible") return;
-      api("/session")
+      api("/session", { background: true })
         .then((next) => {
           if (alive)
             setSession((current: any) =>
@@ -282,7 +291,7 @@ function App() {
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [path]);
+  }, []);
   useEffect(() => {
     const expiredSession = () => {
       setExpired(true);
@@ -292,6 +301,7 @@ function App() {
       setStarter(false);
       setWorkspaceLoaded(false);
       setStore(empty);
+      setRuns([]); setRun(null); runCache.current.clear();
       setSession((current: any) =>
         current ? { ...current, user: null } : current,
       );
@@ -319,14 +329,15 @@ function App() {
         ?.focus({ preventScroll: true });
   }, [path, session?.user, editor]);
   const load = async () => {
-    const kinds = Object.keys(empty) as Kind[];
-    const values = await Promise.all(kinds.map((k) => api("/resources/" + k)));
-    setStore(Object.fromEntries(kinds.map((k, i) => [k, values[i]])) as Store);
-    const nextSetup = await api("/setup");
-    setSetup(nextSetup);
-    setAppOwner((current) => current || nextSetup.github_organization || "");
+    const request = ++workspaceRequest.current;
+    const data = await api("/workspace");
+    if (request !== workspaceRequest.current) return;
+    setStore(data.resources);
+    setSetup(data.setup);
+    setAppOwner((current) => current || data.setup.github_organization || "");
     setWorkspaceLoaded(true);
   };
+  const retryWorkspace = () => { setError(""); void load().catch(e => setError(e.message)); };
   const resetGithub = async (undo: boolean) => {
     const result = await api(
       "/github/reset" + (undo ? "/undo" : ""),
@@ -360,12 +371,12 @@ function App() {
   };
   useEffect(() => {
     if (session?.user) load().catch((e) => setError(e.message));
-  }, [session]);
+  }, [session?.user?.sub, session?.user?.login]);
   useEffect(() => {
     if (!session?.user || !["connections", "repos"].includes(active)) return;
     let alive = true;
     const refreshSetup = () => {
-      api("/setup")
+      api("/setup", { background: true })
         .then((value) => {
           if (alive) setSetup(value);
         })
@@ -383,28 +394,43 @@ function App() {
     };
   }, [session?.user, active, githubRevision]);
   useEffect(() => {
+    if (active !== "runs") return;
+    const timer = setTimeout(() => { setRunsOffset(0); setRunsQuery(query); }, 250);
+    return () => clearTimeout(timer);
+  }, [query, active]);
+  useEffect(() => {
     if (!session?.user || active !== "runs") return;
-    let alive = true;
+    let alive = true, inFlight = false, loaded = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const controller = new AbortController();
+    const runId = path.split("/")[2];
+    setRunsLoaded(false);
+    if (runId) setRun(runCache.current.get(runId) || null);
     const refresh = async () => {
+      if (!alive || inFlight) return;
+      clearTimeout(timer);
+      if (document.visibilityState !== "visible") { timer = setTimeout(refresh, 4000); return; }
+      inFlight = true;
+      let interval = 4000;
       try {
-        const data = path.split("/")[2]
-          ? await api("/runs/" + path.split("/")[2])
-          : await api("/runs");
+        const data = await api(runId ? `/runs/${runId}?compact=true` : `/runs?offset=${runsOffset}&limit=30&query=${encodeURIComponent(runsQuery)}`,
+          { signal: controller.signal, background: loaded });
         if (alive) {
-          if (Array.isArray(data)) setRuns(data);
-          else setRun(data);
+          if (runId) {
+            setRun(data); runCache.current.set(runId, data);
+            if (runCache.current.size > 10) runCache.current.delete(runCache.current.keys().next().value!);
+            if (!["queued", "running"].includes(data.status)) interval = 15000;
+          } else { setRuns(data.items); setRunsTotal(data.total); }
+          setRunsLoaded(true); loaded = true; setError("");
         }
-      } catch (e) {
-        if (alive) setError((e as Error).message);
-      }
+      } catch (e) { if (alive) setError((e as Error).message); }
+      finally { inFlight = false; if (alive) timer = setTimeout(refresh, interval); }
     };
-    refresh();
-    const timer = setInterval(refresh, 4000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [session, active, path]);
+    void refresh();
+    const visible = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", visible);
+    return () => { alive = false; clearTimeout(timer); controller.abort(); document.removeEventListener("visibilitychange", visible); };
+  }, [session?.user?.sub, session?.user?.login, isAdmin, active, path, runsOffset, runsRevision, runsQuery]);
   useEffect(() => {
     if (!notice) return;
     const t = setTimeout(() => setNotice(""), 6000);
@@ -637,7 +663,8 @@ function App() {
     return (
       <div className="center">
         <Loader2 className="spin" />
-        <p>{error || "Loading LiteReview…"}</p>
+        <p role="status">{error || "Loading LiteReview…"}</p>
+        {error && <button onClick={() => location.reload()}>Retry</button>}
       </div>
     );
   if (!session.user)
@@ -761,7 +788,7 @@ function App() {
       .join(" ")
       .toLowerCase();
     return (
-      searchable.includes(query.toLowerCase()) &&
+      (active === "runs" || searchable.includes(query.toLowerCase())) &&
       (active !== "agents" ||
         agentFilter === "all" ||
         (agentFilter === "code"
@@ -787,10 +814,11 @@ function App() {
               : tab === "mcp"
                 ? "Add MCP server"
                 : "Add connection";
-  const hideRepoTable =
-    active === "connections" && tab === "github" && !store.repos.length;
+  const hideRepoTable = active === "connections" && tab === "github";
   const PageIcon = icons[navActive];
   const isRunDetail = active === "runs" && Boolean(path.split("/")[2]);
+  const pageLoading = (active !== "runs" && active !== "spend" && !workspaceLoaded) ||
+    (active === "runs" && !runsLoaded && !(isRunDetail ? run : runs.length));
   const newKind: Kind =
     active === "connections"
       ? tab === "github"
@@ -799,6 +827,7 @@ function App() {
       : (active as Kind);
   return (
     <div className="app">
+      <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className={mobileNav ? "sidebar open" : "sidebar"}>
         <div className="sidebar-brand">
           <button
@@ -826,23 +855,17 @@ function App() {
               <div className="workspace-label">{label as string}</div>
               {(keys as string[]).map((key) => {
                 const Icon = icons[key as keyof typeof icons];
+                const href = ({ repos: "/repositories", connections: "/settings", access: "/people" } as Record<string, string>)[key] || "/" + key;
                 return (
-                  <button
+                  <a href={href}
                     key={key}
                     aria-label={titles[key as keyof typeof titles]}
                     aria-current={navActive === key ? "page" : undefined}
                     className={navActive === key ? "selected" : ""}
-                    onClick={() =>
-                      navigate(
-                        (
-                          {
-                            repos: "/repositories",
-                            connections: "/settings",
-                            access: "/people",
-                          } as Record<string, string>
-                        )[key] || "/" + key,
-                      )
-                    }
+                    onClick={event => {
+                      if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                      event.preventDefault(); navigate(href);
+                    }}
                   >
                     <Icon size={17} />
                     <span className="nav-label">
@@ -851,7 +874,7 @@ function App() {
                     {key === "agents" && store.agents.length > 0 && (
                       <span className="nav-count">{store.agents.length}</span>
                     )}
-                  </button>
+                  </a>
                 );
               })}
             </div>
@@ -983,7 +1006,7 @@ function App() {
                 )}
             </header>
           )}
-          {error && (
+          {error && !pageLoading && (
             <div className="error" role="alert">
               {error}
               <button
@@ -1041,29 +1064,14 @@ function App() {
                 )}
               </section>
             )}
-          {active === "connections" && (
-            <>
-              {tab === "github" && <MCPConnect />}
-              {tab === "github" && (
-                <AgentGenerationSettings connections={store.connections.filter(c => c.type !== "mcp")}
-                  onModels={() => navigate("/models")} />
-              )}
-              {tab === "github" && (
-                <GitHubSettings
-                  setup={setup}
-                  onCreate={() => setGithubCreate(true)}
-                  onExisting={() => setGithubForm(true)}
-                  onReset={resetGithub}
-                  onRepositories={() => navigate("/repositories")}
-                />
-              )}
-            </>
-          )}
-          {active === "repos" && !workspaceLoaded && !error && (
-            <p role="status" className="onboarding-loading">
-              <Loader2 size={16} className="spin" />
-              Loading your workspace…
-            </p>
+          {!pageLoading && active !== "spend" && <div className="page-request-status"><RequestActivity /></div>}
+          {!workspaceLoaded && active !== "runs" && active !== "spend" &&
+            <LoadingState label="Loading workspace…" error={error} retry={retryWorkspace} />}
+          {workspaceLoaded && active === "connections" && tab === "github" && (
+            <WorkspaceSettings setup={setup} connections={store.connections.filter(c => c.type !== "mcp")}
+              onModels={() => navigate("/models")} onCreate={() => setGithubCreate(true)}
+              onExisting={() => setGithubForm(true)} onReset={resetGithub}
+              onRepositories={() => navigate("/repositories")} />
           )}
           {active === "repos" && workspaceLoaded && (
             <GitHubSetup
@@ -1118,7 +1126,10 @@ function App() {
               }
             />
           )}
-          {active === "spend" ? (
+          {(!workspaceLoaded && active !== "runs" && active !== "spend") || (active === "connections" && tab === "github") ? null : active === "runs" && !runsLoaded && !(path.split("/")[2] ? run : runs.length) ? (
+            <LoadingState label={path.split("/")[2] ? "Loading review…" : "Loading runs…"} error={error}
+              retry={() => { setError(""); setRunsRevision(v => v + 1); }} />
+          ) : active === "spend" ? (
             isAdmin ? <SpendPage /> : <p role="status">Spend is available to workspace admins only.</p>
           ) : active === "runs" && path.split("/")[2] ? (
             <>
@@ -1699,6 +1710,11 @@ function App() {
                   </table>
                 </div>
               )}
+              {active === "runs" && runsTotal > 30 && <div className="page-pagination">
+                <span>{runsOffset + 1}–{Math.min(runsOffset + 30, runsTotal)} of {runsTotal} runs</span>
+                <button disabled={!runsLoaded || runsOffset === 0} onClick={() => { setRuns([]); setRunsOffset(v => Math.max(0, v - 30)); }}>Previous</button>
+                <button disabled={!runsLoaded || runsOffset + 30 >= runsTotal} onClick={() => { setRuns([]); setRunsOffset(v => v + 30); }}>Next</button>
+              </div>}
               {active === "groups" && store.groups.length > 0 && (
                 <div className="info">
                   <ProviderMark type="github" />
@@ -2807,5 +2823,7 @@ function App() {
   );
 }
 createRoot(document.getElementById("root")!).render(
-  /^\/docs\/?$/.test(location.pathname) ? <Documentation /> : <App />,
+  <Suspense fallback={<LoadingState label="Loading documentation…" />} >
+    {/^\/docs\/?$/.test(location.pathname) ? <Documentation /> : <App />}
+  </Suspense>,
 );

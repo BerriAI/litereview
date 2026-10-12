@@ -45,6 +45,7 @@ jobs:
           uv run python -m scripts.codex_smoke --codex "$codex_test_dir/node_modules/.bin/codex"
           uv run python -m scripts.codex_smoke --codex "$codex_test_dir/node_modules/.bin/codex" --reply
       - run: npm ci --prefix frontend
+      - run: npm test --prefix frontend
       - run: npm run build --prefix frontend
       # Official image mirror avoids Docker Hub's shared-runner pull quota.
       - run: >-
