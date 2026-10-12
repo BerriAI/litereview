@@ -35,7 +35,7 @@ You need a Render account, a Modal account with sandbox capacity, a Google Works
    | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | Token from your Modal workspace |
    | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Your Google web OAuth client |
    | `GOOGLE_ALLOWED_DOMAINS` | Comma-separated Workspace domains you control, for example `example.com` |
-   | `ADMIN_EMAILS` | Google emails allowed to view spend, for example `owner@example.com,finance@example.com`; blank hides spend from every SSO member |
+   | `ADMIN_EMAILS` | Initial Google admins, for example `owner@example.com`; admins can grant additional roles in People |
    | `GITHUB_ORGANIZATION` | Your GitHub organization slug, or blank to choose the owner during setup |
 
    The Blueprint sets `GOOGLE_SSO_REQUIRED=true`, generates `SECRET_KEY` and `ADMIN_TOKEN`, and wires `DATABASE_URL` to Postgres. The access key cannot bypass required SSO. Keep the encryption key stable across deploys. Existing Blueprint users must keep their own domain and organization values when syncing this configuration.
@@ -106,9 +106,17 @@ A ✅ marks completion, not an issue-free PR. **Review incomplete** lists unfini
 
 ### Spend admins
 
-In Render, open your LiteReview service → **Environment** and set `ADMIN_EMAILS` to the comma-separated Google email addresses that should see costs, for example `owner@example.com,finance@example.com`. Use full addresses from the allowed Workspace domains. Save and redeploy to load the setting. Preserve any existing addresses when adding an admin. Matching is case-insensitive; an empty list grants nobody access to spend. GitHub linking is not required for this permission. `GOOGLE_ADMIN_EMAILS` is not used.
+To configure the first admin, open your LiteReview service in Render → **Environment** and set `ADMIN_EMAILS` to a Google email address from an allowed Workspace domain, for example `owner@example.com`. Multiple addresses can be comma-separated; matching is case-insensitive. Save and redeploy to load the setting. GitHub linking is not required. `GOOGLE_ADMIN_EMAILS` is not used.
 
-After deployment, refresh LiteReview as a listed admin: **Spend** and **Runs → Model cost** should be visible. Sign in as an unlisted member and confirm both are absent; opening `/spend` shows an access restriction, and `/api/spend` returns 403. Members can still read review results and manage the workspace. Remove an address and redeploy to revoke its spend access, including for existing sessions. Without Google SSO, access-key owners and accounts admitted by `ADMIN_USERS` retain spend access.
+To add another admin, have the teammate sign in with Google, then open **People** as an admin and choose **Make admin** beside their name. They can now view **Spend**, see **Runs → Model cost**, and grant admin roles to others. The role is saved in the database and checked on every request; no redeploy, GitHub link, or new sign-in is needed. Open pages refresh their role within 15 seconds while visible, or when navigation or window focus changes.
+
+Choose **Remove admin** to revoke a role granted in People. Another admin must remove your own role. Admins labeled **Managed by deployment** remain controlled by `ADMIN_EMAILS`; remove their address and redeploy to revoke that source of access. If they also have a role previously granted in People, remove that role in People as well. Clearing `ADMIN_EMAILS` does not remove saved People roles. If no admins remain, set `ADMIN_EMAILS` to recover access.
+
+Sign in as a member without either admin grant and confirm costs are absent; opening `/spend` shows an access restriction, and `/api/spend` returns 403. Members can still read review results and manage the workspace. Without Google SSO, access-key owners and accounts admitted by `ADMIN_USERS` retain spend access; the Google People role controls do not apply.
+
+![People with admin roles and Make admin and Remove admin controls](images/people-admin-roles.png)
+
+Example workspace with local test accounts.
 
 ### Maintenance
 
@@ -133,7 +141,7 @@ After deployment, check `/health`, sign-in, saved connections/repositories, and 
 | GitHub App exists but no repositories appear | Check the App owner, pending organization approval, and installed repository selection; then sync in Repositories. |
 | Reviewer check fails before execution | Check Modal credentials, account capacity, and whether Modal can reach `PUBLIC_URL` over HTTPS. Retry the saved reviewer check. |
 | No reaction or run after a PR comment | Confirm that **Start a review** shows a permitted command, use the linked GitHub account, and post a new comment on an open PR in a connected repository. Check the App's **Issue comment** subscription and **Advanced → Recent deliveries** on GitHub. A rejected webhook never reaches the review worker; inspect the delivery response and hosting logs. |
-| Spend is missing for an admin | Set `ADMIN_EMAILS` to the verified Google email, preserve other admins, and redeploy. `ADMIN_USERS` does not grant spend access with Google SSO. |
+| Spend is missing for an admin | Ask an admin to choose **People → Make admin** after your Google sign-in. For initial setup or recovery, set `ADMIN_EMAILS` to your verified Google email and redeploy. `ADMIN_USERS` does not grant spend access with Google SSO. |
 | Model discovery works but review fails | Confirm the endpoint supports the Responses API, then check tool/image support, provider credits, and the failure details under Runs. |
 | Work is incomplete or expensive | Inspect Checks and execution details, narrow instructions/tools, and configure optional limits and upstream budgets. |
 

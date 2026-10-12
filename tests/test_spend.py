@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app import harnesses, spend
-from app.db import Job, ModelUsage, Run, Session
+from app.db import Job, ModelUsage, Resource, Run, Session
 
 lookup_rates = spend.lookup_rates
 RATES = {"input_cost_per_token": Decimal("0.000002"),
@@ -150,8 +150,71 @@ def test_unknown_historical_and_interrupted_costs_are_not_zero_or_averaged(owner
 
 def test_spend_requires_login_and_empty_workspace_is_zero(client, owner):
     assert owner.get("/api/spend").json()["total"]["cost_usd"] == 0
+    assert owner.get("/api/spend").json()["agents"] == []
     owner.post("/api/logout")
     assert client.get("/api/spend").status_code == 401
+
+
+def test_agent_spend_includes_instances_groups_and_fusion_without_double_counting(owner):
+    with Session.begin() as db:
+        db.add(Resource(id="agent-a", kind="agents", data={"name": "renamed-reviewer"}))
+        db.add(Resource(id="agent-b", kind="agents", data={"name": "second-reviewer"}))
+    add_run("shared")
+    parent = add_job("parent", "shared", agent_id="agent-a", name="old-name", group="group-one")
+    # Children inherit attribution from their parent even in old snapshots.
+    left = add_job("left", "shared", fusion_parent_id=parent.id)
+    right = add_job("right", "shared", fusion_parent_id=parent.id)
+    repeated = add_job("repeated", "shared", agent_id="agent-a", name="old-name", group="group-two", instance=2)
+    other = add_job("other", "shared", agent_id="agent-b", name="second-reviewer")
+    for job, cost in [(parent, ".2"), (left, ".3"), (right, ".5"), (repeated, "1"), (other, ".4")]:
+        charge(job, cost)
+    add_run("again", status="failed")
+    charge(add_job("again-a", "again", agent_id="agent-a", name="renamed-reviewer"), "1")
+    add_run("private-check", check=True)
+    charge(add_job("check", "private-check", agent_id="agent-a"), "99")
+    data = owner.get("/api/spend").json()
+    assert data["total"]["runs"] == 2
+    assert data["total"]["cost_usd"] == pytest.approx(3.4)
+    assert data["agents"] == [
+        {"id": "agent-a", "name": "renamed-reviewer", "deleted": False, "runs": 2, "cost_usd": 3,
+         "average_cost_usd": 1.5, "priced_runs": 2, "unpriced_runs": 0, "estimated": False},
+        {"id": "agent-b", "name": "second-reviewer", "deleted": False, "runs": 1, "cost_usd": .4,
+         "average_cost_usd": .4, "priced_runs": 1, "unpriced_runs": 0, "estimated": False},
+    ]
+    assert sum(row["cost_usd"] for row in data["agents"]) == pytest.approx(data["total"]["cost_usd"])
+
+
+def test_agent_spend_preserves_deleted_agents_partial_costs_and_distinct_identities(owner):
+    add_run("old")
+    add_job("unknown", "old", agent_id="deleted", name="reviewer", calls=3)
+    add_run("partial")
+    charge(add_job("partial", "partial", agent_id="deleted", name="reviewer"), ".2", complete=False)
+    add_run("new")
+    charge(add_job("new", "new", agent_id="new-id", name="reviewer"), ".8")
+    add_run("running", status="running")
+    charge(add_job("running", "running", agent_id="new-id", name="reviewer"), ".4")
+    rows = {row["id"]: row for row in owner.get("/api/spend").json()["agents"]}
+    assert rows["deleted"]["deleted"] is True
+    assert rows["deleted"]["runs"] == 2
+    assert rows["deleted"]["cost_usd"] == .2
+    assert rows["deleted"]["unpriced_runs"] == 2
+    assert rows["deleted"]["average_cost_usd"] is None
+    assert rows["new-id"]["cost_usd"] == pytest.approx(1.2)
+    assert rows["new-id"]["average_cost_usd"] == .8
+    assert rows["new-id"]["priced_runs"] == 1
+
+
+def test_agent_cost_completeness_is_independent_of_other_agents_in_run(owner):
+    add_run("mixed")
+    charge(add_job("priced", "mixed", agent_id="priced"), "1")
+    add_job("unpriced", "mixed", agent_id="unpriced")
+    meter = spend.UsageMeter(add_job("estimate", "mixed", agent_id="estimate"), RATES)
+    meter.result({"usage": {"input_tokens": 100, "output_tokens": 10}})
+    meter.end(complete=True)
+    rows = {row["id"]: row for row in owner.get("/api/spend").json()["agents"]}
+    assert rows["priced"]["average_cost_usd"] == 1
+    assert rows["unpriced"]["cost_usd"] is None
+    assert rows["estimate"]["estimated"] is True
 
 
 @pytest.mark.parametrize("value", [True, -1, "NaN", "Infinity", {}, "oops"])

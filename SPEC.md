@@ -118,7 +118,7 @@ Linked members open **PR agents**; unlinked Google members start with GitHub lin
 
 Creation and editing must save real configuration, show validation errors, and support cancellation. Empty states lead directly to the next useful action. GitHub remains the place where users trigger reviews.
 
-Initial setup is one trusted workspace per deployment. Hosted teams sign in with Google Workspace SSO, then link GitHub for review invocation. Every admitted member has the same management access. Local development can use an access key and a legacy GitHub sign-in allowlist when SSO is disabled. An access key cannot bypass required SSO. There is no separate administrator role, tenant isolation, billing, or organization-management UI.
+Initial setup is one trusted workspace per deployment. Hosted teams sign in with Google Workspace SSO, then link GitHub for review invocation. Every admitted member has the same management access. Local development can use an access key and a legacy GitHub sign-in allowlist when SSO is disabled. An access key cannot bypass required SSO. Admins can view spend and manage additional Google admin roles in People; other workspace management access remains shared. There is no tenant isolation, billing, or organization-management UI.
 
 ## 7. Repository and caller setup
 

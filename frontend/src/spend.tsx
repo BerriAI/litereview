@@ -3,7 +3,8 @@ import { api, ApiError } from "./api";
 
 type Cost = { cost_usd: number | null; complete: boolean; estimated: boolean };
 type Summary = { runs: number; cost_usd: number | null; average_cost_usd: number | null; priced_runs: number; unpriced_runs: number; estimated: boolean };
-type SpendData = { total: Summary; users: (Summary & { name: string })[]; repositories: (Summary & { name: string })[] };
+type Breakdown = Summary & { name: string; id?: string; deleted?: boolean };
+type SpendData = { total: Summary; users: Breakdown[]; repositories: Breakdown[]; agents: Breakdown[] };
 export const dollars = (value: number | null | undefined) => value == null ? "Unavailable" :
   value > 0 && value < 0.01 ? "$" + value.toFixed(4) : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
 
@@ -18,7 +19,7 @@ export function RunCost({ value }: { value?: Cost }) {
 export function SpendPage() {
   const [data, setData] = useState<SpendData | null>(null);
   const [error, setError] = useState("");
-  const [group, setGroup] = useState<"users" | "repositories">("users");
+  const [group, setGroup] = useState<"users" | "repositories" | "agents">("agents");
   useEffect(() => {
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -39,6 +40,7 @@ export function SpendPage() {
   }, []);
   if (!data) return error ? <div className="error" role="alert">{error}</div> : <p>Loading spend…</p>;
   const total = data.total;
+  const label = { users: "User", repositories: "Repository", agents: "Agent" }[group];
   return <div className="spend-page">
     {error && <div className="error" role="alert">{error}</div>}
     <dl className="spend-summary">
@@ -51,18 +53,20 @@ export function SpendPage() {
       {total.unpriced_runs > 0 && ` ${total.unpriced_runs} ${total.unpriced_runs === 1 ? "run has" : "runs have"} missing or incomplete cost data; totals include only recorded costs. Older runs were not metered.`}
     </p>
     <div className="tabs" aria-label="Spend breakdown">
+      <button aria-pressed={group === "agents"} className={group === "agents" ? "active" : ""} onClick={() => setGroup("agents")}>By agent</button>
       <button aria-pressed={group === "users"} className={group === "users" ? "active" : ""} onClick={() => setGroup("users")}>By user</button>
       <button aria-pressed={group === "repositories"} className={group === "repositories" ? "active" : ""} onClick={() => setGroup("repositories")}>By repository</button>
     </div>
-    {data[group].length ? <div className="table-wrap" tabIndex={0} role="region" aria-label={group === "users" ? "Spend by user" : "Spend by repository"}>
-      <table><thead><tr><th>{group === "users" ? "User" : "Repository"}</th><th>Runs</th><th>Total cost</th><th>Cost per run</th></tr></thead>
-        <tbody>{data[group].map(row => <tr key={row.name}>
-          <td>{row.name}{row.unpriced_runs > 0 && <small>{row.unpriced_runs} {row.unpriced_runs === 1 ? "run has" : "runs have"} incomplete cost data</small>}</td>
+    {group === "agents" && <p className="spend-note">Each agent counts a PR run once, including use through groups. Costs include all instances and fusion stages. A run with multiple agents appears in each agent’s count.</p>}
+    {data[group].length ? <div className="table-wrap" tabIndex={0} role="region" aria-label={`Spend by ${label.toLowerCase()}`}>
+      <table><thead><tr><th>{label}</th><th>Runs</th><th>Total cost</th><th>Cost per run</th></tr></thead>
+        <tbody>{data[group].map(row => <tr key={row.id || row.name}>
+          <td>{row.name}{row.deleted && <small>Deleted agent</small>}{row.unpriced_runs > 0 && <small>{row.unpriced_runs} {row.unpriced_runs === 1 ? "run has" : "runs have"} incomplete cost data</small>}</td>
           <td>{row.runs.toLocaleString()}</td>
           <td>{dollars(row.cost_usd)}{row.unpriced_runs > 0 && row.cost_usd != null ? "+" : ""}{row.estimated && <span className="cost-estimate"> est.</span>}</td>
           <td>{dollars(row.average_cost_usd)}<small>{row.priced_runs} priced {row.priced_runs === 1 ? "run" : "runs"}</small></td>
         </tr>)}</tbody>
       </table>
-    </div> : <div className="empty-state"><h2>No runs yet</h2><p>Spend appears here after your first PR review.</p></div>}
+    </div> : <div className="empty-state"><h2>{group === "agents" ? "No agent runs yet" : "No runs yet"}</h2><p>Spend appears here after your first PR review.</p></div>}
   </div>;
 }
