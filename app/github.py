@@ -100,7 +100,7 @@ async def resolve_review_thread(repo, installation, number, comment_id, *, expec
             "query": """query($owner:String!, $name:String!, $number:Int!, $cursor:String) {
               repository(owner:$owner,name:$name) { pullRequest(number:$number) {
                 reviewThreads(first:100,after:$cursor) {
-                  nodes { id isResolved comments(first:1) { nodes { databaseId } } }
+                  nodes { id isResolved comments(first:1) { nodes { fullDatabaseId } } }
                   pageInfo { hasNextPage endCursor }
                 }
               } }
@@ -111,7 +111,7 @@ async def resolve_review_thread(repo, installation, number, comment_id, *, expec
             raise HTTPException(502, "GitHub could not read the finding thread. Check Pull requests write permission.")
         threads = response["data"]["repository"]["pullRequest"]["reviewThreads"]
         for thread in threads["nodes"]:
-            if any(c["databaseId"] == comment_id for c in thread["comments"]["nodes"]):
+            if any(str(c["fullDatabaseId"]) == str(comment_id) for c in thread["comments"]["nodes"]):
                 if thread["isResolved"] != resolved:
                     current = (await repo_request(repo, installation, "GET", f"pulls/{number}")).json()
                     if current["head"]["sha"] != expected_head or current.get("state", "open") != "open":

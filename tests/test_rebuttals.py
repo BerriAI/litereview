@@ -265,18 +265,19 @@ async def test_resolve_uses_correct_thread_and_rechecks_head(monkeypatch, change
         if data["query"].startswith("mutation"):
             mutations.append(data["variables"]["id"])
             return httpx.Response(200, json={"data": {"resolveReviewThread": {"thread": {"isResolved": True}}}})
+        assert "fullDatabaseId" in data["query"]
         cursor = data["variables"]["cursor"]
         return httpx.Response(200, json={"data": {"repository": {"pullRequest": {"reviewThreads": {
             "nodes": [{"id": "right-thread" if cursor else "unrelated-thread", "isResolved": False,
-                       "comments": {"nodes": [{"databaseId": 99 if cursor else 98}]}}],
+                       "comments": {"nodes": [{"fullDatabaseId": "6000000000" if cursor else "5999999999"}]}}],
             "pageInfo": {"hasNextPage": not bool(cursor), "endCursor": "next"},
         }}}}})
 
     monkeypatch.setattr(github, "request", request)
     if changed:
         with pytest.raises(HTTPException, match="PR changed"):
-            await github.resolve_review_thread("owner/repo", 42, 1, 99, expected_head="a" * 40)
+            await github.resolve_review_thread("owner/repo", 42, 1, 6_000_000_000, expected_head="a" * 40)
         assert not mutations
     else:
-        await github.resolve_review_thread("owner/repo", 42, 1, 99, expected_head="a" * 40)
+        await github.resolve_review_thread("owner/repo", 42, 1, 6_000_000_000, expected_head="a" * 40)
         assert mutations == ["right-thread"]
