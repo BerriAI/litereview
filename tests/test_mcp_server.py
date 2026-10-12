@@ -172,6 +172,10 @@ def test_real_mcp_discovery_context_crud_rules_and_partial_updates(mcp_client):
     rule_id = added["rules"][0]["id"]
     updated = call(c, access, "update_agent", {"resource_id": agent["id"], "changes": {"review_mode": "incremental"}})
     assert updated["instructions"] == "Base review" and updated["rules"] == added["rules"]
+    null = rpc(c, access, "tools/call", {"name": "litereview_update_agent", "arguments": {
+        "resource_id": agent["id"], "changes": {"instructions": None}}})
+    assert null["isError"]
+    call(c, access, "update_agent", {"resource_id": agent["id"], "changes": {"maximum_minutes": None}})
     assert c.get("/api/resources/agents/" + agent["id"]).json()["review_mode"] == "incremental"
     conflict = rpc(c, access, "tools/call", {"name": "litereview_update_agent", "arguments": {
         "resource_id": agent["id"], "changes": {"instructions": "stale"}, "expected_updated_at": agent["updated_at"]}})

@@ -17,6 +17,7 @@ from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl, ConfigDict, Field, create_model
+from pydantic_core import PydanticUndefined
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
@@ -72,7 +73,7 @@ def build(app):
         if not token:
             raise ToolError("Connect to LiteReview with Google sign-in first.")
         # Recheck the grant and role through require_user on every API call.
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=url,
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url=url,
                                      headers={"Authorization": "Bearer " + token.token}, timeout=None) as client:
             response = await client.request(method, "/api" + path, json=data, params=params)
         if not response.is_success:
@@ -137,8 +138,10 @@ def build(app):
         fields = {}
         for name, field in schema.model_fields.items():
             info = copy.deepcopy(field)
-            info.default, info.default_factory = None, None
-            fields[name] = (field.annotation | None, info)
+            # Optional to send is different from nullable. Omitted defaults are
+            # excluded from the API patch; explicit null must satisfy the real field type.
+            info.default, info.default_factory = PydanticUndefined, lambda: None
+            fields[name] = (field.annotation, info)
         patch_schema = create_model(singular.title() + "Patch", __config__=ConfigDict(extra="forbid"), **fields)
 
         async def create(data):
@@ -166,7 +169,10 @@ def build(app):
 
     @tool(destructive=True)
     async def litereview_delete_resource(kind: Kind, resource_id: Id) -> dict[str, Any]:
-        """Delete a saved resource. References must be removed first. Deleting a repository disconnects it; deleting a grant revokes it."""
+        """Delete a saved resource after removing references. Deleting a repository disconnects it.
+        Deleting a user grant with Google SSO RESTORES inherited review access; to block restricted reviewers,
+        set scope=selected with no target_ids instead. Deleting a repository grant blocks reviews there.
+        """
         return await api("DELETE", f"/resources/{kind}/{resource_id}")
 
     from .review_rules import RulePatch
