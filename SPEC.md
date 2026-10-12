@@ -40,7 +40,7 @@ If `frontend` and `pentest` are individual agents and `security` contains five i
 
 Names are case-insensitive. Ignore repeated agent or group names within one command. A directly selected agent runs one instance; if it is also included through a group, both selections run independently. Expand different groups independently: an agent referenced in two selected groups runs once for each membership, including its configured instance count. Label results with the group, agent, and instance so this is visible.
 
-V1 accepts a command as the entire content of a new top-level PR comment. Unknown names or denied access reject the whole invocation with a short explanation. Only authorized callers receive configuration details. Ignore bot comments and ordinary issue comments. Edited comments and automatic reviews on pushes are outside v1.
+New top-level PR comments can include ordinary wording around a command, such as `@litereview code-review review this pls`. Match exact saved agent and group names after each mention within its Markdown paragraph; ignore other words and separate generated footers. Ignore command examples inside blockquotes, code blocks, inline code, or links. Extra wording does not become review instructions. A bare mention selects the default reviewer; a named request with no saved matches is rejected. Denied access to any matched target rejects the whole invocation with a short explanation. Only authorized callers receive configuration details. Ignore bot comments and ordinary issue comments. Edited comments and automatic reviews on pushes are outside v1.
 
 ## 4. Agent capabilities
 

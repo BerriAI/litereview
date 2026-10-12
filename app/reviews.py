@@ -19,6 +19,11 @@ from .security import digest
 from .settings import settings
 
 TERMINAL = {"completed", "failed", "timed_out"}
+COMMAND = re.compile(r"(?<![\w@./-])@litereview(?![\w/-]|\.\w)|^light[ \t]+review(?![\w/-])", re.I)
+UNAVAILABLE_COMMAND = (
+    "This review command is unavailable for this repository or caller. "
+    "Check the agent or group names and the permissions in People and Repositories."
+)
 
 
 def command(body):
@@ -28,27 +33,73 @@ def command(body):
         return []
 
 
-def command_requests(body):
-    match = re.fullmatch(r"\s*(?:@litereview|light\s+review)(?:\s+(.+?))?\s*", body or "", re.I | re.S)
-    if not match:
-        return []
-    if not match[1] or not match[1].strip():
-        return [{"name": ""}]
-    selected = []
-    for token in match[1].lower().split():
-        if token.startswith("t="):
-            raise ValueError(
-                "Set minimum review time in LiteReview → PR agents. "
-                "Comments use only reviewer names: @litereview name1 name2."
-            )
-        elif re.fullmatch(r"[a-z0-9_-]+", token):
-            selected.append({"name": token})
-        else:
-            raise ValueError("Use @litereview name1 name2; names may contain letters, digits, _ and -.")
-    unique = {}
-    for item in selected:
-        unique[item["name"]] = item
-    return list(unique.values())
+def command_paragraphs(body):
+    """Read ordinary Markdown prose without activating quoted or code examples."""
+    quoted = 0
+    for block in MarkdownIt("commonmark").parse(body or ""):
+        if block.type == "blockquote_open":
+            quoted += 1
+        elif block.type == "blockquote_close":
+            quoted -= 1
+        elif block.type == "inline" and not quoted:
+            parts, linked = [], 0
+            literal_tag = None
+            for token in block.children or []:
+                if token.type == "html_inline":
+                    tag = re.match(r"</?(code|pre|a|blockquote)(?:\s|>)", token.content, re.I)
+                    if tag:
+                        if token.content.startswith("</"):
+                            if literal_tag == tag[1].lower():
+                                literal_tag = None
+                        elif literal_tag is None:
+                            literal_tag = tag[1].lower()
+                    parts.append("\0")
+                elif literal_tag:
+                    continue
+                elif token.type == "link_open":
+                    linked += 1
+                    parts.append("\0")
+                elif token.type == "link_close":
+                    linked -= 1
+                elif linked:
+                    continue
+                elif token.type == "text":
+                    parts.append(token.content)
+                elif token.type in ("softbreak", "hardbreak"):
+                    parts.append(" ")
+                elif token.type == "code_inline":
+                    # Backticks may format a reviewer name after a real mention,
+                    # but a command shown inside backticks must never run.
+                    parts.append("\0" + ("" if COMMAND.search(token.content) else token.content) + "\0")
+                elif token.type == "image":
+                    parts.append("\0")
+            yield "".join(parts)
+
+
+def command_requests(body, names=None):
+    """Select exact saved names within each command's paragraph; ignore prose."""
+    selected, mentioned = {}, False
+    for paragraph in command_paragraphs(body):
+        matches = list(COMMAND.finditer(paragraph))
+        for index, match in enumerate(matches):
+            mentioned = True
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(paragraph)
+            tail = paragraph[match.end():end].lower()
+            if re.search(r"(?:^|[\s\0,;:(])t=", tail):
+                raise ValueError(
+                    "Set minimum review time in LiteReview → PR agents. "
+                    "Select reviewers with @litereview name1 name2."
+                )
+            if not tail.strip(" \t\r\n.,:;!?"):
+                selected[""] = {"name": ""}
+                continue
+            for word in re.split(r"[\s\0,;:!?()\[\]{}]+", tail):
+                name = word.strip(".\"'")
+                if re.fullmatch(r"[a-z][a-z0-9_-]*", name) and (names is None or name in names):
+                    selected[name] = {"name": name}
+    if mentioned and not selected:
+        raise ValueError(UNAVAILABLE_COMMAND)
+    return list(selected.values())
 
 
 def is_command(body):
@@ -164,12 +215,8 @@ async def accept(payload, delivery):
         delivery = f"comment:{comment_id}"
     if comment_data.get("user", {}).get("type") == "Bot":
         return None
-    parse_error = None
-    try:
-        requests = command_requests(comment_data.get("body", ""))
-    except ValueError as exc:
-        requests, parse_error = [], str(exc)
-    if not requests and not parse_error:
+    body = comment_data.get("body", "")
+    if not is_command(body):
         return None
     repo = payload["repository"]["full_name"]
     actor = comment_data["user"]["login"]
@@ -202,22 +249,18 @@ async def accept(payload, delivery):
                 "once before requesting a review. Your linked GitHub account can then request reviews "
                 "without signing in again.",
             )
-    if parse_error:
-        return reject_command(delivery, repo, pr, actor, installation, parse_error)
+    targets = {r.data["name"].lower(): r for r in resources.values() if r.kind in ("agents", "groups")}
+    try:
+        requests = command_requests(body, targets)
+    except ValueError as exc:
+        return reject_command(delivery, repo, pr, actor, installation, str(exc))
     grants = {(r.data["subject"], r.data["name"]): r for r in resources.values() if r.kind == "access"}
     caller_access = caller_grant(resources.values(), actor, identity.sub if identity else None)
     repo_access = grants.get(("repo", repo.lower()))
-    selected = []
+    selected, selected_ids = [], set()
     for selection in requests:
         name = selection["name"]
-        target = review_defaults.selected(resources) if not name else next(
-            (
-                r
-                for r in resources.values()
-                if r.kind in ("agents", "groups") and r.data["name"].lower() == name
-            ),
-            None,
-        )
+        target = review_defaults.selected(resources) if not name else targets.get(name)
         if not name and not target:
             return reject_command(
                 delivery, repo, pr, actor, installation,
@@ -233,8 +276,11 @@ async def accept(payload, delivery):
                 pr,
                 actor,
                 installation,
-                "This review command is unavailable for this repository or caller. Check the agent or group names and the permissions in People and Repositories.",
+                UNAVAILABLE_COMMAND,
             )
+        if target.id in selected_ids:
+            continue
+        selected_ids.add(target.id)
         group["target_kind"] = "agent" if target.kind == "agents" else "group"
         if target.kind == "agents":
             group["members"] = [{"agent_id": target.id, "count": 1}]

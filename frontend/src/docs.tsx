@@ -88,8 +88,8 @@ export function Documentation() {
                 repository permissions still apply.
               </p>
               <p>
-                To choose specific agents or groups, put their names in the
-                comment, with nothing else in it:
+                To choose specific agents or groups, include their saved names
+                after the mention:
               </p>
               <pre>
                 <code>@litereview frontend security</code>
@@ -101,6 +101,13 @@ export function Documentation() {
                 you called it.
               </p>
               <p>
+                Extra wording is fine: <code>@litereview frontend review this pls</code> runs frontend.
+                LiteReview matches exact saved names in the mention’s paragraph and ignores
+                other words and separate generated footers. Commands inside blockquotes,
+                code blocks, inline code, or links do not start reviews. The reviewer uses its
+                saved instructions; extra wording does not change its task.
+              </p>
+              <p>
                 Agent and group names must be unique, ignoring capitalization.
                 Repeating a name in one comment runs it once. An agent selected
                 directly and through a group runs separately for each selection.
@@ -110,8 +117,8 @@ export function Documentation() {
               <p>
                 Set Minimum review time (minutes) in the reviewer’s PR agents
                 editor. Use 0 for no minimum, or enter whole minutes. Every instance uses its
-                reviewer’s saved time, including inside groups. Comments contain
-                only reviewer names or the bare mention; time options in comments are rejected. The clock
+                reviewer’s saved time, including inside groups. Time options in
+                comments are rejected. The clock
                 starts after setup. Agents continue investigating and cannot
                 finish successfully before that time elapses. Failures and
                 exhausted limits are reported as incomplete. Longer reviews can

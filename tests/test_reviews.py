@@ -202,10 +202,8 @@ def test_parallel_expansion_deduplication_and_snapshots(owner, monkeypatch):
 @pytest.mark.parametrize(
     "body",
     [
-        "hello @litereview general",
         "```\n@litereview general\n```",
         "@other general",
-        "@litereview general; echo unsafe",
     ],
 )
 def test_only_explicit_commands(body):
@@ -218,7 +216,7 @@ def test_unauthorized_webhooks_and_callers(owner, monkeypatch):
     mock_github(monkeypatch, "write")
     assert webhook(owner, payload(actor="unlisted")).status_code == 200
     mock_github(monkeypatch)
-    assert webhook(owner, payload(body="@litereview general unknown"), "delivery-2").status_code == 200
+    assert webhook(owner, payload(body="@litereview unknown", comment_id=12346), "delivery-2").status_code == 200
     assert webhook(owner, {**payload(), "action": "edited"}).json()["ignored"]
     assert webhook(owner, {**payload(), "issue": {"number": 1}}).json()["ignored"]
     with Session() as db:

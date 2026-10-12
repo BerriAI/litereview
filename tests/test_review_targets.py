@@ -64,7 +64,7 @@ def test_each_access_rule_must_allow_every_selected_target(owner, monkeypatch, s
     )
     update(owner, "access", grant, scope="selected", target_ids=[group["id"]])
     mock_github(monkeypatch, "read")
-    rejected = webhook(owner, payload(body="@litereview general reviewer"))
+    rejected = webhook(owner, payload(body="Please @litereview general and reviewer review this pls"))
     with Session() as db:
         assert db.get(Run, rejected.json()["run_id"]).status == "rejected"
         assert not db.scalars(select(Job)).all()
