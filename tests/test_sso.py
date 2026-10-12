@@ -332,6 +332,7 @@ def test_signed_webhook_uses_linked_github_after_browser_session_ends(owner, mon
     assert sso.eligible_caller({"id": 42, "login": "trusted"})
     data["comment"]["id"] = 12348
     data["comment"]["user"]["id"] = 42
+    data["issue"]["number"] = 2
     later = webhook(owner, data, "after-session").json()["run_id"]
     with Session() as db:
         assert db.get(Run, later).status == "queued"

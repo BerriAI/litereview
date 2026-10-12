@@ -44,7 +44,7 @@ Configure **Repositories → Use existing App** (or **Settings → GitHub App �
 - `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY` (PEM, escaped newlines supported), and `GITHUB_WEBHOOK_SECRET`.
 - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` for GitHub sign-in.
 - Callback URL: `PUBLIC_URL/api/auth/github/callback`.
-- Webhook URL: `PUBLIC_URL/api/webhook/github`; subscribe to **Issue comment** and **Pull request** events.
+- Webhook URL: `PUBLIC_URL/api/webhook/github`; subscribe to **Issue comment**, **Pull request**, and **Pull request review comment** events.
 - Repository permissions: **Contents read**, **Metadata read**, **Pull requests write**, **Issues write**. Issues write permits top-level PR conversation comments.
 
 With Google SSO enabled, GitHub OAuth links a caller’s account after Google sign-in and cannot sign in on its own. In local access-key mode, only `ADMIN_USERS` can sign in with GitHub, and `ADMIN_TOKEN` remains available.
@@ -59,6 +59,8 @@ Open **Repositories → repository options → Automatic reviews**, then:
 4. Save the repository. Enabled rules start paid reviews and post results on GitHub. They apply to external contributors and bots without requiring the author to sign in to LiteReview; repository **Review permissions** still limit which reviewers can run.
 
 Apps created by this version subscribe to **Pull request** events. For an existing App, open its GitHub **Permissions & events**, enable **Pull request**, and save. Keep **Issue comment** enabled for mentions. Return to **Repositories** to refresh the connection check.
+
+Enable **Pull request review comment** for [finding-thread follow-ups](REVIEWERS.md#discuss-a-finding). This uses the existing **Pull requests write** permission. A valid rebuttal can resolve the finding's thread automatically.
 
 Trigger a matching event on an open, non-draft PR. The resulting entry in **Runs** shows the automatic trigger and reviewed commit. Spend is attributed to the PR author. If nothing starts, check the App event subscription, enabled rule, author/label filter, and repository permissions. Saving a rule does not review existing PRs retroactively.
 

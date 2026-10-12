@@ -92,6 +92,43 @@ async def repo_request(repo, installation, method, suffix, **kwargs):
     return await request(method, f"/repos/{repo}/{suffix}", await token(installation), **kwargs)
 
 
+async def resolve_review_thread(repo, installation, number, comment_id, *, expected_head, resolved=True):
+    owner, name = repo.split("/", 1)
+    auth, cursor = await token(installation), None
+    while True:
+        response = (await request("POST", "/graphql", auth, json={
+            "query": """query($owner:String!, $name:String!, $number:Int!, $cursor:String) {
+              repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+                reviewThreads(first:100,after:$cursor) {
+                  nodes { id isResolved comments(first:1) { nodes { fullDatabaseId } } }
+                  pageInfo { hasNextPage endCursor }
+                }
+              } }
+            }""",
+            "variables": {"owner": owner, "name": name, "number": number, "cursor": cursor},
+        })).json()
+        if response.get("errors"):
+            raise HTTPException(502, "GitHub could not read the finding thread. Check Pull requests write permission.")
+        threads = response["data"]["repository"]["pullRequest"]["reviewThreads"]
+        for thread in threads["nodes"]:
+            if any(str(c["fullDatabaseId"]) == str(comment_id) for c in thread["comments"]["nodes"]):
+                if thread["isResolved"] != resolved:
+                    current = (await repo_request(repo, installation, "GET", f"pulls/{number}")).json()
+                    if current["head"]["sha"] != expected_head or current.get("state", "open") != "open":
+                        raise HTTPException(409, "The PR changed before the thread could be updated.")
+                    mutation = "resolveReviewThread" if resolved else "unresolveReviewThread"
+                    result = (await request("POST", "/graphql", auth, json={
+                        "query": f"mutation($id:ID!){{ {mutation}(input:{{threadId:$id}}) {{ thread {{ isResolved }} }} }}",
+                        "variables": {"id": thread["id"]},
+                    })).json()
+                    if result.get("errors") or result.get("data", {}).get(mutation, {}).get("thread", {}).get("isResolved") is not resolved:
+                        raise HTTPException(502, "GitHub could not resolve the finding thread.")
+                return
+        if not threads["pageInfo"]["hasNextPage"]:
+            raise HTTPException(502, "The original finding thread is no longer available.")
+        cursor = threads["pageInfo"]["endCursor"]
+
+
 async def permission(repo, installation, user, expected_id=None):
     response = await repo_request(repo, installation, "GET", f"collaborators/{user}/permission")
     data = response.json()
@@ -190,6 +227,7 @@ async def connection_status():
         "owner_type": app.get("owner", {}).get("type", ""),
         "public": app.get("public"),
         "review_events_enabled": "pull_request" in app.get("events", []),
+        "reply_events_enabled": "pull_request_review_comment" in app.get("events", []),
         "repositories": sorted(repos, key=lambda r: r["name"].lower()),
         "installations": [
             {"account": i["account"]["login"], "suspended": bool(i.get("suspended_at"))} for i in installs

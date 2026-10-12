@@ -88,8 +88,8 @@ export function Documentation() {
                 repository permissions still apply.
               </p>
               <p>
-                To choose specific agents or groups, put their names in the
-                comment, with nothing else in it:
+                To choose specific agents or groups, include their saved names
+                after the mention:
               </p>
               <pre>
                 <code>@litereview frontend security</code>
@@ -101,6 +101,13 @@ export function Documentation() {
                 you called it.
               </p>
               <p>
+                Extra wording is fine: <code>@litereview frontend review this pls</code> runs frontend.
+                LiteReview matches exact saved names in the mention’s paragraph and ignores
+                other words and separate generated footers. Commands inside blockquotes,
+                code blocks, inline code, or links do not start reviews. The reviewer uses its
+                saved instructions; extra wording does not change its task.
+              </p>
+              <p>
                 Agent and group names must be unique, ignoring capitalization.
                 Repeating a name in one comment runs it once. An agent selected
                 directly and through a group runs separately for each selection.
@@ -110,8 +117,8 @@ export function Documentation() {
               <p>
                 Set Minimum review time (minutes) in the reviewer’s PR agents
                 editor. Use 0 for no minimum, or enter whole minutes. Every instance uses its
-                reviewer’s saved time, including inside groups. Comments contain
-                only reviewer names or the bare mention; time options in comments are rejected. The clock
+                reviewer’s saved time, including inside groups. Time options in
+                comments are rejected. The clock
                 starts after setup. Agents continue investigating and cannot
                 finish successfully before that time elapses. Failures and
                 exhausted limits are reported as incomplete. Longer reviews can
@@ -132,18 +139,40 @@ export function Documentation() {
               <h3>Read the results</h3>
               <p>
                 LiteReview reacts with 👀 and creates a progress comment for
-                each agent. Each comment shows ✅ and that agent’s response as
-                it finishes. Findings link to inline threads where you can
+                each agent. Completed reviews show ✅; failed or incomplete
+                reviews show ⚠️. Findings link to inline threads where you can
                 reply; findings without a usable diff line stay in the agent
                 comment. The agent’s 👀 reaction disappears when it finishes,
                 and the request’s disappears when all agents finish. ✅ means
-                finished, not issue-free. Expand Checks and execution details
+                completed, not issue-free. Expand Checks and execution details
                 for verification results. Open <a href="/runs">Runs</a> and
                 expand an agent to read its report. Findings, checks, activity,
                 and screenshots start collapsed. An incomplete check means the
                 agent could not finish work required by its instructions.
                 Optional checks that were not run appear under Checks without
                 making the review incomplete. Agents do not push fixes.
+              </p>
+              <p>
+                Each agent keeps its review history for that PR. Repeating a
+                request while the same review is active links to the existing
+                run. Requests for newer commits wait, keeping only the latest
+                pending review for that agent. Other agents can run independently.
+              </p>
+              <p>
+                Reply in a finding’s inline thread with evidence or a question.
+                The agent checks the code and responds there. It resolves the
+                thread only when it can support withdrawing the finding;
+                disagreement alone does not dismiss it. Your usual review
+                permissions apply. Existing GitHub Apps must subscribe to Pull
+                request review comment events for replies to reach LiteReview.
+              </p>
+              <p>
+                In an agent’s Review instructions, choose Review scope. Full
+                reviews remain the default. Incremental reviews check changes
+                since that agent’s last compatible successful review, falling
+                back to a full review when needed. Compare runs both scopes and
+                shows the full review privately in Runs; only the incremental
+                review posts to GitHub. Both reviews use credits.
               </p>
             </li>
           </ol>

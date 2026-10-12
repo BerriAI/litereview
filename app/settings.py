@@ -34,8 +34,6 @@ class Settings(BaseSettings):
     modal_app_name: str = "litereview"
     concurrency: int = Field(default=0, ge=0)  # 0 launches on demand without an app-level cap.
     dispatcher_enabled: bool = True
-    comment_sweep_seconds: int = Field(default=60, ge=0)
-    comment_sweep_lookback_seconds: int = Field(default=1800, ge=0)
     litereview_trace_endpoint: str = ""
     litereview_trace_api_key: str = ""
     litereview_trace_content: bool = False

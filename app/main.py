@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 
 import httpx
 import jwt
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
 from sqlalchemy import func, select, update
@@ -18,11 +18,24 @@ from sqlalchemy.exc import IntegrityError
 
 from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
 
-from . import comment_sweep, fusion, github, mcp_oauth, providers, reviews, tracing
+from . import fusion, github, mcp_oauth, providers, reviews, tracing
 from .access import bind_existing_people, initialize_access, people
 from .admins import router as admins_router
 from .agent_generation import router as agent_generation_router
-from .db import Artifact, Job, MCPOAuth, Resource, ReviewTiming, Run, Session, SSOIdentity, init_db, uid
+from .db import (
+    Artifact,
+    Job,
+    MCPOAuth,
+    Resource,
+    ReviewFinding,
+    ReviewPublication,
+    ReviewTiming,
+    Run,
+    Session,
+    SSOIdentity,
+    init_db,
+    uid,
+)
 from .limits import count_model_call, job_timeout, model_rounds
 from .onboarding import exclude_repository, include_repository
 from .onboarding import router as onboarding_router
@@ -78,13 +91,8 @@ async def lifespan(app):
         db.commit()
     tracing.start()
     dispatcher_task = asyncio.create_task(reviews.dispatcher()) if settings().dispatcher_enabled else None
-    sweeper_task = (
-        asyncio.create_task(comment_sweep.sweeper())
-        if settings().dispatcher_enabled and settings().comment_sweep_seconds > 0
-        else None
-    )
     yield
-    for task in (dispatcher_task, sweeper_task):
+    for task in (dispatcher_task,):
         if task:
             task.cancel()
             with suppress(asyncio.CancelledError):
@@ -355,7 +363,9 @@ def list_resources(kind: str):
             counts = dict(db.execute(select(agent_id, func.count(func.distinct(Run.id)))
                           .join(Run, Run.id == Job.run_id)
                           .where(Run.pr > 0, Run.snapshot["harness_check"].as_boolean().is_not(True),
-                                 Job.config["fusion_parent_id"].as_string().is_(None))
+                                 Job.config["fusion_parent_id"].as_string().is_(None),
+                                 Job.config["comparison_parent_id"].as_string().is_(None),
+                                 Job.status != "superseded", Run.snapshot["reply"].as_string().is_(None))
                           .group_by(agent_id)).all())
             output = [{**public_resource(r), "usage_count": counts.get(r.id, 0)} for r in rows]
             return sorted(output, key=lambda r: (-r["usage_count"], r["name"].lower(), r["id"]))
@@ -866,7 +876,7 @@ async def manifest(request: Request):
             "pull_requests": "write",
             "issues": "write",
         },
-        "default_events": ["issue_comment", "pull_request"],
+        "default_events": ["issue_comment", "pull_request", "pull_request_review_comment"],
     }
     owner_type = body.get("owner_type", "personal")
     url = "https://github.com/settings/apps/new"
@@ -968,7 +978,7 @@ async def github_config(request: Request):
 
 
 @app.post("/api/webhook/github")
-async def webhook(request: Request):
+async def webhook(request: Request, background_tasks: BackgroundTasks):
     body = await request.body()
     if not verify_signature(
         body, request.headers.get("x-hub-signature-256"), github.config().get("webhook_secret", "")
@@ -980,21 +990,26 @@ async def webhook(request: Request):
 
         await sync_repositories()
         return {"synced": True}
-    if event not in ("issue_comment", "pull_request"):
+    if event not in ("issue_comment", "pull_request", "pull_request_review_comment"):
         return {"ignored": True}
     delivery = request.headers.get("x-github-delivery")
     if not delivery or len(delivery) > 150:
         raise HTTPException(400, "Missing GitHub delivery ID.")
     if event == "pull_request":
         from .automatic_reviews import accept
+    elif event == "pull_request_review_comment":
+        from .rebuttals import accept
     else:
         accept = reviews.accept
     run_id = await accept(json.loads(body), delivery)
+    if run_id and settings().dispatcher_enabled and event == "issue_comment":
+        from .publication import acknowledge
+        background_tasks.add_task(acknowledge, run_id)
     return {"run_id": run_id, "ignored": not bool(run_id)}
 
 
 def run_public(run):
-    return {"trigger": run.snapshot.get("trigger"), **{
+    return {"trigger": run.snapshot.get("trigger"), "notices": run.snapshot.get("notices", []), **{
         k: getattr(run, k)
         for k in ("id", "repo", "pr", "actor", "head", "base", "status", "comment_id", "created_at", "error")
     }}
@@ -1062,10 +1077,30 @@ def run_detail(run_id: str, user=Depends(require_user)):
                 "artifacts": [{"id": a.id, "name": a.name} for a in db.scalars(
                     select(Artifact).where(Artifact.job_id == child.id))],
             } for child in children]
+            data["finding_states"] = {str(f.position): {"status": f.status, **f.decision}
+                                      for f in db.scalars(select(ReviewFinding).where(ReviewFinding.job_id == job.id))}
+            followup = db.get(ReviewPublication, f"reply:{run.id}") if run.snapshot.get("reply") else None
+            if followup and followup.data.get("verdict"):
+                decision = followup.data["verdict"]
+                data["result"] = {**job.result, "rebuttal": decision, "summary": decision["reason"]}
+            data["session_history"] = []
+            if job.config.get("session_id"):
+                history_ids = select(Job.run_id).where(
+                    Job.config["agent_id"].as_string() == job.config["agent_id"])
+                data["session_history"] = [run_public(r) for r in db.scalars(select(Run).where(
+                    Run.repo == run.repo, Run.pr == run.pr, Run.id.in_(history_ids), Run.id != run.id
+                ).order_by(Run.created_at.desc()))]
+            comparisons = [j for j in all_jobs if j.config.get("comparison_parent_id") == job.id]
+            data["comparisons"] = [{"id": j.id, "status": j.status, "config": j.config,
+                                    "result": j.result, **({"spend": spend.cost_summary(
+                                        [j, *[c for c in comparisons if c.config.get("fusion_parent_id") == j.id]], costs)
+                                    } if show_spend else {})}
+                                   for j in comparisons if not j.config.get("fusion_parent_id")]
             data["aggregator_model_calls"] = job.model_calls
             if show_spend:
-                data["spend"] = spend.cost_summary([job, *children], costs)
-            data["model_calls"] += sum(child.model_calls for child in children)
+                data["spend"] = spend.cost_summary([job, *children, *comparisons], costs)
+                data["primary_spend"] = spend.cost_summary([job, *children], costs)
+            data["model_calls"] += sum(child.model_calls for child in [*children, *comparisons])
             result["jobs"].append(data)
         return result
 
@@ -1124,7 +1159,11 @@ def bootstrap(job_id: str, request: Request):
                 "base": run.base,
                 "title": run.snapshot["title"],
                 "description": run.snapshot["description"],
-                "diff": run.snapshot["diff"],
+                "diff": job.config.get("review_diff", run.snapshot["diff"]),
+                "scope": job.config.get("review_scope", "full"),
+                "from_commit": job.config.get("review_from", run.base),
+                "finding_history": job.config.get("finding_history", []),
+                "reply": run.snapshot.get("reply"),
             },
             "repository": repo,
             "test_secrets": test_secrets,
@@ -1265,6 +1304,8 @@ async def finish(job_id: str, request: Request):
     with Session() as db:
         job = db.get(Job, job_id)
         run = db.get(Run, job.run_id)
+        if run.snapshot.get("reply") and result["status"] == "completed" and not result.get("rebuttal"):
+            raise HTTPException(422, "A thread follow-up must submit its rebuttal verdict, reason and evidence.")
         minimum = job.config.get("minimum_review_seconds", 0)
         if job.config.get("fusion"):
             result["limitations"] = list(dict.fromkeys(

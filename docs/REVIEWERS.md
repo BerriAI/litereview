@@ -3,6 +3,7 @@
 Choose what your reviewers investigate and which tools they can use. For your first review, use the default instructions and a single model in the [deployment guide](DEPLOYMENT.md#get-your-first-review). Customize the reviewer after that works.
 
 - [Review instructions](#review-instructions)
+- [Review sessions and reruns](#review-sessions-and-reruns)
 - [Models and runtime](#codex-runtime)
 - [Capabilities and groups](#capabilities)
 - [MCP tools](#connect-mcp-tools)
@@ -16,7 +17,11 @@ Draft generation defaults to Haiku 5.5 through a saved gateway or Anthropic conn
 
 Comment `@litereview` alone to run the workspace's default reviewer. The first reviewer becomes the default automatically. Under **PR agents**, choose **Set default** on an agent’s row at any time; the choice applies to future runs. Existing workspaces with one reviewer can use the bare command immediately. Workspaces with several reviewers choose a default once. To select specific agents or groups, name them in the comment, such as `@litereview frontend security`. Caller and repository permissions apply to both forms.
 
+You can include ordinary wording, such as `@litereview code-review review this pls`. LiteReview matches exact saved agent and group names after the mention in the same paragraph, ignoring capitalization and other words. Generated footers in separate paragraphs do not affect the command. Commands inside blockquotes, code blocks, inline code, or links do not start reviews. Extra wording does not change the reviewer's saved instructions. If no name matches, LiteReview explains that the command is unavailable; it does not fall back to the default reviewer.
+
 The agent’s **Review instructions** define its task, scope, workflow, language, and voice. Attached skills support those instructions; the agent instructions take precedence when they conflict. Codex supplies the agent runtime, tools, and result delivery. An agent can produce a narrative response without bug findings. Credentials, enabled tools, and configured time limits still apply.
+
+For code-review tasks, reviewers evaluate acknowledged caveats in the PR description as potential defects. Describing a limitation does not exempt it from review. When a reviewer identifies an actual backwards-incompatible change, it also checks for the conventional breaking-change marker in the PR title, such as `feat!:` or `feat(api)!:`. A missing marker alone is not a finding.
 
 Agents attempt relevant dependency setup using the project’s manifests and documented commands before reporting an environment blocker. Build tools, Python, Node, and uv are available; project-specific packages and toolchains can be installed in the disposable sandbox. Optional tests that were not run appear under **Checks** without making the review incomplete. A required check that could not run, or other unfinished work required by the configured task, is reported as incomplete. An executed test that fails is evidence, not automatically an incomplete review.
 
@@ -29,6 +34,28 @@ Set **Minimum review time (minutes)** when creating a reviewer or under **PR age
 Every instance uses its reviewer's saved minimum, including when called through a group. The clock starts after repository/tool setup. `0` means no minimum and preserves the normal behavior for existing reviewers. Use whole minutes; LiteReview does not impose a workspace ceiling. Changing the setting affects future reviews; accepted jobs keep their saved duration. Comment time options are rejected with instructions to use the UI setting. Private harness checks do not run for this minimum.
 
 The harness checks a monotonic clock, asks the agent to keep investigating and verifying, and rejects early completion. The API independently checks elapsed time. Codex continues the same thread if it returns before the minimum without submitting. This does not invoke the interactive `/goal` slash command. Runs have no LiteReview time or model-call limit by default. To set one, expand **Optional limits** in the agent editor and enter **Maximum run time (minutes)**, **Maximum model calls**, or both. Leave a field blank to remove its limit. Maximum run time includes setup and must exceed the minimum; a minimum never creates a maximum. Groups use each agent’s saved limits, and accepted jobs keep their snapshots. Provider failures and reached limits produce an incomplete review, never a successful early completion. [Modal imposes a 24-hour sandbox lifetime](https://modal.com/docs/guide/sandboxes#timeouts); LiteReview uses that full lifetime when no maximum is selected. Runs do not yet resume across sandbox replacements. Existing MCP selections, skills, visual tools, models, and instructions are preserved.
+
+## Review sessions and reruns
+
+Each repository, PR, and agent has a persistent review session. **Runs → agent → Review history for this agent and PR** links its reviews and thread follow-ups. Accepted runs keep their original configuration and commit; finding decisions persist across reruns and service restarts.
+
+Repeating a request for the same agent, commit, and configuration while it is queued or running links to the existing review and starts no additional work. Different agents can still run in parallel. If new commits are requested while an agent is busy, one pending review retains the latest requested commit. Older pending work is marked superseded. Manual comments and automatic rules share this protection. Intentional group instances and fusion branches remain part of the original review.
+
+Under **PR agents → reviewer → Review instructions → Review scope**, choose:
+
+- **Full PR**: review the full PR each time. This is the default.
+- **Changes since last successful review**: after the first full review, inspect new changes and their effects in the current checkout, with earlier finding decisions supplied as context. Failed or incomplete reviews do not advance the baseline. Changed reviewer configuration, a changed base, or rewritten history falls back to a full review.
+- **Incremental + private full-review comparison**: run an incremental review and an independent full review on the same commit. Only the primary review posts to GitHub. Expand **Private full-review comparison** in Runs to compare findings and false positives. Admins see separate costs; both contribute to total spend. This option uses additional model and sandbox credits. The initial full review does not need a comparison.
+
+Change the scope back to **Full PR** to request a complete review. An explicit rerun on an unchanged commit also uses the full diff. Incremental results identify the reviewed commit range; they do not claim to recheck the whole PR.
+
+### Discuss a finding
+
+Reply directly in a LiteReview finding's GitHub thread with your reasoning or evidence. An authorized human reply queues a focused follow-up with the original finding, conversation, and current code. It uses the reviewer's final model and configured tools; it does not rerun all fusion branches or inherit the minimum review duration. Existing optional run and model-call limits still apply, and the follow-up incurs model and sandbox costs.
+
+If the reviewer verifies that the finding was incorrect or has been fixed, it explains why and resolves that thread. The original finding is marked withdrawn in GitHub and Runs, with its history retained. A valid finding stays open with an explanation. Dismissive language is not technical evidence. Failed verification or a PR that changes during the follow-up leaves the thread unchanged. Earlier withdrawals are supplied to future reviews; new relevant code or evidence can justify reassessment.
+
+Existing GitHub Apps must enable **Pull request review comment** in **Permissions & events**, alongside **Issue comment** and **Pull request**. **Repositories** displays a notice when this subscription is missing. Keep **Pull requests write** permission so LiteReview can reply and resolve its threads. Bot replies and duplicate deliveries never start another follow-up. Only LiteReview's own published findings are eligible.
 
 ## Codex runtime
 
@@ -83,4 +110,4 @@ OAuth supports discovery, PKCE, automatic client registration where offered, and
 
 ## Read review results
 
-LiteReview acknowledges an accepted command with 👀 and creates a separate progress comment for each agent instance. Every instance runs in its own Modal sandbox. As each agent finishes, its comment shows ✅ and its full response, with findings linked to inline threads where you can reply. Findings without a usable diff line stay in the agent comment. Each agent’s 👀 reaction is removed when it finishes; the request’s 👀 is removed when all agents finish. ✅ means the agent finished, not that the review is issue-free: incomplete work and skipped checks remain labeled. Reviewers stay in the order named in the command, with group members and instances in their saved order. In **Runs**, agent reports, findings, checks, screenshots, and activity start collapsed. LiteReview never pushes fixes.
+LiteReview acknowledges an accepted command with 👀 and creates a separate progress comment for each agent instance. Every instance runs in its own Modal sandbox. As each agent finishes, its comment shows ✅ for a completed review or ⚠️ for failed or incomplete work, plus its full response, with findings linked to inline threads where you can reply. Findings without a usable diff line stay in the agent comment. Each agent’s 👀 reaction is removed when it finishes; the request’s 👀 is removed when all agents finish. ✅ means the review completed, not that the PR is issue-free. Skipped optional checks remain labeled. Reviewers stay in the order named in the command, with group members and instances in their saved order. In **Runs**, agent reports, findings, checks, screenshots, and activity start collapsed. LiteReview never pushes fixes.

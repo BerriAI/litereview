@@ -7,8 +7,8 @@ import httpx
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from . import github, tracing
-from .db import Job, ReviewPublication, Run, Session
+from . import github, review_sessions, tracing
+from .db import Job, ReviewFinding, ReviewPublication, Run, Session
 from .publication_lock import publication_lock
 from .reviews import GITHUB_COMMENT_CHARACTERS, TERMINAL, comment_parts, md, ordered_jobs, render_comment
 from .settings import settings
@@ -142,6 +142,12 @@ async def publish_findings(run, job, parent_id, state, key, allowed):
     links = dict(state.get("findings", {}))
     existing = None
     for index, finding in enumerate(job.result.get("findings", [])):
+        if job.config.get("session_id"):
+            with review_sessions.transaction(run.repo, run.pr) as db:
+                identity = f"{job.id}:{index}"
+                if not db.get(ReviewFinding, identity):
+                    db.add(ReviewFinding(id=identity, job_id=job.id, position=index,
+                                        session_id=job.config["session_id"]))
         if str(index) in links:
             continue
         path, line = finding.get("file"), finding.get("line")
@@ -187,6 +193,9 @@ async def publish_findings(run, job, parent_id, state, key, allowed):
                 if comment
                 else None
             )
+            if comment and job.config.get("session_id"):
+                with review_sessions.transaction(run.repo, run.pr) as db:
+                    db.get(ReviewFinding, f"{job.id}:{index}").comment_id = comment["id"]
         state["findings"] = links
         save_state(key, state)
     return links
@@ -215,7 +224,11 @@ async def publish_agent(run, job, jobs, existing, newer, allowed):
     if terminal:
         tracing.finish_job(job, run)
         links = await publish_findings(run, job, parent_id, state, key, allowed)
-        body = render_comment(run, [job], newer, agent_comment=True, all_jobs=jobs, finding_links=links)
+        with Session() as db:
+            decisions = {str(f.position): {"status": f.status, **f.decision} for f in db.scalars(
+                select(ReviewFinding).where(ReviewFinding.job_id == job.id))}
+        body = render_comment(run, [job], newer, agent_comment=True, all_jobs=jobs,
+                              finding_links=links, finding_decisions=decisions)
         await write_comments(run, body, existing, state, key)
         await remove_eyes(run, parent_id, state, key)
         state["complete"] = True
@@ -230,18 +243,45 @@ async def publish_run(run_id):
             await _publish_run(run_id)
 
 
+async def acknowledge(run_id):
+    """React after durable acceptance; ordinary publication retries failures."""
+    try:
+        with publication_lock(run_id) as acquired:
+            if not acquired:
+                return
+            with Session() as db:
+                run = db.get(Run, run_id)
+                if run.status == "rejected" or run.snapshot.get("request_only"):
+                    return
+            trigger = run.snapshot.get("trigger_comment_id")
+            key = f"run:{run.id}"
+            state = load_state(key)
+            if trigger and not state.get("acknowledged") and run.published < 2:
+                await add_eyes(run, trigger, state, key)
+                state["acknowledged"] = True
+                save_state(key, state)
+    except Exception:
+        import logging
+        logging.getLogger("litereview").exception("Could not acknowledge review %s; publication will retry", run_id)
+
+
 async def _publish_run(run_id):
     with Session() as db:
         run = db.get(Run, run_id)
-        jobs = ordered_jobs(run, db.scalars(select(Job).where(Job.run_id == run_id)).all())
+        if run.snapshot.get("reply"):
+            return  # Rebuttals publish into the original finding thread.
+        all_jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
+        jobs = ordered_jobs(run, all_jobs)
         if run.published == 2:
             return
-    done = all(j.status in TERMINAL for j in jobs)
+    done = all(j.status in TERMINAL for j in all_jobs)
     status = (
         "completed"
         if all(j.status == "completed" and not j.result.get("limitations") for j in jobs)
         else "incomplete"
     )
+    if jobs and all(j.status == "superseded" for j in jobs):
+        status = "superseded"
     if run.snapshot.get("harness_check"):
         if done:
             for job in jobs:
@@ -249,11 +289,31 @@ async def _publish_run(run_id):
     else:
         key = f"run:{run.id}"
         state = load_state(key)
-        if run.status == "rejected":
+        if run.snapshot.get("request_only"):
+            existing = await marked_comments(run, f"issues/{run.pr}/comments")
+            lines = [f"<!-- litereview:{run.id} -->", "### Review already requested", ""]
+            for notice in run.snapshot["notices"]:
+                lines.append(f"{md(notice['name'])} is already reviewing `{notice['head'][:12]}`. "
+                             f"[View existing review]({settings().public_url}/runs/{notice['run_id']}).")
+            run.comment_id = await write_comments(run, "\n\n".join(lines), existing, state, key)
+            status = "not_started"
+        elif run.status == "rejected":
             existing = await marked_comments(run, f"issues/{run.pr}/comments")
             run.comment_id = await write_comments(run, render_comment(run, []), existing, state, key)
             status = "rejected"
         else:
+            if run.snapshot.get("notices"):
+                notice_key = f"notice:{run.id}"
+                notice_state = load_state(notice_key)
+                if not notice_state.get("complete"):
+                    existing = await marked_comments(run, f"issues/{run.pr}/comments")
+                    body = f"<!-- litereview:{run.id}:notice -->\n\n" + "\n\n".join(
+                        f"{md(n['name'])} already has a review queued or running for `{n['head'][:12]}`. "
+                        f"[View review]({settings().public_url}/runs/{n['run_id']})."
+                        for n in run.snapshot["notices"])
+                    await write_comments(run, body, existing, notice_state, notice_key)
+                    notice_state["complete"] = True
+                    save_state(notice_key, notice_state)
             trigger = run.snapshot.get("trigger_comment_id")
             if trigger and not state.get("acknowledged"):
                 if not done or run.published == 1:

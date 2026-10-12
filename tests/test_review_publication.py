@@ -55,7 +55,10 @@ class GitHubFixture:
         body = kwargs.get("json")
         self.calls.append((method, suffix, body))
         if method == "GET" and suffix == "pulls/1":
-            return httpx.Response(200, json={"head": {"sha": self.head}})
+            return httpx.Response(200, json={"head": {"sha": self.head}, "base": {"sha": "b" * 40},
+                                            "state": "open", "title": "Test PR", "body": ""})
+        if method == "GET" and suffix.startswith("compare/"):
+            return httpx.Response(200, text=DIFF)
         if method == "GET":
             source = self.threads if suffix.startswith("pulls/") else self.comments
             page = int(suffix.split("page=")[-1])
@@ -70,12 +73,17 @@ class GitHubFixture:
                 self.reactions[suffix] = self.sequence
             return httpx.Response(200, json={"id": self.reactions[suffix]})
         if method == "PATCH":
-            comment = next(c for c in self.comments if c["id"] == int(suffix.split("/")[-1]))
+            comment = next(c for c in self.comments + self.threads if c["id"] == int(suffix.split("/")[-1]))
             comment.update(body)
             return httpx.Response(200, json=comment)
+        if method == "DELETE":
+            self.threads = [c for c in self.threads if c["id"] != int(suffix.split("/")[-1])]
+            return httpx.Response(204)
         assert method == "POST"
         self.sequence += 1
-        comment = {"id": self.sequence, **body, "user": {"type": "Bot"}}
+        comment = {"id": self.sequence, **body, "user": {"type": "Bot", "login": "litereview[bot]"}}
+        if suffix.endswith("/replies"):
+            comment["in_reply_to_id"] = int(suffix.split("/")[-2])
         (self.threads if suffix.startswith("pulls/") else self.comments).append(comment)
         return httpx.Response(201, json=comment)
 
@@ -120,7 +128,7 @@ async def test_agents_finish_independently_and_eyes_are_removed(publication):
     finish(fake.run_id, "failed")
     await reviews.publish(fake.run_id)
     assert len(fake.comments) == 2 and not fake.reactions
-    assert all("### ✅ reviewer" in c["body"] for c in fake.comments)
+    assert any("### ⚠️ reviewer" in c["body"] for c in fake.comments)
     assert any("Review incomplete." in c["body"] for c in fake.comments)
     calls = len(fake.calls)
     await reviews.publish(fake.run_id)

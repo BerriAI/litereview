@@ -52,16 +52,18 @@ export function ReviewResult({
   const findings = result.findings || [];
   const limitations = result.limitations || [];
   const checks = result.checks || [];
-  const finished = ["completed", "failed", "timed_out"].includes(job.status);
+  const finished = ["completed", "failed", "timed_out", "superseded"].includes(job.status);
   const incomplete =
     finished && (job.status !== "completed" || limitations.length > 0);
   return (
     <>
+      {job.config?.review_scope && <p className="meta">{job.config.review_scope === "incremental" ? "Incremental review" : "Full PR review"} · {job.config.scope_reason}</p>}
+      {result.rebuttal && <p><strong>{result.rebuttal.verdict === "withdraw" ? "Finding withdrawn" : result.rebuttal.verdict === "uphold" ? "Finding still applies" : "Unable to conclude"}</strong> · {result.rebuttal.reason}</p>}
       {!finished && (
         <div className="review-progress" role="status">
           <Loader2 size={16} className="spin" />
           <span>
-            {job.status === "queued"
+            {job.status === "blocked" ? "Waiting for this agent’s active review to finish…" : job.status === "queued"
               ? "Waiting to start…"
               : job.status === "starting"
                 ? "Preparing the review…"
@@ -94,7 +96,7 @@ export function ReviewResult({
             >
               {finding.severity}
             </Badge>
-            <span>{finding.title}</span>
+            <span>{job.finding_states?.[index]?.status === "withdrawn" ? <><s>{finding.title}</s> · Withdrawn</> : finding.title}</span>
           </summary>
           {finding.file && (
             <a
@@ -112,6 +114,7 @@ export function ReviewResult({
             </a>
           )}
           <ReviewMarkdown>{finding.explanation}</ReviewMarkdown>
+          {job.finding_states?.[index]?.reason && <ReviewMarkdown>{job.finding_states[index].reason}</ReviewMarkdown>}
           {finding.evidence?.length > 0 && (
             <details className="review-evidence">
               <summary>Evidence</summary>

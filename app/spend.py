@@ -223,13 +223,15 @@ def run_costs(db, runs):
 
 def dashboard(db):
     runs = db.execute(select(Run.id, Run.actor, Run.repo, Run.status)
-                      .where(Run.snapshot["harness_check"].as_boolean().is_not(True))
+                      .where(Run.snapshot["harness_check"].as_boolean().is_not(True),
+                             Run.snapshot["request_only"].as_boolean().is_not(True),
+                             Run.status != "superseded")
                       .order_by(Run.created_at.desc(), Run.id)).all()
     jobs = db.execute(select(Job.id, Job.run_id, Job.model_calls,
                              Job.config["agent_id"].as_string().label("agent_id"),
                              Job.config["name"].as_string().label("name"),
                              Job.config["fusion_parent_id"].as_string().label("fusion_parent_id"))
-                      .where(Job.run_id.in_([r.id for r in runs])).order_by(Job.id)).all()
+                      .where(Job.run_id.in_([r.id for r in runs]), Job.status != "superseded").order_by(Job.id)).all()
     costs = job_costs(db, [j.id for j in jobs])
     jobs_by_run = defaultdict(list)
     jobs_by_id = {job.id: job for job in jobs}

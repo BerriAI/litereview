@@ -3,11 +3,12 @@
 import hashlib
 import json
 import re
+import time
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from . import fusion, github, reviews
+from . import github, review_sessions, reviews
 from .access import permits
 from .db import AutomaticReviewClaim, Resource, Run, Session, uid
 
@@ -47,6 +48,7 @@ def claim_key(repository_id, number, head, config):
 
 
 async def accept(payload, delivery):
+    requested_at = time.time()
     state = github.setup_state()
     action = payload.get("action")
     event_pr = payload.get("pull_request", {})
@@ -78,7 +80,7 @@ async def accept(payload, delivery):
     # PostgreSQL serializes this repository; the unique claim also protects SQLite
     # and concurrent delivery races. No GitHub side effects happen in this path.
     for attempt in range(3):
-        with Session() as db:
+        with review_sessions.transaction(repo, number) as db:
             github_row = db.get(Resource, "github", with_for_update=True)
             current = github_row.data if github_row else {}
             if current.get("disabled") or current.get("generation", "") != state.get("generation", ""):
@@ -90,7 +92,8 @@ async def accept(payload, delivery):
             matched = matching_rules(saved, resources, payload, pr)
             groups = []
             for rule, target in matched:
-                group = {**target.data, "target_kind": "agent" if target.kind == "agents" else "group"}
+                group = {**target.data, "target_id": target.id,
+                         "target_kind": "agent" if target.kind == "agents" else "group"}
                 if target.kind == "agents":
                     group["members"] = [{"agent_id": target.id, "count": 1}]
                 groups.append(group)
@@ -106,17 +109,16 @@ async def accept(payload, delivery):
             pending = {k: c for k, c in configurations.items() if k not in claims}
             if not pending:
                 return next(iter(claims.values())).run_id
-            run = Run(id=uid(), delivery=delivery_key, repo=repo, pr=number,
+            run = Run(id=uid(), created_at=requested_at, delivery=delivery_key, repo=repo, pr=number,
                       actor=pr["user"]["login"], installation=installation, head=head, base=base,
                       snapshot={"trigger": {"type": "automatic", "event": action,
                                             "rule_ids": [r["id"] for r, _ in matched]},
                                 "groups": groups, "repository": {"id": saved.id, **{
                                     k: v for k, v in saved.data.items() if k not in ("test_secrets", "review_rules")}},
                                 "diff": diff, "title": pr["title"], "description": pr.get("body") or ""})
-            db.add(run)
-            for position, (key, cfg) in enumerate(pending.items()):
+            for key in pending:
                 db.add(AutomaticReviewClaim(key=key, run_id=run.id))
-                fusion.enqueue(db, run.id, {**cfg, "run_order": position})
+            review_sessions.enqueue(db, run, list(pending.values()))
             try:
                 db.commit()
                 return run.id

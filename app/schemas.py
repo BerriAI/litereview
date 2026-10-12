@@ -71,6 +71,7 @@ class AgentModel(ModelSelection):
 
 class Agent(ReviewTarget, AgentModel):
     instructions: str = Field(min_length=1)
+    review_mode: Literal["full", "incremental", "compare"] = "full"
     minimum_minutes: int = Field(default=0, ge=0, strict=True)
     maximum_minutes: int | None = Field(default=None, ge=1, strict=True)
     max_model_calls: int | None = Field(default=None, ge=1, strict=True)
@@ -200,12 +201,25 @@ class ReviewCheck(BaseModel):
     details: str
 
 
+class RebuttalDecision(BaseModel):
+    verdict: Literal["withdraw", "uphold", "uncertain"]
+    reason: str = Field(min_length=1)
+    evidence: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def withdrawal_requires_evidence(self):
+        if self.verdict == "withdraw" and not any(item.strip() for item in self.evidence):
+            raise ValueError("Withdrawing a finding requires verified evidence.")
+        return self
+
+
 class ReviewResult(BaseModel):
     status: Literal["completed", "failed", "timed_out"]
     summary: str
     findings: list[Finding] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     checks: list[ReviewCheck] = Field(default_factory=list)
+    rebuttal: RebuttalDecision | None = None
 
     @model_validator(mode="after")
     def required_checks_are_blockers(self):

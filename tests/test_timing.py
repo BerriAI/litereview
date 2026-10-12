@@ -25,7 +25,8 @@ def test_comments_only_select_names(body):
 
 @pytest.mark.parametrize(
     "tail",
-    ["t=10 security", "security t=5", "security t=5m", "security t=0", "security t=-1", "security t=1.5"],
+    ["t=10 security", "security t=5", "security t=5m", "security t=0", "security t=-1", "security t=1.5",
+     "security `t=5`", "security, t=5"],
 )
 def test_comment_time_options_are_rejected_with_ui_guidance(tail):
     with pytest.raises(ValueError, match="PR agents"):

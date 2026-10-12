@@ -34,13 +34,17 @@ GitHub commands accept **agents and groups** together. Their command names share
    @litereview frontend pentest security
    ```
 
-6. LiteReview adds 👀 to the request and a separate progress comment for each selected instance. Each comment switches from 👀 to ✅ and publishes that agent’s response as it finishes. Findings become linked inline threads where possible. Runs shows collapsed agent reports by default.
+6. LiteReview adds 👀 to the request and a separate progress comment for each selected instance. Each comment switches from 👀 to ✅ for completed work or ⚠️ for incomplete work and publishes that agent’s response as it finishes. Findings become linked inline threads where possible. Runs shows collapsed agent reports by default.
 
 If `frontend` and `pentest` are individual agents and `security` contains five instances, this runs seven independent jobs.
 
 Names are case-insensitive. Ignore repeated agent or group names within one command. A directly selected agent runs one instance; if it is also included through a group, both selections run independently. Expand different groups independently: an agent referenced in two selected groups runs once for each membership, including its configured instance count. Label results with the group, agent, and instance so this is visible.
 
-V1 accepts a command as the entire content of a new top-level PR comment. Unknown names or denied access reject the whole invocation with a short explanation. Only authorized callers receive configuration details. Ignore bot comments and ordinary issue comments. Edited comments and automatic reviews on pushes are outside v1.
+New top-level PR comments can include ordinary wording around a command, such as `@litereview code-review review this pls`. Match exact saved agent and group names after each mention within its Markdown paragraph; ignore other words and separate generated footers. Ignore command examples inside blockquotes, code blocks, inline code, or links. Extra wording does not become review instructions. A bare mention selects the default reviewer; a named request with no saved matches is rejected. Denied access to any matched target rejects the whole invocation with a short explanation. Only authorized callers receive configuration details. Ignore bot comments and ordinary issue comments. Edited comments do not retrigger reviews. Repository rules can request automatic reviews on pushes.
+
+Each repository–PR–agent combination has a persistent review session. At most one logical review is active, including its configured instances and fusion stages. A repeated request for the same commit and configuration links to existing work; one pending review retains the latest requested commit. Manual and automatic requests share this guard. Human replies to owned finding threads queue targeted evidence-based follow-ups: withdraw and resolve, uphold, or report uncertainty. Prior results remain immutable; finding decisions and history persist separately.
+
+Full PR review is the default. Agents may opt into incremental reruns from their last successful compatible review, or incremental plus a private full-review comparison. Failed/incomplete runs do not advance the baseline. Incompatible settings/base/history use the full diff. Comparison output stays in Runs and its cost remains visible. GitHub webhook delivery replaces the former missed-comment polling fallback.
 
 ## 4. Agent capabilities
 
@@ -152,7 +156,7 @@ The [agent control plane](https://github.com/LiteLLM-Labs/litellm-agent-control-
 4. For every job, create a fresh sandbox, stage the repository and diff, mount attached skills, and initialize enabled tools. Run configured setup only when the job needs the runnable application environment.
 5. Run Codex: request a model response, execute permitted tool calls, return tool results, and continue until it returns a structured review or reaches its limits.
 6. Persist results and artifacts. Terminate the sandbox in cleanup, with Modal’s required sandbox lifetime as a backstop.
-7. As each job reaches a terminal state, update its own GitHub comment with its response and links to inline finding threads on valid right-side lines of the captured diff. Keep unanchored or oversized findings in the agent comment. Demote model headings below the agent title. Recover marked comments and threads after lost responses. Replace the agent title’s 👀 with ✅ and remove its eyes reaction; remove the request’s eyes when every result is published. GitHub has no check-mark reaction. Keep incomplete status explicit. One failed agent does not discard other agents’ results.
+7. As each job reaches a terminal state, update its own GitHub comment with its response and links to inline finding threads on valid right-side lines of the captured diff. Keep unanchored or oversized findings in the agent comment. Demote model headings below the agent title. Recover marked comments and threads after lost responses. Replace the agent title’s 👀 with ✅ for completed work or ⚠️ for failed/incomplete work and remove its eyes reaction; remove the request’s eyes when every result is published. GitHub has no check-mark reaction. Keep incomplete status explicit. One failed agent does not discard other agents’ results.
 
 Jobs run concurrently subject to Modal capacity and a deployment concurrency limit. Show queued work honestly. Use atomic job claims and idempotent publication so retries do not duplicate reviews. Do not automatically rerun completed agents.
 
@@ -193,7 +197,7 @@ The build is ready to try when all of these work against a real test repository:
 7. Reject an unauthorized caller, handle a duplicated webhook once, and clean up sandboxes after completion and timeout.
 8. Verify the create/edit/reuse flows and run results on desktop and narrow screens using the specified UI standard.
 
-No auto-fixes, pushes, scheduled reviews, persistent chat sessions, custom agent runtimes, TOML import/export, or enterprise administration in this version. Codex subagents are available; the main reviewer submits the combined result.
+No auto-fixes, pushes, scheduled reviews, custom agent runtimes, TOML import/export, or enterprise administration in this version. Codex subagents are available; the main reviewer submits the combined result.
 
 ## 11. Build order
 
