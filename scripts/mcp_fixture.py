@@ -6,6 +6,7 @@ No external credentials or review workers are available. The database is tempora
 """
 
 import argparse
+import asyncio
 import os
 import tempfile
 import time
@@ -14,6 +15,8 @@ import time
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8769)
+    parser.add_argument("--read-delay", type=float, default=0, help="Delay the first workspace read for loading-state checks.")
+    parser.add_argument("--fail-first-read", action="store_true", help="Fail the first workspace read for recovery checks.")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="litereview-mcp-") as directory:
         os.environ.update(
@@ -27,10 +30,10 @@ def main():
             MODAL_TOKEN_ID="", MODAL_TOKEN_SECRET="", LITEREVIEW_TRACE_ENDPOINT="", LITEREVIEW_TRACE_API_KEY="",
         )
         import uvicorn
-        from fastapi.responses import RedirectResponse
+        from fastapi.responses import JSONResponse, RedirectResponse
         from starlette.routing import Route
 
-        from app.db import Resource, Session, SSOIdentity, SSOSession, init_db
+        from app.db import Job, Resource, Run, Session, SSOIdentity, SSOSession, init_db
         from app.main import app
         from app.schemas import SCHEMAS
         from app.security import digest, signed
@@ -38,6 +41,7 @@ def main():
         init_db()
         resources = [
             ("gateway", "connections", {"name": "Fixture gateway", "type": "gateway", "base_url": "https://models.example.test"}),
+            ("fixture-mcp", "connections", {"name": "Fixture MCP server", "type": "mcp", "base_url": "https://tools.example.test/mcp"}),
             ("review-skill", "skills", {"name": "code-review", "instructions": "Report independently verified bugs."}),
             ("oss", "agents", {"name": "oss-review", "connection_id": "gateway", "model": "fixture-cheap-model",
                 "instructions": "Review correctness.", "skill_ids": ["review-skill"], "trigger_access": "anyone",
@@ -58,6 +62,27 @@ def main():
                 audience="local-fixture", expires_at=time.time() + 86400))
             for rid, kind, data in resources:
                 db.add(Resource(id=rid, kind=kind, data=SCHEMAS[kind].model_validate(data).model_dump()))
+
+            for index in range(36):
+                db.add(Run(id=f"fixture-run-{index}", delivery=f"fixture-delivery-{index}", repo="example/widget",
+                           pr=100 + index, head="a" * 40, base="b" * 40, actor="fixture-author", status="completed",
+                           snapshot={"groups": [], "diff": "Synthetic PR diff"}))
+                db.add(Job(id=f"fixture-job-{index}", run_id=f"fixture-run-{index}", status="completed",
+                           config={"agent_id": "code", "name": "code-review", "model": "fixture-review-model", "instance": 1},
+                           result={"status": "completed", "summary": "Synthetic completed review for interface checks.",
+                                   "findings": [], "limitations": [], "screenshots": []}))
+
+        first_read = True
+
+        @app.middleware("http")
+        async def delayed_read(request, call_next):
+            nonlocal first_read
+            if request.url.path == "/api/workspace" and first_read:
+                first_read = False
+                await asyncio.sleep(max(0, args.read_delay))
+                if args.fail_first_read:
+                    return JSONResponse({"detail": "Fixture connection failed. Retry to reconnect."}, status_code=503)
+            return await call_next(request)
 
         async def login(request):
             response = RedirectResponse("/agents", 303)

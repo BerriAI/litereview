@@ -14,10 +14,12 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    event,
     func,
     inspect,
     select,
     text,
+    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.schema import CreateIndex
@@ -72,6 +74,7 @@ class Run(Base):
     installation: Mapped[int] = mapped_column(BigInteger, default=0)
     status: Mapped[str] = mapped_column(String(30), default="queued")
     snapshot: Mapped[dict] = mapped_column(JSON)
+    display_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True, deferred=True)
     comment_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     published: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str] = mapped_column(Text, default="")
@@ -84,6 +87,7 @@ class Job(Base):
     run_id: Mapped[str] = mapped_column(String(40), index=True)
     status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
     config: Mapped[dict] = mapped_column(JSON)
+    display_config: Mapped[dict | None] = mapped_column(JSON, nullable=True, deferred=True)
     token_hash: Mapped[str] = mapped_column(String(64), default="")
     sandbox_id: Mapped[str] = mapped_column(String(100), default="")
     started_at: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -91,6 +95,40 @@ class Job(Base):
     model_calls: Mapped[int] = mapped_column(Integer, default=0)
     result: Mapped[dict] = mapped_column(JSON, default=dict)
     logs: Mapped[list] = mapped_column(JSON, default=list)
+
+
+# Keep dashboard reads independent of immutable source, diffs and skill bundles.
+# These projections never replace the worker's original snapshot.
+JOB_DISPLAY_KEYS = (
+    "agent_id", "name", "group", "instance", "model", "run_order", "target_kind", "target_id",
+    "fusion_parent_id", "fusion_index", "fusion_stage", "comparison_parent_id", "session_id",
+    "review_scope", "scope_reason",
+)
+
+
+def run_display(snapshot):
+    return {**{k: snapshot[k] for k in ("trigger", "notices", "harness_check", "request_only") if k in snapshot},
+            "reply": True if snapshot.get("reply") is not None else None,
+            "groups": [{"name": g.get("name"), "members": g.get("members", [])}
+                       for g in snapshot.get("groups", [])]}
+
+
+def job_display(config):
+    return {**{k: config[k] for k in JOB_DISPLAY_KEYS if k in config}, "fusion": bool(config.get("fusion"))}
+
+
+@event.listens_for(Run, "before_insert")
+@event.listens_for(Run, "before_update")
+def project_run(mapper, connection, row):
+    if "snapshot" in row.__dict__:
+        row.display_snapshot = run_display(row.snapshot)
+
+
+@event.listens_for(Job, "before_insert")
+@event.listens_for(Job, "before_update")
+def project_job(mapper, connection, row):
+    if "config" in row.__dict__:
+        row.display_config = job_display(row.config)
 
 
 class Artifact(Base):
@@ -256,6 +294,23 @@ Session = sessionmaker(engine, expire_on_commit=False)
 
 def init_db():
     Base.metadata.create_all(engine)
+    # Additive migration: old API instances and existing Modal workers remain compatible.
+    for table, column, source, project in [
+        (Run, "display_snapshot", "snapshot", run_display),
+        (Job, "display_config", "config", job_display),
+    ]:
+        with engine.begin() as connection:
+            if column not in {c["name"] for c in inspect(connection).get_columns(table.__tablename__)}:
+                connection.execute(text(f"ALTER TABLE {table.__tablename__} ADD COLUMN {column} JSON"))
+        # Bound memory while backfilling old reviews, including large diffs and skill files.
+        while True:
+            with Session.begin() as db:
+                rows = db.execute(select(table.id, getattr(table, source)).where(
+                    getattr(table, column).is_(None)).limit(20)).all()
+                if not rows:
+                    break
+                for identity, data in rows:
+                    db.execute(update(table).where(table.id == identity).values({column: project(data)}))
     # create_all does not add indexes to a table that already exists.
     with engine.begin() as connection:
         connection.execute(CreateIndex(review_target_names, if_not_exists=True))

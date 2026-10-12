@@ -13,8 +13,9 @@ import jwt
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
-from sqlalchemy import func, select, update
+from sqlalchemy import String, cast, func, select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import with_expression
 
 from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
 
@@ -389,13 +390,15 @@ def list_resources(kind: str, query: str = "", offset: int = 0, limit: int | Non
             if limit is not None:
                 output = output[offset:offset + limit]
         if kind == "agents":
-            agent_id = Job.config["agent_id"].as_string()
+            display = func.coalesce(Job.display_config, Job.config)
+            snapshot = func.coalesce(Run.display_snapshot, Run.snapshot)
+            agent_id = display["agent_id"].as_string()
             counts = dict(db.execute(select(agent_id, func.count(func.distinct(Run.id)))
                           .join(Run, Run.id == Job.run_id)
-                          .where(Run.pr > 0, Run.snapshot["harness_check"].as_boolean().is_not(True),
-                                 Job.config["fusion_parent_id"].as_string().is_(None),
-                                 Job.config["comparison_parent_id"].as_string().is_(None),
-                                 Job.status != "superseded", Run.snapshot["reply"].as_string().is_(None))
+                          .where(Run.pr > 0, snapshot["harness_check"].as_boolean().is_not(True),
+                                 display["fusion_parent_id"].as_string().is_(None),
+                                 display["comparison_parent_id"].as_string().is_(None),
+                                 Job.status != "superseded", snapshot["reply"].as_string().is_(None))
                           .group_by(agent_id)).all())
             output = [{**public_resource(r), "usage_count": counts.get(r.id, 0)} for r in rows]
             output = sorted(output, key=lambda r: (-r["usage_count"], r["name"].lower(), r["id"]))
@@ -403,6 +406,12 @@ def list_resources(kind: str, query: str = "", offset: int = 0, limit: int | Non
             return {"items": output, "total": total, "has_more": offset + len(output) < total,
                     "next_offset": offset + len(output) if offset + len(output) < total else None}
         return output
+
+
+@app.get("/api/workspace", dependencies=[Depends(require_user)])
+def workspace():
+    """One authenticated bootstrap instead of seven concurrent requests per page."""
+    return {"resources": {kind: list_resources(kind) for kind in SCHEMAS}, "setup": setup_status()}
 
 
 @app.get("/api/resources/{kind}/{resource_id}", dependencies=[Depends(require_user)])
@@ -1081,10 +1090,13 @@ def spend_dashboard():
 
 
 @app.get("/api/runs")
-def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: int = 0, limit: int | None = None):
+def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: int = 0, limit: int | None = None, query: str = ""):
     from . import spend
     with Session() as db:
-        stmt = select(Run).where(Run.snapshot["harness_check"].as_boolean().is_not(True))
+        stmt = select(Run).where(func.coalesce(Run.display_snapshot, Run.snapshot)["harness_check"].as_boolean().is_not(True))
+        if query:
+            searchable = func.lower(Run.repo + " " + cast(Run.pr, String) + " " + Run.actor)
+            stmt = stmt.where(searchable.contains(query.lower().strip(), autoescape=True))
         if repo:
             stmt = stmt.where(func.lower(Run.repo) == repo.lower())
         if status:
@@ -1095,7 +1107,7 @@ def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: i
         stmt = stmt.order_by(Run.created_at.desc(), Run.id)
         if limit is not None:
             stmt = stmt.offset(offset).limit(limit)
-        rows = db.scalars(stmt).all()
+        rows = db.scalars(stmt.options(with_expression(Run.snapshot, func.coalesce(Run.display_snapshot, Run.snapshot)))).all()
         output = [run_public(r) for r in rows]
         if is_admin(user):
             costs = spend.run_costs(db, rows)
@@ -1107,13 +1119,21 @@ def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: i
 
 
 @app.get("/api/runs/{run_id}")
-def run_detail(run_id: str, user=Depends(require_user)):
+def run_detail(run_id: str, user=Depends(require_user), compact: bool = False):
     from . import spend
     with Session() as db:
-        run = db.get(Run, run_id)
+        run = db.scalar(select(Run).where(Run.id == run_id).options(
+            with_expression(Run.snapshot, func.coalesce(Run.display_snapshot, Run.snapshot))))
         if not run:
             raise HTTPException(404)
-        all_jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
+        job_query = select(Job).where(Job.run_id == run_id)
+        if compact:
+            job_query = job_query.options(with_expression(Job.config, func.coalesce(Job.display_config, Job.config)))
+        all_jobs = db.scalars(job_query).all()
+        artifacts = {}
+        for artifact in db.execute(select(Artifact.id, Artifact.name, Artifact.job_id).where(
+                Artifact.job_id.in_([j.id for j in all_jobs]))):
+            artifacts.setdefault(artifact.job_id, []).append({"id": artifact.id, "name": artifact.name})
         jobs = reviews.ordered_jobs(run, all_jobs)
         show_spend = is_admin(user)
         costs = spend.job_costs(db, [j.id for j in all_jobs]) if show_spend else {}
@@ -1136,17 +1156,14 @@ def run_detail(run_id: str, user=Depends(require_user)):
                     "logs",
                 )
             }
-            data["artifacts"] = [
-                {"id": a.id, "name": a.name}
-                for a in db.scalars(select(Artifact).where(Artifact.job_id == job.id))
-            ]
-            children = fusion.branches(db, job) if job.config.get("fusion") else []
+            data["artifacts"] = artifacts.get(job.id, [])
+            children = sorted([j for j in all_jobs if j.config.get("fusion_parent_id") == job.id],
+                              key=lambda j: j.config.get("fusion_index", 0))
             data["branches"] = [{
                 "id": child.id, "status": child.status, "config": child.config,
                 "model_calls": child.model_calls, "sandbox_id": child.sandbox_id,
                 "result": child.result, "logs": child.logs,
-                "artifacts": [{"id": a.id, "name": a.name} for a in db.scalars(
-                    select(Artifact).where(Artifact.job_id == child.id))],
+                "artifacts": artifacts.get(child.id, []),
             } for child in children]
             data["finding_states"] = {str(f.position): {"status": f.status, **f.decision}
                                       for f in db.scalars(select(ReviewFinding).where(ReviewFinding.job_id == job.id))}
@@ -1157,10 +1174,11 @@ def run_detail(run_id: str, user=Depends(require_user)):
             data["session_history"] = []
             if job.config.get("session_id"):
                 history_ids = select(Job.run_id).where(
-                    Job.config["agent_id"].as_string() == job.config["agent_id"])
+                    func.coalesce(Job.display_config, Job.config)["agent_id"].as_string() == job.config["agent_id"])
                 data["session_history"] = [run_public(r) for r in db.scalars(select(Run).where(
                     Run.repo == run.repo, Run.pr == run.pr, Run.id.in_(history_ids), Run.id != run.id
-                ).order_by(Run.created_at.desc()))]
+                ).order_by(Run.created_at.desc()).options(
+                    with_expression(Run.snapshot, func.coalesce(Run.display_snapshot, Run.snapshot))))]
             comparisons = [j for j in all_jobs if j.config.get("comparison_parent_id") == job.id]
             data["comparisons"] = [{"id": j.id, "status": j.status, "config": j.config,
                                     "result": j.result, **({"spend": spend.cost_summary(
@@ -1422,9 +1440,10 @@ def frontend(path: str):
     root = Path(__file__).resolve().parent.parent / "frontend" / "dist"
     requested = (root / path).resolve()
     if requested.is_relative_to(root) and requested.is_file():
-        return FileResponse(requested)
+        return FileResponse(requested, headers={"Cache-Control": "public, max-age=31536000, immutable"}
+                            if path.startswith("assets/") else {"Cache-Control": "public, max-age=86400"})
     if (root / "index.html").exists():
-        return FileResponse(root / "index.html")
+        return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
     return JSONResponse(
         {"detail": "Build the frontend: cd frontend && npm ci && npm run build"}, status_code=503
     )

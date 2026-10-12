@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api, ApiError } from "./api";
+import { LoadingState } from "./request-state";
 
 type Cost = { cost_usd: number | null; complete: boolean; estimated: boolean };
 type Summary = { runs: number; cost_usd: number | null; average_cost_usd: number | null; priced_runs: number; unpriced_runs: number; estimated: boolean };
@@ -20,29 +21,38 @@ export function SpendPage() {
   const [data, setData] = useState<SpendData | null>(null);
   const [error, setError] = useState("");
   const [group, setGroup] = useState<"users" | "repositories" | "agents">("agents");
+  const [revision, setRevision] = useState(0);
+  const retry = () => { setError(""); setRevision(v => v + 1); };
   useEffect(() => {
-    let active = true;
+    let active = true, inFlight = false, loaded = false;
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const load = async () => {
+      if (!active || inFlight) return;
+      clearTimeout(timer);
+      if (document.visibilityState !== "visible") return;
+      inFlight = true;
       try {
-        const next = await api("/spend");
-        if (active) { setData(next); setError(""); }
+        const next = await api("/spend", { signal: controller.signal, background: loaded });
+        if (active) { setData(next); setError(""); loaded = true; }
       } catch (err) {
         if (active) {
           if (err instanceof ApiError && [401, 403].includes(err.status)) setData(null);
           setError((err as Error).message);
         }
       }
-      finally { if (active) timer = setTimeout(load, 15000); }
+      finally { inFlight = false; if (active) timer = setTimeout(load, 15000); }
     };
     load();
-    return () => { active = false; clearTimeout(timer); };
-  }, []);
-  if (!data) return error ? <div className="error" role="alert">{error}</div> : <p>Loading spend…</p>;
+    const visible = () => { if (document.visibilityState === "visible") void load(); };
+    document.addEventListener("visibilitychange", visible);
+    return () => { active = false; clearTimeout(timer); controller.abort(); document.removeEventListener("visibilitychange", visible); };
+  }, [revision]);
+  if (!data) return <LoadingState label="Loading spend…" error={error} retry={retry} />;
   const total = data.total;
   const label = { users: "User", repositories: "Repository", agents: "Agent" }[group];
   return <div className="spend-page">
-    {error && <div className="error" role="alert">{error}</div>}
+    {error && <div className="error" role="alert">{error} <button onClick={retry}>Retry</button></div>}
     <dl className="spend-summary">
       <div><dt>Total cost</dt><dd>{dollars(total.cost_usd)}{total.unpriced_runs > 0 && total.cost_usd != null ? "+" : ""}</dd><small>Model spend · USD · All time</small></div>
       <div><dt>Total runs</dt><dd>{total.runs.toLocaleString()}</dd><small>PR reviews, including failed runs</small></div>
