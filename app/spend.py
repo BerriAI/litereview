@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 import httpx
 from sqlalchemy import case, func, select
 
-from .db import Job, ModelUsage, Run, Session, uid
+from .db import Job, ModelUsage, Resource, Run, Session, uid
 
 logger = logging.getLogger(__name__)
 PRICE_KEYS = (
@@ -223,24 +223,57 @@ def run_costs(db, runs):
 
 def dashboard(db):
     runs = db.execute(select(Run.id, Run.actor, Run.repo, Run.status)
-                      .where(Run.snapshot["harness_check"].as_boolean().is_not(True))).all()
-    costs = run_costs(db, runs)
+                      .where(Run.snapshot["harness_check"].as_boolean().is_not(True))
+                      .order_by(Run.created_at.desc(), Run.id)).all()
+    jobs = db.execute(select(Job.id, Job.run_id, Job.model_calls,
+                             Job.config["agent_id"].as_string().label("agent_id"),
+                             Job.config["name"].as_string().label("name"),
+                             Job.config["fusion_parent_id"].as_string().label("fusion_parent_id"))
+                      .where(Job.run_id.in_([r.id for r in runs])).order_by(Job.id)).all()
+    costs = job_costs(db, [j.id for j in jobs])
+    jobs_by_run = defaultdict(list)
+    jobs_by_id = {job.id: job for job in jobs}
+    for job in jobs:
+        jobs_by_run[job.run_id].append(job)
+    run_summaries = {run.id: cost_summary(jobs_by_run[run.id], costs) for run in runs}
     users, repos = defaultdict(list), defaultdict(list)
+    agents, agent_runs, agent_costs = {}, defaultdict(list), defaultdict(dict)
+    names = dict(db.execute(select(Resource.id, Resource.data["name"].as_string())
+                            .where(Resource.kind == "agents")).all())
     for run in runs:
         users[run.actor.casefold()].append(run)
         repos[run.repo.casefold()].append(run)
+        agent_jobs = defaultdict(list)
+        for job in jobs_by_run[run.id]:
+            parent = jobs_by_id.get(job.fusion_parent_id)
+            source = parent if parent and parent.run_id == run.id else job
+            agent_id, name = source.agent_id, source.name or "Unknown agent"
+            key = agent_id or "legacy:" + name.casefold()
+            agents.setdefault(key, {"id": key, "name": names.get(agent_id, name),
+                                    "deleted": bool(agent_id and agent_id not in names)})
+            agent_jobs[key].append(job)
+        for key, grouped_jobs in agent_jobs.items():
+            # Multiple instances/groups and all fusion stages contribute cost,
+            # but each agent counts this PR run only once.
+            agent_runs[key].append(run)
+            agent_costs[key][run.id] = cost_summary(grouped_jobs, costs)
 
-    def aggregate(rows):
-        known = [costs[r.id] for r in rows if costs[r.id]["cost_usd"] is not None]
-        complete = [costs[r.id] for r in rows if costs[r.id]["complete"]
+    def aggregate(rows, summaries):
+        known = [summaries[r.id] for r in rows if summaries[r.id]["cost_usd"] is not None]
+        complete = [summaries[r.id] for r in rows if summaries[r.id]["complete"]
                     and r.status in ("completed", "incomplete", "failed", "canceled")]
         return {
             "runs": len(rows), "cost_usd": sum(c["cost_usd"] for c in known) if known or not rows else None,
             "average_cost_usd": sum(c["cost_usd"] or 0 for c in complete) / len(complete) if complete else None,
-            "priced_runs": len(complete), "unpriced_runs": sum(not costs[r.id]["complete"] for r in rows),
+            "priced_runs": len(complete), "unpriced_runs": sum(not summaries[r.id]["complete"] for r in rows),
             "estimated": any(c["estimated"] for c in known),
         }
     def breakdown(groups):
-        return sorted([{"name": name, **aggregate(rows)} for name, rows in groups.items()],
+        return sorted([{"name": name, **aggregate(rows, run_summaries)} for name, rows in groups.items()],
                       key=lambda row: (-(row["cost_usd"] or 0), row["name"]))
-    return {"total": aggregate(runs), "users": breakdown(users), "repositories": breakdown(repos)}
+    agent_breakdown = sorted(
+        [{**agents[key], **aggregate(rows, agent_costs[key])} for key, rows in agent_runs.items()],
+        key=lambda row: (-(row["cost_usd"] or 0), row["name"].casefold(), row["id"]),
+    )
+    return {"total": aggregate(runs, run_summaries), "users": breakdown(users),
+            "repositories": breakdown(repos), "agents": agent_breakdown}

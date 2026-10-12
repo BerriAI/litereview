@@ -8,9 +8,13 @@ For deployment, backups, and updates, start with [Operate and update](DEPLOYMENT
 
 ## Track review spend
 
-Admins can open **Spend** for all-time model cost, PR run count, and average cost per run. Use **By user** or **By repository** for the same breakdown. Admins also see each review’s model cost in **Runs**, including every fusion branch and the final review pass. Other members see no costs; the API enforces the same restriction. Configure spend admins with [`ADMIN_EMAILS`](DEPLOYMENT.md#spend-admins).
+Admins can open **Spend** for all-time model cost, PR run count, and average cost per run. Use **By agent**, **By user**, or **By repository** for the same breakdown. Each agent counts a PR run once, including use through groups; its cost includes all instances, fusion branches, and the final review pass. Runs with multiple agents count toward each agent, while the workspace total counts the run once. Renamed agents keep their history and deleted agents retain their recorded spend. Admins also see each review’s model cost in **Runs**, including every fusion branch and the final review pass. Other members see no costs; the API enforces the same restriction. Grant additional admin roles in **People → Make admin** after [configuring the first admin](DEPLOYMENT.md#spend-admins).
 
 Costs use the gateway’s reported amount when available. Otherwise, LiteReview estimates from token usage, cached tokens, and available model rates; these amounts are labeled **est.** Unknown costs appear as **Unavailable**, and a **+** marks a partial total. Older runs have no recorded costs. Average cost includes only finished runs with complete cost data. Agent checks, Modal charges, and hosting are excluded. These totals are usage tracking, not an invoice or spending limit.
+
+![Spend by agent, including estimated and unavailable costs](images/agent-spend.png)
+
+Example workspace with local test data.
 
 ## Optional tracing with Lens
 

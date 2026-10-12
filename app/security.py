@@ -51,20 +51,24 @@ def require_user(request: Request):
 
 
 def is_admin(user):
-    """Authorize an authenticated identity using current server configuration."""
+    """Recheck configuration and saved roles for each authenticated request."""
     if not user:
         return False
     if settings().sso_required:
-        return (
-            user.get("auth") == "google"
-            and user.get("email", "").lower() in settings().spend_admin_emails
-        )
+        if user.get("auth") != "google":
+            return False
+        if user.get("email", "").lower() in settings().spend_admin_emails:
+            return True
+        from .db import Session, WorkspaceAdmin
+
+        with Session() as db:
+            return db.get(WorkspaceAdmin, user.get("sub", "")) is not None
     return user.get("login") == "owner" or user.get("login", "").lower() in settings().admins
 
 
 def require_admin(user=Depends(require_user)):
     if not is_admin(user):
-        raise HTTPException(403, "Spend is available to workspace admins only.")
+        raise HTTPException(403, "This action is available to workspace admins only.")
     return user
 
 

@@ -35,7 +35,7 @@ The included [Render Blueprint](render.yaml) provisions the web service and Post
 
 **[Create your workspace →](docs/DEPLOYMENT.md)** The guide walks through credentials, deployment, GitHub connection, and a first reviewer. GitHub App credentials are created by the guided setup; model keys are added in the UI. You do not need a separate Modal app deployment or Lens installation.
 
-Render hosting, Modal sandboxes, and model calls incur charges. This beta supports one trusted team per deployment: every admitted member can manage shared configuration and connections. Spend visibility is restricted to configured admins. Read the [security boundary](SECURITY.md#intended-deployment-boundary) before connecting private repositories or shared tools.
+Render hosting, Modal sandboxes, and model calls incur charges. This beta supports one trusted team per deployment: every admitted member can manage shared configuration and connections. Spend visibility and admin-role changes are restricted to admins. Read the [security boundary](SECURITY.md#intended-deployment-boundary) before connecting private repositories or shared tools.
 
 ## Start a review
 

@@ -47,6 +47,7 @@ def return_path(value):
             "/settings",
             "/people",
             "/runs",
+            "/spend",
             "/connections",
             "/access",
         }

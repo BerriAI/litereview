@@ -225,11 +225,19 @@ export function People({
   targets,
   edit,
   reset,
+  isAdmin,
+  currentSub,
+  busy,
+  setRole,
 }: {
   rows: Item[];
   targets: Item[];
   edit: (row: Item) => void;
   reset: (row: Item) => void;
+  isAdmin: boolean;
+  currentSub: string;
+  busy: boolean;
+  setRole: (row: Item, role: "admin" | "member") => void;
 }) {
   if (!rows.length)
     return (
@@ -248,58 +256,97 @@ export function People({
     not_signed_in: "Awaiting Google sign-in",
   };
   return (
-    <div className="people-list">
-      {rows.map((row) => (
-        <article className="person-row" key={row.id}>
-          <div className="person-identity">
-            <strong>{row.email || row.name}</strong>
-            <small>
-              {row.github_login
-                ? `@${row.github_login}`
-                : row.status === "not_signed_in"
-                  ? `@${row.name} · saved restriction`
-                  : "Google account"}
-            </small>
-          </div>
-          <div>
-            <Badge tone={row.status === "ready" ? "green" : "amber"}>
-              {statuses[row.status]}
-            </Badge>
-          </div>
-          <div className="person-access">
-            <strong>
-              {row.scope === "all"
-                ? "All agents and groups"
-                : row.target_ids.length
-                  ? row.target_ids
-                      .map(
-                        (id: string) => targets.find((t) => t.id === id)?.name,
-                      )
-                      .filter(Boolean)
-                      .join(", ")
-                  : "Reviews blocked"}
-            </strong>
-            <small>
-              {row.inherited ? "Workspace default" : "Custom access"}
-            </small>
-          </div>
-          <div className="resource-actions">
-            {(row.github_login || row.status === "not_signed_in") && (
-              <button onClick={() => edit(row)}>Edit access</button>
-            )}
-            {!row.inherited && (
-              <button
-                className="icon"
-                aria-label={`Reset access for ${row.name}`}
-                title="Reset to workspace default"
-                onClick={() => reset(row)}
-              >
-                <RotateCcw size={15} />
-              </button>
-            )}
-          </div>
-        </article>
-      ))}
-    </div>
+    <>
+      {isAdmin && (
+        <p className="meta">
+          Admins can view all workspace spend and manage admin roles. Choose
+          Make admin beside a teammate to grant access immediately. GitHub
+          linking is not required.
+        </p>
+      )}
+      <div className="people-list">
+        {rows.map((row) => (
+          <article className="person-row" key={row.id}>
+            <div className="person-identity">
+              <strong>{row.email || row.name}</strong>
+              {row.identity_sub && (
+                <small>
+                  {row.is_admin ? "Admin" : "Member"}
+                  {row.identity_sub === currentSub ? " · You" : ""}
+                  {row.admin_source === "configuration"
+                    ? " · Managed by deployment"
+                    : ""}
+                </small>
+              )}
+              <small>
+                {row.github_login
+                  ? `@${row.github_login}`
+                  : row.status === "not_signed_in"
+                    ? `@${row.name} · saved restriction`
+                    : "Google account"}
+              </small>
+            </div>
+            <div>
+              <Badge tone={row.status === "ready" ? "green" : "amber"}>
+                {statuses[row.status]}
+              </Badge>
+            </div>
+            <div className="person-access">
+              <strong>
+                {row.scope === "all"
+                  ? "All agents and groups"
+                  : row.target_ids.length
+                    ? row.target_ids
+                        .map(
+                          (id: string) =>
+                            targets.find((t) => t.id === id)?.name,
+                        )
+                        .filter(Boolean)
+                        .join(", ")
+                    : "Reviews blocked"}
+              </strong>
+              <small>
+                {row.inherited ? "Workspace default" : "Custom access"}
+              </small>
+            </div>
+            <div className="resource-actions">
+              {isAdmin &&
+                row.identity_sub &&
+                (row.is_admin || row.status !== "sign_in_required") &&
+                row.admin_source !== "configuration" &&
+                (row.is_admin && row.identity_sub === currentSub ? (
+                  <small>Another admin can remove your role.</small>
+                ) : (
+                  <button
+                    disabled={busy}
+                    aria-label={`${row.is_admin ? "Remove admin role from" : "Make admin:"} ${row.email}`}
+                    onClick={() =>
+                      setRole(row, row.is_admin ? "member" : "admin")
+                    }
+                  >
+                    {row.is_admin ? "Remove admin" : "Make admin"}
+                  </button>
+                ))}
+              {(row.github_login || row.status === "not_signed_in") && (
+                <button disabled={busy} onClick={() => edit(row)}>
+                  Edit access
+                </button>
+              )}
+              {!row.inherited && (
+                <button
+                  className="icon"
+                  disabled={busy}
+                  aria-label={`Reset access for ${row.name}`}
+                  title="Reset to workspace default"
+                  onClick={() => reset(row)}
+                >
+                  <RotateCcw size={15} />
+                </button>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </>
   );
 }

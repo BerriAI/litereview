@@ -106,7 +106,7 @@ const descriptions = {
   models: "Model providers and gateways available to your agents.",
   skills: "Reusable instructions and files for your agents.",
   runs: "Review progress, findings, and visual evidence from each agent.",
-  spend: "Model costs across reviews, people, and repositories.",
+  spend: "Model costs across agents, reviews, people, and repositories.",
 };
 function App() {
   const [session, setSession] = useState<any>(undefined);
@@ -271,10 +271,12 @@ function App() {
         });
     };
     refresh();
+    const timer = setInterval(refresh, 15000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       alive = false;
+      clearInterval(timer);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
@@ -615,6 +617,13 @@ function App() {
       });
   };
   const testConnection = (item: Row) => mutate(() => discoverConnection(item));
+  const setPersonRole = (person: Row, role: "admin" | "member") => mutate(async () => {
+    setNotice("");
+    const result = await api(`/people/${encodeURIComponent(person.identity_sub)}/role`, send("PUT", { role }));
+    setStore(current => ({ ...current, access: current.access.map(row =>
+      row.identity_sub === person.identity_sub ? { ...row, ...result } : row) }));
+    setNotice(role === "admin" ? `${person.email} is now an admin.` : `Admin access removed for ${person.email}.`);
+  });
   const modelConnections = store.connections.filter((c) => ["openai", "gateway"].includes(c.type));
   const mcpConnections = store.connections.filter((c) => c.type === "mcp");
   const needsRepositories =
@@ -1271,6 +1280,10 @@ function App() {
             <People
               rows={rows}
               targets={[...store.agents, ...store.groups]}
+              isAdmin={isAdmin}
+              currentSub={session.user.sub}
+              busy={busy}
+              setRole={setPersonRole}
               edit={(row) => edit("access", row)}
               reset={(row) => remove("access", row)}
             />

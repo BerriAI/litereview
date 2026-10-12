@@ -209,6 +209,12 @@ export function Documentation() {
                 reviews. Existing restrictions stay in place.
               </p>
               <p>
+                Admins can choose Make admin beside a signed-in teammate in People.
+                Admins can view all workspace spend and manage admin roles. Changes
+                take effect immediately, without linking GitHub or signing in again.
+                Use Remove admin to revoke a role granted in People.
+              </p>
+              <p>
                 New repositories allow all reviewers; narrow access under
                 Repositories → repository options → Review permissions. Callers
                 need a GitHub account linked after Google sign-in and GitHub
@@ -445,11 +451,13 @@ export function Documentation() {
           <h2>Track review spend</h2>
           <p>
             Admins can open <a href="/spend">Spend</a> for total model cost, PR run count,
-            and average cost per run. Choose By user or By repository to see
+            and average cost per run. Choose By agent, By user, or By repository to see
             the same breakdown. Runs also shows each review’s model cost,
             including every fusion model and the final review pass. Other members
-            see no costs. The deployment’s ADMIN_EMAILS setting controls which
-            Google accounts can view spend.
+            see no costs. Each agent counts a PR run once; its costs include every
+            instance and fusion stage, including use through groups. Deleted agents
+            retain their recorded spend. Admins manage additional admin roles in People;
+            the deployment’s ADMIN_EMAILS setting supplies the initial admins.
           </p>
           <p>
             Costs use reported gateway amounts or estimates from token usage,

@@ -164,6 +164,13 @@ class SSOSession(Base):
     expires_at: Mapped[float] = mapped_column(Float, index=True)
 
 
+class WorkspaceAdmin(Base):
+    __tablename__ = "workspace_admins"
+    identity_sub: Mapped[str] = mapped_column(String(255), primary_key=True)
+    granted_by: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[float] = mapped_column(Float, default=time.time)
+
+
 class LoginState(Base):
     __tablename__ = "login_states"
     state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)

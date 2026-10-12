@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from .db import Resource, Session, SSOIdentity
+from .db import Resource, Session, SSOIdentity, WorkspaceAdmin
 from .settings import settings
 
 
@@ -58,7 +58,10 @@ def people(db, grants):
     from .sso import approved_identity
 
     rows, used = [], set()
+    admins = set(db.scalars(select(WorkspaceAdmin.identity_sub)))
     for identity in db.scalars(select(SSOIdentity).order_by(SSOIdentity.email)):
+        configured_admin = identity.email.lower() in settings().spend_admin_emails
+        admin = configured_admin or identity.sub in admins
         login = identity.github_login.lower() if identity.github_id else ""
         override = caller_grant(grants, login, identity.sub)
         if override:
@@ -71,6 +74,8 @@ def people(db, grants):
                 "email": identity.email,
                 "github_login": login,
                 "identity_sub": identity.sub,
+                "is_admin": admin,
+                "admin_source": "configuration" if configured_admin else "people" if admin else None,
                 "scope": override.data["scope"] if override else "all",
                 "target_ids": override.data["target_ids"] if override else [],
                 "inherited": override is None,
