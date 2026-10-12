@@ -11,7 +11,7 @@ def agent_instructions(cfg, clock, skills):
         for rule in rules:
             instructions += f"\n## {rule['name']} (rule_id: {rule['id']})\n{rule['instructions']}\n"
             instructions += "Required check.\n" if rule.get("required", True) else "Optional check.\n"
-        instructions += "\nReturn a check for each enabled rule using its exact rule_id. Explain the evidence and mark passed, failed, or not_run honestly. A missing credential, mock, or skipped run cannot count as executed proof. Follow each rule's required setting; do not silently waive required verification.\n"
+        instructions += "\nReturn a check for each enabled rule using its exact rule_id. Explain the evidence and mark passed, failed, or not_run honestly. Report missing credentials and skipped runs honestly. Assess mocked evidence against the saved rule; never describe mocked dependencies as real integrations. Follow each rule's required setting; do not silently waive required verification.\n"
     if cfg.get("task") == "reply":
         instructions = f"""Assess the single finding and human reply in review.reply. Read the entire supplied
 thread, inspect the relevant current code, and verify the technical argument. Original review guidance:
