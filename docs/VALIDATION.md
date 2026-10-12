@@ -10,7 +10,7 @@ The October 10, 2026 pre-release baseline at commit `7a6238b` passed **273 tests
 
 ## Review sessions and finding replies
 
-Regression tests cover simultaneous manual/automatic requests, latest-request queuing, out-of-order acceptance, restart recovery, incremental baseline fallbacks, private comparison publication and admin-only cost details. Finding-reply tests cover permissions, duplicate deliveries, all three verdicts, incomplete or stale verification, thread selection, and recovery after lost GitHub responses, including replies split across multiple comments.
+Regression tests cover simultaneous manual/automatic requests, latest-request queuing, out-of-order acceptance, restart recovery, incremental baseline fallbacks, private comparison publication and admin-only cost details. Finding-reply tests cover permissions, duplicate deliveries, all three verdicts, incomplete or stale verification, thread selection, and recovery after lost GitHub responses, including replies split across multiple comments. A round-trip test passes each verdict from a signed webhook through worker bootstrap, the real tool bridge, compressed result submission, and publication; it does not insert the decision directly into the database.
 
 The review-scope editor, waiting state, withdrawn findings, session history, and separate comparison costs were checked in an isolated local browser preview. The run layout was also checked at 390px width. These checks used synthetic data with review workers disabled. Provider and GitHub calls in the regression tests are mocked; actual rebuttal judgment, live thread resolution, and incremental-review quality still need an opt-in deployment check. No paid review is required to run the suite.
 
@@ -20,13 +20,14 @@ LiteReview runs Codex 0.158.0, pinned in `runner/catalog.py`. Automated tests ex
 
 The September 2026 live checks exercised this Codex version in Modal with a compatible gateway model, including sample skills, terminal commands, internet access, browser and desktop interaction, a configured MCP call, and a seeded defect review. Prior integration checks also covered signed GitHub webhooks, installation-authenticated source downloads, App-authored results, duplicate-delivery handling, and simultaneous sandboxes. Historical evidence is not a claim that a new deployment has completed a review.
 
-CI also installs the pinned Codex package and runs `scripts.codex_smoke` against a local model fixture. This checks a complete 2.7 MB Unicode context file, native terminal execution, instruction preservation, structured MCP submission, and the same session and cache key after a timed continuation. It uses no provider credentials or paid inference and does not measure actual cache hits. To repeat it from the repository root:
+CI also installs the pinned Codex package and runs `scripts.codex_smoke` against a local model fixture. This checks a complete 2.7 MB Unicode context file, native terminal execution, instruction preservation, structured MCP submission, and the same session and cache key after a timed continuation. The reply variant uses the actual follow-up instructions and verifies that the CLI rejects a withdrawal without evidence before accepting a supported structured verdict. It uses no provider credentials or paid inference and does not measure actual cache hits or model judgment. To repeat both from the repository root:
 
 ```sh
 codex_test_dir="$(mktemp -d)"
 codex_version="$(uv run python -c 'from runner.catalog import HARNESS_VERSIONS; print(HARNESS_VERSIONS["codex"])')"
 npm install --prefix "$codex_test_dir" --omit=dev --no-package-lock "@openai/codex@$codex_version"
 uv run python -m scripts.codex_smoke --codex "$codex_test_dir/node_modules/.bin/codex"
+uv run python -m scripts.codex_smoke --codex "$codex_test_dir/node_modules/.bin/codex" --reply
 ```
 
 The command succeeds when its JSON output reports `structured_review_completed`, `same_thread`, and `same_prompt_cache_key` as `true`. A fixture failure is a runtime compatibility issue; it does not test a production provider's credentials or model quality.

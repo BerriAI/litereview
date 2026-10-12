@@ -227,6 +227,56 @@ async def test_finish_requires_structured_supported_verdict(publication, owner):
     assert owner.post(endpoint, headers=headers, json=body).status_code == 200
 
 
+@pytest.mark.parametrize("verdict", ["withdraw", "uphold", "uncertain"])
+async def test_reply_roundtrip_through_bootstrap_worker_and_publication(publication, owner, monkeypatch, verdict):
+    import gzip
+    import json
+    from unittest.mock import AsyncMock
+
+    from runner.bridge import Bridge
+    from runner.instructions import agent_instructions
+    from runner.tools import Toolset
+
+    root = await original_finding(publication)
+    resolver = AsyncMock()
+    monkeypatch.setattr(github, "resolve_review_thread", resolver)
+    payload = reply_payload(publication, root)
+    run_id = deliver(owner, payload, "worker-roundtrip", "pull_request_review_comment").json()["run_id"]
+    await review_sessions.prepare()
+    with Session.begin() as db:
+        job = db.scalar(select(Job).where(Job.run_id == run_id))
+        job.status, job.token_hash = "running", digest("reply-worker-token")
+        endpoint = f"/api/internal/jobs/{job.id}/"
+    headers = {"Authorization": "Bearer reply-worker-token"}
+    bootstrap = owner.get(endpoint + "bootstrap", headers=headers)
+    assert bootstrap.status_code == 200
+    data = bootstrap.json()
+    assert data["pr"]["reply"]["comments"][-1]["body"] == payload["comment"]["body"]
+    assert data["pr"]["reply"]["finding"]["title"] == FINDING["title"]
+    assert data["pr"]["head"] == publication.head
+    assert data["config"]["minimum_review_seconds"] == 0
+    tools = Toolset(data, AsyncMock())
+    instructions = agent_instructions(data["config"], tools.clock, "")
+    assert "single finding" in instructions and "untrusted task data" in instructions
+    bridge = Bridge(tools, AsyncMock(), data["config"])
+    result = {"summary": "Verified reply", "findings": [], "limitations": [],
+              "rebuttal": {"verdict": "withdraw", "reason": "Checked the guard", "evidence": []}}
+    assert (await bridge.call("lr_finish_review", result))["isError"]
+    assert not bridge.finished.is_set()
+    result["rebuttal"].update(verdict=verdict, evidence=["app.py:2 rejects the input."] if verdict == "withdraw" else [])
+    assert not (await bridge.call("lr_finish_review", result))["isError"]
+    response = owner.post(endpoint + "finish", content=gzip.compress(json.dumps(bridge.result).encode()),
+                          headers={**headers, "Content-Encoding": "gzip", "Content-Type": "application/json"})
+    assert response.status_code == 200
+    await rebuttals.publish_pending()
+    with Session() as db:
+        assert db.get(Run, run_id).published == 2
+        finding = db.scalar(select(ReviewFinding).where(ReviewFinding.comment_id == root))
+        assert finding.status == ("withdrawn" if verdict == "withdraw" else "open")
+    assert resolver.await_count == (1 if verdict == "withdraw" else 0)
+    assert any(f"litereview:{run_id}:reply" in c["body"] for c in publication.threads)
+
+
 async def test_legacy_published_thread_is_adopted(publication):
     from app.db import ReviewSession
     fake = publication
