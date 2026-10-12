@@ -120,6 +120,8 @@ async def test_reply_publication_recovers_lost_post_without_duplicate(publicatio
     await rebuttals.publish_pending()
     with Session() as db:
         assert db.get(Run, run_id).published != 2
+    now = rebuttals.time.time()
+    monkeypatch.setattr(rebuttals.time, "time", lambda: now + 61)
     await rebuttals.publish_pending()
     comments = [c for c in fake.threads if f"litereview:{run_id}:reply" in c["body"]]
     assert len(comments) == (2 if long_reply else 1)
@@ -135,15 +137,24 @@ async def test_changed_pr_removes_old_reply_continuation_on_retry(publication, m
 
     fake = publication
     root = await original_finding(fake)
-    monkeypatch.setattr(github, "resolve_review_thread", AsyncMock(side_effect=httpx.ReadTimeout("retry")))
+    monkeypatch.setattr(github, "resolve_review_thread", AsyncMock())
     run_id = await rebuttals.accept(reply_payload(fake, root), "reply")
     job_id = finish_reply(run_id, "withdraw")
     with Session.begin() as db:
         job = db.get(Job, job_id)
         job.result = {**job.result, "rebuttal": {**job.result["rebuttal"], "reason": "Evidence.\n" * 8000}}
+    async def lost_last_post(*args, **kwargs):
+        result = await fake.request(*args, **kwargs)
+        if args[2] == "POST" and ":part:2 -->" in kwargs.get("json", {}).get("body", ""):
+            raise httpx.ReadTimeout("Lost response after the final reply part")
+        return result
+
+    monkeypatch.setattr(github, "repo_request", lost_last_post)
     await rebuttals.publish_pending()
     assert len([c for c in fake.threads if f"litereview:{run_id}:reply" in c["body"]]) == 2
     fake.head = "d" * 40
+    now = rebuttals.time.time()
+    monkeypatch.setattr(rebuttals.time, "time", lambda: now + 61)
     await rebuttals.publish_pending()
     comments = [c for c in fake.threads if f"litereview:{run_id}:reply" in c["body"]]
     assert len(comments) == 1 and "Unable to conclude" in comments[0]["body"]
@@ -357,3 +368,146 @@ async def test_resolve_uses_correct_thread_and_rechecks_head(monkeypatch, change
     else:
         await github.resolve_review_thread("owner/repo", 42, 1, 6_000_000_000, expected_head="a" * 40)
         assert mutations == ["right-thread"]
+
+
+@pytest.mark.parametrize('failure', ['permission', 'network', 'comment'])
+async def test_github_write_failure_releases_queue_with_saved_decision(publication, monkeypatch, failure):
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    from app.publication import load_state
+
+    fake = publication
+    root = await original_finding(fake)
+    first = await rebuttals.accept(reply_payload(fake, root), 'first')
+    second = await rebuttals.accept(reply_payload(fake, root), 'second')
+    error = HTTPException(403, 'GitHub does not allow this App to resolve this thread.') if failure == 'permission' else httpx.ReadTimeout('GitHub unavailable')
+    resolver = AsyncMock(side_effect=error if failure != 'comment' else None)
+    monkeypatch.setattr(github, 'resolve_review_thread', resolver)
+    if failure == 'comment':
+        async def failed_comment(*args, **kwargs):
+            if args[2] == 'POST' and args[3].endswith('/replies'):
+                raise httpx.ReadTimeout('GitHub comments unavailable')
+            return await fake.request(*args, **kwargs)
+        monkeypatch.setattr(github, 'repo_request', failed_comment)
+    finish_reply(first, 'withdraw')
+    await rebuttals.publish_pending()
+    await review_sessions.prepare()
+    with Session() as db:
+        run = db.get(Run, first)
+        assert run.status == 'completed' and run.error
+        assert run.published == (2 if failure == 'permission' else 0)
+        next_job = db.scalar(select(Job).where(Job.run_id == second))
+        assert next_job.status == 'queued'
+        assert any(f['status'] == 'withdrawn' and f['decision']['run_id'] == first
+                   for f in next_job.config['finding_history'])
+    assert load_state(f'reply:{first}')['decision_recorded']
+    await rebuttals.publish_pending()  # Permanent denial finishes; transient errors back off.
+    assert resolver.await_count == 1
+    if failure == 'permission':
+        posted = next(c for c in fake.threads if f'litereview:{first}:reply' in c['body'])
+        assert 'Finding withdrawn' in posted['body'] and 'does not allow' in posted['body']
+    else:
+        monkeypatch.setattr(github, 'repo_request', fake.request)
+        resolver.side_effect = None
+        now = rebuttals.time.time()
+        monkeypatch.setattr(rebuttals.time, 'time', lambda: now + 61)
+        await rebuttals.publish_pending()
+        with Session() as db:
+            assert db.get(Run, first).published == 2 and not db.get(Run, first).error
+
+
+async def test_delayed_retry_cannot_undo_newer_finding_decision(publication, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    fake = publication
+    root = await original_finding(fake)
+    resolver = AsyncMock(side_effect=httpx.ReadTimeout('GitHub unavailable'))
+    monkeypatch.setattr(github, 'resolve_review_thread', resolver)
+    first = await rebuttals.accept(reply_payload(fake, root), 'first')
+    finish_reply(first, 'withdraw')
+    await rebuttals.publish_pending()
+    second = await rebuttals.accept(reply_payload(fake, root), 'second')
+    finish_reply(second, 'uphold')
+    resolver.side_effect = None
+    await rebuttals.publish_reply(second)
+    assert resolver.call_args.kwargs['resolved'] is False
+    calls = resolver.await_count
+    await rebuttals.publish_reply(first)
+    assert resolver.await_count == calls
+    with Session() as db:
+        finding = db.scalar(select(ReviewFinding).where(ReviewFinding.comment_id == root))
+        assert finding.status == 'open' and finding.decision['run_id'] == second
+        assert db.get(Run, first).published == 2
+    assert any('newer follow-up' in c['body'] for c in fake.threads)
+
+
+async def test_reply_cannot_race_original_summary_publication(publication, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.publication import load_state
+    from app.publication_lock import publication_lock
+
+    fake = publication
+    root = await original_finding(fake)
+    resolver = AsyncMock()
+    monkeypatch.setattr(github, 'resolve_review_thread', resolver)
+    run_id = await rebuttals.accept(reply_payload(fake, root), 'reply')
+    finish_reply(run_id, 'withdraw')
+    with publication_lock(fake.run_id) as acquired:
+        assert acquired
+        await rebuttals.publish_one(run_id)
+        assert not load_state(f'reply:{run_id}').get('decision_recorded')
+        resolver.assert_not_awaited()
+    await rebuttals.publish_one(run_id)
+    with Session() as db:
+        finding = db.scalar(select(ReviewFinding).where(ReviewFinding.comment_id == root))
+        assert finding.status == 'withdrawn'
+        assert not load_state(f'job:{finding.job_id}')['complete']
+        assert db.get(Run, fake.run_id).published == 1
+        assert db.get(Run, run_id).published == 2
+    await reviews.publish(fake.run_id)
+    assert any('Withdrawn after verification' in c['body'] for c in fake.comments)
+
+
+@pytest.mark.parametrize('resolved', [True, False])
+async def test_thread_capability_denial_does_not_attempt_mutation(monkeypatch, resolved):
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(github, 'token', AsyncMock(return_value='test-only-token'))
+    request = AsyncMock(return_value=httpx.Response(200, json={'data': {'repository': {'pullRequest': {'reviewThreads': {
+        'nodes': [{'id': 'thread', 'isResolved': not resolved, 'viewerCanResolve': False, 'viewerCanUnresolve': False,
+                   'comments': {'nodes': [{'fullDatabaseId': '6000000000'}]}}],
+        'pageInfo': {'hasNextPage': False, 'endCursor': None},
+    }}}}}))
+    monkeypatch.setattr(github, 'request', request)
+    with pytest.raises(HTTPException, match='maintainer') as error:
+        await github.resolve_review_thread('owner/repo', 42, 1, 6_000_000_000, expected_head='a' * 40, resolved=resolved)
+    assert error.value.status_code == 403
+    assert request.await_count == 1
+    assert 'viewerCanResolve viewerCanUnresolve' in request.call_args.kwargs['json']['query']
+
+
+async def test_graphql_error_preserves_actionable_reason(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(github, 'token', AsyncMock(return_value='test-only-token'))
+    monkeypatch.setattr(github, 'repo_request', AsyncMock(return_value=httpx.Response(200, json={
+        'head': {'sha': 'a' * 40}, 'state': 'open'})))
+    replies = [
+        httpx.Response(200, json={'data': {'repository': {'pullRequest': {'reviewThreads': {
+            'nodes': [{'id': 'thread', 'isResolved': False, 'viewerCanResolve': True,
+                       'comments': {'nodes': [{'fullDatabaseId': '6000000000'}]}}],
+            'pageInfo': {'hasNextPage': False, 'endCursor': None},
+        }}}}}),
+        httpx.Response(200, json={'data': None, 'errors': [{'type': 'FORBIDDEN', 'message': 'Resource not accessible by integration'}]}),
+    ]
+    monkeypatch.setattr(github, 'request', AsyncMock(side_effect=replies))
+    with pytest.raises(HTTPException, match='Resource not accessible by integration') as error:
+        await github.resolve_review_thread('owner/repo', 42, 1, 6_000_000_000, expected_head='a' * 40)
+    assert error.value.status_code == 403

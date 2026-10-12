@@ -207,7 +207,7 @@ async def publish_agent(run, job, jobs, existing, newer, allowed):
     if state.get("complete"):
         return
     terminal = job.status in TERMINAL
-    if not state.get("ready"):
+    if not state.get("ready") or (not terminal and state.get("status") != job.status):
         # Create the parent before its inline threads so every finding links back.
         body = render_comment(run, [job], newer, agent_comment=True, all_jobs=jobs)
         if terminal:
@@ -219,6 +219,7 @@ async def publish_agent(run, job, jobs, existing, newer, allowed):
         if not terminal:
             await add_eyes(run, parent_id, state, key)
         state["ready"] = True
+        state["status"] = job.status
         save_state(key, state)
     parent_id = state["comment_ids"][0]
     if terminal:
@@ -328,7 +329,8 @@ async def _publish_run(run_id):
                 j
                 for j in jobs
                 if not load_state(f"job:{j.id}").get("complete")
-                and (j.status in TERMINAL or not load_state(f"job:{j.id}").get("ready"))
+                and (j.status in TERMINAL or not load_state(f"job:{j.id}").get("ready")
+                     or load_state(f"job:{j.id}").get("status") != j.status)
             ]
             if pending:
                 existing = await marked_comments(run, f"issues/{run.pr}/comments")
@@ -363,6 +365,8 @@ async def _publish_run(run_id):
     with Session.begin() as db:
         saved = db.get(Run, run_id)
         saved.comment_id = run.comment_id
-        saved.status = status if done else "running"
+        saved.status = status if done else (
+            "queued" if all(j.status in ("queued", "blocked", "waiting") for j in all_jobs) else "running"
+        )
         saved.published = 2 if done else 1
         saved.error = ""

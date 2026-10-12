@@ -4,6 +4,7 @@ import secrets
 import time
 from collections import Counter
 
+import anyio
 from fastapi import HTTPException
 from markdown_it import MarkdownIt
 from sqlalchemy import String, cast, func, or_, select, update
@@ -13,7 +14,7 @@ from runner.catalog import HARNESS_VERSIONS, review_capabilities, validate_conne
 
 from . import fusion, github, review_defaults, review_sessions
 from .access import allows_anyone, caller_grant, caller_permits, permits
-from .db import Job, Resource, Run, Session, uid
+from .db import Job, Resource, ReviewSession, Run, Session, uid
 from .limits import job_timeout, timing_limits
 from .security import digest
 from .settings import settings
@@ -411,6 +412,8 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
         if job.status not in TERMINAL:
             lines += ["Stopping this review for a newer commit." if job.status == "cancelling"
                       else "Waiting for this agent’s current work." if job.status == "blocked"
+                      else "Waiting to start." if job.status == "queued"
+                      else "Preparing the review sandbox." if job.status == "starting"
                       else "Review in progress.", ""]
             continue
         result = job.result
@@ -517,89 +520,116 @@ async def publish(run_id):
     await publish_run(run_id)
 
 
+async def publish_one(run_id, reply=False):
+    if reply:
+        from . import rebuttals
+        await rebuttals.publish_one(run_id)
+        return
+    try:
+        with anyio.fail_after(30):
+            await publish(run_id)
+    except Exception as exc:
+        with Session.begin() as db:
+            db.get(Run, run_id).error = (
+                exc.detail if isinstance(exc, HTTPException) else "GitHub publishing failed; will retry."
+            )
+
+
 async def dispatcher():
     from .runtime import cancel_review, launch, terminate, watch_existing
 
     launching = {}
     stopping = {}
-    while True:
-        try:
-            from . import rebuttals
-            await rebuttals.publish_pending()
-            await review_sessions.prepare()
-            now = time.time()
-            with Session() as db:
-                fusion.advance(db)
-                db.commit()
-                for job in db.scalars(select(Job).where(Job.status == "cancelling")):
-                    # An in-flight create must save its sandbox ID before we can
-                    # confirm termination. After restart, recover it by name.
-                    creating = job.id in launching and not launching[job.id].done()
-                    if job.id not in stopping and (job.sandbox_id or not creating):
-                        stopping[job.id] = asyncio.create_task(cancel_review(job.id))
-                active = db.scalars(select(Job).where(Job.status.in_(["starting", "running"]))).all()
-                for job in active:
-                    timeout = job_timeout(job.config)
-                    if timeout is not None and job.started_at and now - job.started_at > timeout + 300:
-                        job.status = "timed_out"
-                        job.finished_at = now
-                        job.result = {
-                            "status": "timed_out",
-                            "summary": "The sandbox did not finish within its time limit.",
-                            "findings": [],
-                            "limitations": ["Execution time limit reached."],
-                        }
-                        if job.sandbox_id:
-                            asyncio.create_task(terminate(job.sandbox_id))
-                    elif job.sandbox_id and job.id not in launching:
-                        launching[job.id] = asyncio.create_task(watch_existing(job.id, job.sandbox_id))
-                db.commit()
-                queued = (
-                    select(Job)
-                    .join(Run, Job.run_id == Run.id)
-                    .where(Job.status == "queued")
-                    .where(or_(Job.config["session_id"].as_string().is_(None),
-                               Job.config["session_prepared"].as_boolean().is_(True)))
-                    .order_by(Run.created_at, Job.id)
-                )
-                if settings().concurrency:
-                    count = db.scalar(
-                        select(func.count()).select_from(Job).where(Job.status.in_(["starting", "running", "cancelling"]))
-                    )
-                    queued = queued.limit(max(0, settings().concurrency - count))
-                pending = db.scalars(queued).all()
-                for job in pending:
-                    token = secrets.token_urlsafe(40)
-                    updated = db.execute(
-                        update(Job)
-                        .where(Job.id == job.id, Job.status == "queued")
-                        .values(status="starting", started_at=now, token_hash=digest(token))
-                    ).rowcount
-                    db.commit()
-                    if updated:
-                        launching[job.id] = asyncio.create_task(launch(job.id, token))
-                runs = db.scalars(select(Run).where(Run.published < 2)).all()
-            for run in runs:
-                try:
-                    await publish(run.id)
-                except Exception as exc:
-                    with Session() as db:
-                        saved = db.get(Run, run.id)
-                        saved.error = (
-                            exc.detail
-                            if isinstance(exc, HTTPException)
-                            else "GitHub publishing failed; will retry."
-                        )
-                        db.commit()
-            for tasks in (launching, stopping):
-                for job_id, task in list(tasks.items()):
-                    if task.done():
-                        del tasks[job_id]
-                        task.result()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            import logging
+    preparing = {}
+    publishing = {}
+    # Publishers hold a database connection for their GitHub-side-effect lock.
+    # Keep connections available for the API and queue; sandbox launches stay uncapped.
+    publication_slots = asyncio.Semaphore(4)
 
-            logging.getLogger("litereview").exception("Dispatcher iteration failed")
-        await asyncio.sleep(3)
+    async def publish_in_slot(run):
+        async with publication_slots:
+            await publish_one(run.id, bool(run.snapshot.get("reply")))
+
+    try:
+        while True:
+            try:
+                # GitHub work is independent per session/run. A slow comparison or
+                # comment must never hold up sandbox launches for other PRs.
+                with Session() as db:
+                    sessions = db.scalars(select(ReviewSession).where(ReviewSession.active_run_id.is_not(None))).all()
+                    for session in sessions:
+                        if session.id not in preparing:
+                            preparing[session.id] = asyncio.create_task(
+                                review_sessions.prepare_one(session.repo, session.pr, session.id))
+                now = time.time()
+                with Session() as db:
+                    fusion.advance(db)
+                    db.commit()
+                    for job in db.scalars(select(Job).where(Job.status == "cancelling")):
+                        # An in-flight create must save its sandbox ID before we can
+                        # confirm termination. After restart, recover it by name.
+                        creating = job.id in launching and not launching[job.id].done()
+                        if job.id not in stopping and (job.sandbox_id or not creating):
+                            stopping[job.id] = asyncio.create_task(cancel_review(job.id))
+                    active = db.scalars(select(Job).where(Job.status.in_(["starting", "running"]))).all()
+                    for job in active:
+                        timeout = job_timeout(job.config)
+                        if timeout is not None and job.started_at and now - job.started_at > timeout + 300:
+                            job.status = "timed_out"
+                            job.finished_at = now
+                            job.result = {
+                                "status": "timed_out",
+                                "summary": "The sandbox did not finish within its time limit.",
+                                "findings": [],
+                                "limitations": ["Execution time limit reached."],
+                            }
+                            if job.sandbox_id:
+                                asyncio.create_task(terminate(job.sandbox_id))
+                        elif job.sandbox_id and job.id not in launching:
+                            launching[job.id] = asyncio.create_task(watch_existing(job.id, job.sandbox_id))
+                    db.commit()
+                    queued = (
+                        select(Job)
+                        .join(Run, Job.run_id == Run.id)
+                        .where(Job.status == "queued")
+                        .where(or_(Job.config["session_id"].as_string().is_(None),
+                                   Job.config["session_prepared"].as_boolean().is_(True)))
+                        .order_by(Run.created_at, Job.id)
+                    )
+                    if settings().concurrency:
+                        count = db.scalar(
+                            select(func.count()).select_from(Job).where(Job.status.in_(["starting", "running", "cancelling"]))
+                        )
+                        queued = queued.limit(max(0, settings().concurrency - count))
+                    pending = db.scalars(queued).all()
+                    for job in pending:
+                        token = secrets.token_urlsafe(40)
+                        updated = db.execute(
+                            update(Job)
+                            .where(Job.id == job.id, Job.status == "queued")
+                            .values(status="starting", started_at=now, token_hash=digest(token))
+                        ).rowcount
+                        db.commit()
+                        if updated:
+                            launching[job.id] = asyncio.create_task(launch(job.id, token))
+                    runs = db.scalars(select(Run).where(Run.published < 2)).all()
+                for run in runs:
+                    if run.id not in publishing:
+                        publishing[run.id] = asyncio.create_task(publish_in_slot(run))
+                for tasks in (launching, stopping, preparing, publishing):
+                    for job_id, task in list(tasks.items()):
+                        if task.done():
+                            del tasks[job_id]
+                            task.result()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                import logging
+
+                logging.getLogger("litereview").exception("Dispatcher iteration failed")
+            await asyncio.sleep(3)
+    finally:
+        tasks = [task for group in (launching, stopping, preparing, publishing) for task in group.values()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

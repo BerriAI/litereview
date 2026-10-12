@@ -474,3 +474,28 @@ def test_publication_lock_excludes_another_process_and_releases_on_exit(client):
                 break
         assert time.monotonic() < deadline, "Publication lock was not released after client exit"
         time.sleep(0.02)
+
+
+async def test_waiting_comment_updates_when_sandbox_starts(publication):
+    fake = publication
+    with Session.begin() as db:
+        jobs = db.scalars(select(Job).where(Job.run_id == fake.run_id)).all()
+        for job in jobs:
+            job.status = 'blocked'
+    await reviews.publish(fake.run_id)
+    assert all('Waiting for this agent' in c['body'] for c in fake.comments)
+    with Session() as db:
+        assert db.get(Run, fake.run_id).status == 'queued'
+    for status, message in [('queued', 'Waiting to start.'), ('starting', 'Preparing the review sandbox.'),
+                            ('running', 'Review in progress.')]:
+        with Session.begin() as db:
+            for job in db.scalars(select(Job).where(Job.run_id == fake.run_id)):
+                job.status = status
+        await reviews.publish(fake.run_id)
+        assert len(fake.comments) == 2
+        assert all(message in c['body'] for c in fake.comments)
+        calls = len(fake.calls)
+        await reviews.publish(fake.run_id)
+        assert len(fake.calls) == calls
+    with Session() as db:
+        assert db.get(Run, fake.run_id).status == 'running'
