@@ -20,6 +20,7 @@ type Status = {
   public?: boolean;
   app_url?: string;
   review_events_enabled?: boolean;
+  reply_events_enabled?: boolean;
   repositories: { name: string; installation_id: number }[];
   installations: { account: string; suspended: boolean }[];
   excluded?: string[];
@@ -394,6 +395,9 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
                 </div>
               </details>
             </div>
+            {status?.reply_events_enabled === false && <p className="notice">
+              To let reviewers respond to finding-thread replies, enable <strong>Pull request review comment</strong> under your GitHub App’s Permissions &amp; events. Then use Sync repositories to refresh this check.
+            </p>}
             {!readiness?.has_review && readiness && (
               <section className="setup-focus">
                 <div>

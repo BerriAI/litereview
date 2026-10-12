@@ -1177,6 +1177,10 @@ function App() {
                     </div>
                   </dl>
                   {run.error && <div className="error">{run.error}</div>}
+                  {run.notices?.map((notice: any) => <p key={notice.run_id + notice.name}>
+                    {notice.name} is already requested for <code>{notice.head.slice(0, 12)}</code>.{" "}
+                    <a href={`/runs/${notice.run_id}`}>View existing review</a>
+                  </p>)}
                   {run.jobs.map((job: any) => (
                     <details className="job" key={job.id}>
                       <summary className="job-title">
@@ -1215,6 +1219,18 @@ function App() {
                         <code>{job.config.model}</code>
                       </p>
                       <ReviewResult job={job} repo={run.repo} head={run.head} />
+                      {job.session_history?.length > 0 && <details>
+                        <summary>Review history for this agent and PR</summary>
+                        <ul>{job.session_history.map((earlier: any) => <li key={earlier.id}>
+                          <a href={`/runs/${earlier.id}`}>{earlier.trigger?.type === "reply" ? "Thread follow-up" : "Review"} · {earlier.head.slice(0, 12)}</a> · {earlier.status}
+                        </li>)}</ul>
+                      </details>}
+                      {job.comparisons?.map((comparison: any) => <details key={comparison.id}>
+                        <summary>Private full-review comparison · {comparison.status}</summary>
+                        <p>Compare the full review below with the incremental result above for missed issues and false positives. Both reviews’ costs are included in this run.</p>
+                        {isAdmin && <p>Incremental cost: <RunCost value={job.primary_spend} /> · Full comparison cost: <RunCost value={comparison.spend} /></p>}
+                        <ReviewResult job={comparison} repo={run.repo} head={run.head} />
+                      </details>)}
                       <FusionResults job={job} repo={run.repo} head={run.head} />
                       {job.artifacts.length > 0 && (
                         <details>
@@ -2034,6 +2050,14 @@ function App() {
                         onChange={(e) => update("instructions", e.target.value)}
                         required
                       />
+                    </Field>
+                    <Field label="Review scope">
+                      <select value={editor.data.review_mode || "full"} onChange={(e) => update("review_mode", e.target.value)}>
+                        <option value="full">Full PR</option>
+                        <option value="incremental">Changes since last successful review</option>
+                        <option value="compare">Incremental + private full-review comparison</option>
+                      </select>
+                      <small>The first review is full. Reruns can focus on new changes while retaining finding history. Comparison runs both modes and uses additional model and sandbox credits.</small>
                     </Field>
                     <MinimumReviewTime
                       value={editor.data.minimum_minutes || 0}

@@ -53,7 +53,7 @@ To choose a saved reviewer, include its name: `@litereview code-review review th
 
 **Check the result:** LiteReview adds 👀 to an accepted request and posts a progress comment for each reviewer. When the review finishes, that comment contains its report and links to findings on the diff. Open **View review** or **Runs** for the reviewed commit, checks, screenshots, and activity. The first run can take several minutes while Modal builds the sandbox image.
 
-A ✅ means the reviewer finished; read its completion status and checks. **Review incomplete** identifies work that could not finish. A completed review can still report bugs or checks that were not run.
+A ✅ means the review completed; read its findings and checks. A ⚠️ and **Review incomplete** identify work that could not finish. A completed review can still report bugs or checks that were not run.
 
 ![An excerpt of a LiteReview bot review on GitHub checking a pull request against its specification](docs/images/github-review.png)
 

@@ -8,6 +8,12 @@ Run the commands in [CONTRIBUTING.md](../CONTRIBUTING.md). The suite covers auth
 
 The October 10, 2026 pre-release baseline at commit `7a6238b` passed **273 tests with 1 skipped** using SQLite, plus Ruff and the TypeScript/Vite production build. The skipped check requires PostgreSQL to enforce a legacy column length. Gitleaks found no secrets in the 67 commits reachable through locally available refs at that point. These checks are bounded evidence, not a complete security audit.
 
+## Review sessions and finding replies
+
+Regression tests cover simultaneous manual/automatic requests, latest-request queuing, out-of-order acceptance, restart recovery, incremental baseline fallbacks, private comparison publication and admin-only cost details. Finding-reply tests cover permissions, duplicate deliveries, all three verdicts, incomplete or stale verification, thread selection, and recovery after lost GitHub responses, including replies split across multiple comments.
+
+The review-scope editor, waiting state, withdrawn findings, session history, and separate comparison costs were checked in an isolated local browser preview. The run layout was also checked at 390px width. These checks used synthetic data with review workers disabled. Provider and GitHub calls in the regression tests are mocked; actual rebuttal judgment, live thread resolution, and incremental-review quality still need an opt-in deployment check. No paid review is required to run the suite.
+
 ## Codex runtime validation
 
 LiteReview runs Codex 0.158.0, pinned in `runner/catalog.py`. Automated tests exercise large Unicode review contexts, process startup, instruction preservation, same-session continuation, saved-reviewer migration, and incompatible connection recovery. The full review context stays on disk so neither operating-system argument limits nor Codex's initial input limit truncate a PR.

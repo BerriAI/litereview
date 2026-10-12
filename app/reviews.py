@@ -6,19 +6,19 @@ from collections import Counter
 
 from fastapi import HTTPException
 from markdown_it import MarkdownIt
-from sqlalchemy import String, cast, func, select, update
+from sqlalchemy import String, cast, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from runner.catalog import HARNESS_VERSIONS, review_capabilities, validate_connection
 
-from . import fusion, github, review_defaults
+from . import fusion, github, review_defaults, review_sessions
 from .access import caller_grant, caller_permits, permits
 from .db import Job, Resource, Run, Session, uid
 from .limits import job_timeout, timing_limits
 from .security import digest
 from .settings import settings
 
-TERMINAL = {"completed", "failed", "timed_out"}
+TERMINAL = review_sessions.TERMINAL
 COMMAND = re.compile(r"(?<![\w@./-])@litereview(?![\w/-]|\.\w)|^light[ \t]+review(?![\w/-])", re.I)
 UNAVAILABLE_COMMAND = (
     "This review command is unavailable for this repository or caller. "
@@ -113,12 +113,12 @@ def comment_run(db, repo, comment_id, delivery=None):
     keys = [delivery] if delivery else []
     if comment_id is not None:
         keys.append(f"comment:{comment_id}")
-    # Keep normal polling on the delivery index without scanning JSON history.
+    # New deliveries use the stable GitHub comment ID.
     existing = db.scalar(select(Run.id).where(Run.delivery.in_(keys)).limit(1))
     if existing or comment_id is None:
         return existing
     # Older runs retain the original delivery GUID. Preserve their history
-    # and recognize them when polling or redelivering after an upgrade.
+    # and recognize them when redelivering after an upgrade.
     return db.scalar(select(Run.id).where(
         func.lower(Run.repo) == repo.lower(),
         cast(Run.snapshot["trigger_comment_id"].as_string(), String) == str(comment_id),
@@ -174,6 +174,7 @@ def expand(groups, resources):
                         "group": group["name"],
                         "instance": instance,
                         "target_kind": group.get("target_kind", "group"),
+                        "target_id": group.get("target_id"),
                     }
                 )
     return jobs
@@ -203,6 +204,7 @@ def reject_command(delivery, repo, pr, actor, installation, reason):
 
 
 async def accept(payload, delivery):
+    requested_at = time.time()
     github_state = github.setup_state()
     if github_state.get("disabled"):
         return None
@@ -282,6 +284,7 @@ async def accept(payload, delivery):
             continue
         selected_ids.add(target.id)
         group["target_kind"] = "agent" if target.kind == "agents" else "group"
+        group["target_id"] = target.id
         if target.kind == "agents":
             group["members"] = [{"agent_id": target.id, "count": 1}]
         selected.append(group)
@@ -304,6 +307,7 @@ async def accept(payload, delivery):
     repository["id"] = repos[0].id
     run = Run(
         id=uid(),
+        created_at=requested_at,
         delivery=delivery,
         repo=repo,
         pr=pr,
@@ -321,19 +325,15 @@ async def accept(payload, delivery):
         },
     )
     configurations = expand(selected, resources)
-    with Session() as db:
+    with review_sessions.transaction(repo, pr) as db:
+        existing = comment_run(db, repo, comment_id, original_delivery)
+        if existing:
+            return existing
         github_row = db.get(Resource, "github", with_for_update=True)
         state = github_row.data if github_row else {}
         if state.get("disabled") or state.get("generation", "") != github_state.get("generation", ""):
             return None
-        db.add(run)
-        for position, cfg in enumerate(configurations):
-            fusion.enqueue(db, run.id, {**cfg, "run_order": position})
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            return db.scalar(select(Run).where(Run.delivery == delivery)).id
+        review_sessions.enqueue(db, run, configurations)
     return run.id
 
 
@@ -355,7 +355,8 @@ def ordered_jobs(run, jobs):
             )
         return position, cfg.get("instance", 1), job.id
 
-    return sorted((job for job in jobs if not job.config.get("fusion_parent_id")), key=order)
+    return sorted((job for job in jobs if not job.config.get("fusion_parent_id")
+                   and not job.config.get("comparison_parent_id")), key=order)
 
 
 def md(value):
@@ -383,7 +384,8 @@ def md(value):
     return "".join(lines)
 
 
-def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None, finding_links=None):
+def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None, finding_links=None,
+                   finding_decisions=None):
     if run.status == "rejected":
         return f"<!-- litereview:{run.id} -->\n### Review not started\n\n{md(run.snapshot['rejection'])}"
     marker = (
@@ -400,12 +402,16 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
             label += f" · {md(c['group'])}"
         if counts[(c.get("group"), c["name"])] > 1:
             label += f" · Run {c['instance']}"
-        icon = ("✅ " if job.status in TERMINAL else "👀 ") if agent_comment else ""
+        incomplete = job.status in TERMINAL and (job.status != "completed" or job.result.get("limitations"))
+        icon = (("⚠️ " if incomplete else "✅ ") if job.status in TERMINAL else "👀 ") if agent_comment else ""
         lines += [f"### {icon}{label}", ""]
         if job.status not in TERMINAL:
-            lines += ["Review in progress.", ""]
+            lines += ["Waiting for this agent’s active review to finish." if job.status == "blocked"
+                      else "Review in progress.", ""]
             continue
         result = job.result
+        if c.get("review_scope"):
+            lines += [f"Scope: {c['review_scope']} · {c.get('scope_reason', '')}", ""]
         incomplete = job.status != "completed" or result.get("limitations")
         visible, notes = [], []
         if incomplete:
@@ -418,6 +424,12 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
             visible += ["**No issues found.**", ""]
         for index, finding in enumerate(result.get("findings", [])):
             thread = (finding_links or {}).get(str(index))
+            decision = (finding_decisions or {}).get(str(index), {})
+            if decision.get("status") == "withdrawn":
+                lines_title = f"~~{md(finding['title'])}~~ · Withdrawn after verification"
+                visible += [f"- [{lines_title}]({thread})" if thread else f"- {lines_title}",
+                            "", md(decision.get("reason", "")), ""]
+                continue
             if thread:
                 visible += [
                     f"- **{md(finding['severity'].capitalize())}** · [{md(finding['title'])}]({thread}) · Reply in thread",
@@ -505,6 +517,9 @@ async def dispatcher():
     launching = {}
     while True:
         try:
+            from . import rebuttals
+            await rebuttals.publish_pending()
+            await review_sessions.prepare()
             now = time.time()
             with Session() as db:
                 fusion.advance(db)
@@ -530,6 +545,8 @@ async def dispatcher():
                     select(Job)
                     .join(Run, Job.run_id == Run.id)
                     .where(Job.status == "queued")
+                    .where(or_(Job.config["session_id"].as_string().is_(None),
+                               Job.config["session_prepared"].as_boolean().is_(True)))
                     .order_by(Run.created_at, Job.id)
                 )
                 if settings().concurrency:

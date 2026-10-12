@@ -139,18 +139,40 @@ export function Documentation() {
               <h3>Read the results</h3>
               <p>
                 LiteReview reacts with 👀 and creates a progress comment for
-                each agent. Each comment shows ✅ and that agent’s response as
-                it finishes. Findings link to inline threads where you can
+                each agent. Completed reviews show ✅; failed or incomplete
+                reviews show ⚠️. Findings link to inline threads where you can
                 reply; findings without a usable diff line stay in the agent
                 comment. The agent’s 👀 reaction disappears when it finishes,
                 and the request’s disappears when all agents finish. ✅ means
-                finished, not issue-free. Expand Checks and execution details
+                completed, not issue-free. Expand Checks and execution details
                 for verification results. Open <a href="/runs">Runs</a> and
                 expand an agent to read its report. Findings, checks, activity,
                 and screenshots start collapsed. An incomplete check means the
                 agent could not finish work required by its instructions.
                 Optional checks that were not run appear under Checks without
                 making the review incomplete. Agents do not push fixes.
+              </p>
+              <p>
+                Each agent keeps its review history for that PR. Repeating a
+                request while the same review is active links to the existing
+                run. Requests for newer commits wait, keeping only the latest
+                pending review for that agent. Other agents can run independently.
+              </p>
+              <p>
+                Reply in a finding’s inline thread with evidence or a question.
+                The agent checks the code and responds there. It resolves the
+                thread only when it can support withdrawing the finding;
+                disagreement alone does not dismiss it. Your usual review
+                permissions apply. Existing GitHub Apps must subscribe to Pull
+                request review comment events for replies to reach LiteReview.
+              </p>
+              <p>
+                In an agent’s Review instructions, choose Review scope. Full
+                reviews remain the default. Incremental reviews check changes
+                since that agent’s last compatible successful review, falling
+                back to a full review when needed. Compare runs both scopes and
+                shows the full review privately in Runs; only the incremental
+                review posts to GitHub. Both reviews use credits.
               </p>
             </li>
           </ol>

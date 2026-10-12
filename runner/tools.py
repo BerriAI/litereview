@@ -83,6 +83,18 @@ def definitions(cfg):
             ["summary", "findings", "limitations"],
         ),
     ]
+    if cfg.get("task") == "reply":
+        schema = tools[-1]["function"]["parameters"]
+        schema["properties"]["rebuttal"] = {
+            "type": "object",
+            "properties": {"verdict": {"type": "string", "enum": ["withdraw", "uphold", "uncertain"]},
+                           "reason": {"type": "string", "minLength": 1},
+                           "evidence": {"type": "array", "items": {"type": "string", "minLength": 1}}},
+            "required": ["verdict", "reason", "evidence"],
+            "allOf": [{"if": {"properties": {"verdict": {"const": "withdraw"}}},
+                       "then": {"properties": {"evidence": {"minItems": 1}}}}],
+        }
+        schema["required"].append("rebuttal")
     caps = cfg["capabilities"]
     if cfg.get("minimum_review_seconds"):
         tools.append(function("review_clock", "Check the review start, current time, and time remaining.", {}))

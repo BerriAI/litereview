@@ -93,7 +93,7 @@ Choose your repository and reviewer if prompted, then choose **Copy comment**. P
 
 **Success:** LiteReview reacts with 👀 and posts a progress comment. That comment becomes a review report with the reviewed commit and links to findings. Follow **View review** or open **Runs** to inspect the checks, screenshots, and activity. A saved connection or successful sample check is not yet a PR review.
 
-A ✅ marks completion, not an issue-free PR. **Review incomplete** lists unfinished work; completed reviews can still identify bugs or skipped checks. Read the report before accepting its findings. See [troubleshooting](#troubleshoot) if no review appears.
+A ✅ marks completion, not an issue-free PR. ⚠️ **Review incomplete** lists unfinished work; completed reviews can still identify bugs or skipped checks. Read the report before accepting its findings. See [troubleshooting](#troubleshoot) if no review appears.
 
 ### After your first review
 

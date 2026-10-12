@@ -130,11 +130,27 @@ class AutomaticReviewClaim(Base):
     run_id: Mapped[str] = mapped_column(String(40), index=True)
 
 
-class CommentSweepCursor(Base):
-    __tablename__ = "comment_sweep_cursors"
-    # Scope progress to the connected repository and installation.
-    key: Mapped[str] = mapped_column(String(90), primary_key=True)
-    scanned_through: Mapped[float] = mapped_column(Float)
+class ReviewSession(Base):
+    __tablename__ = "review_sessions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    repo: Mapped[str] = mapped_column(String(250))
+    pr: Mapped[int] = mapped_column(Integer)
+    agent_id: Mapped[str] = mapped_column(String(40), index=True)
+    active_run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    pending_run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    baseline_run_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+
+
+class ReviewFinding(Base):
+    __tablename__ = "review_findings"
+    id: Mapped[str] = mapped_column(String(90), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    job_id: Mapped[str] = mapped_column(String(40), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    comment_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="open")
+    decision: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class ReviewTiming(Base):
