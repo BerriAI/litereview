@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import tarfile
+import time
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryFile
 
@@ -16,6 +17,26 @@ import httpx
 from .catalog import review_capabilities
 from .instructions import agent_instructions
 from .tools import REPO, SKILLS, Toolset
+
+# Allow safe setup/completion requests to survive a rolling API restart.
+RECOVERY_SECONDS = 300
+
+
+def response_error(response):
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        detail = None
+    return RuntimeError(detail if isinstance(detail, str) and detail else
+                        f"The review service returned HTTP {response.status_code}.")
+
+
+async def recovery_pause(attempt, deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    await asyncio.sleep(min(2 ** min(attempt, 4), remaining))
+    return True
 
 
 class Relay:
@@ -30,7 +51,10 @@ class Relay:
         )
 
     async def __call__(self, endpoint, data=None):
-        for attempt in range(3):
+        recoverable = endpoint in {"bootstrap", "start-review", "finish"}
+        deadline = time.monotonic() + RECOVERY_SECONDS
+        attempt = 0
+        while True:
             try:
                 response = await (
                     self.client.get(endpoint) if data is None else self.client.post(
@@ -41,13 +65,14 @@ class Relay:
                 )
                 if response.is_success:
                     return response.json()
-                if response.status_code < 500 or attempt == 2:
-                    detail = response.json().get("detail", "Request failed")
-                    raise RuntimeError(str(detail))
-            except (httpx.TimeoutException, httpx.NetworkError):
-                if attempt == 2:
-                    raise RuntimeError("The review service could not be reached.") from None
-            await asyncio.sleep(2**attempt)
+                error = response_error(response)
+                if response.status_code < 500:
+                    raise error
+            except httpx.TransportError:
+                error = RuntimeError("The review service could not be reached.")
+            if (not recoverable and attempt >= 2) or not await recovery_pause(attempt, deadline):
+                raise error from None
+            attempt += 1
 
     async def event(self, message):
         try:
@@ -96,23 +121,29 @@ def extract_archive(raw, root):
 async def prepare_repository(relay):
     await relay.event("Downloading repository at the reviewed commit")
     with TemporaryFile() as archive:
-        try:
-            async with relay.client.stream("GET", "archive") as response:
-                if not response.is_success:
-                    await response.aread()
-                    try:
-                        detail = response.json().get("detail")
-                    except (ValueError, AttributeError):
-                        detail = None
-                    raise RuntimeError(
-                        f"Repository download failed: {detail}"
-                        if isinstance(detail, str) and detail
-                        else f"Repository download failed (HTTP {response.status_code}). Retry the review."
-                    )
-                async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
-                    archive.write(chunk)
-        except httpx.HTTPError:
-            raise RuntimeError("Repository download was interrupted. Retry the review.") from None
+        deadline = time.monotonic() + RECOVERY_SECONDS
+        attempt = 0
+        while True:
+            # A broken transfer must restart from byte zero, never append another tarball.
+            archive.seek(0)
+            archive.truncate()
+            try:
+                async with relay.client.stream("GET", "archive") as response:
+                    if not response.is_success:
+                        await response.aread()
+                        error = RuntimeError(f"Repository download failed: {response_error(response)}")
+                        if response.status_code < 500:
+                            raise error
+                    else:
+                        async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                            archive.write(chunk)
+                        break
+            except httpx.TransportError:
+                error = RuntimeError("Repository download was interrupted. Retry the review.")
+            if not await recovery_pause(attempt, deadline):
+                raise error from None
+            attempt += 1
+            await relay.event("Repository download interrupted; retrying after the service recovers")
         await relay.event("Extracting repository")
         archive.seek(0)
         extract_archive(archive, REPO)

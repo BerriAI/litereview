@@ -6,10 +6,11 @@ from collections import defaultdict
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import case, select
+from sqlalchemy.orm import defer, with_expression
 
 from . import fusion, github, review_sessions, tracing
-from .db import Job, ReviewFinding, ReviewPublication, Run, Session
+from .db import Job, ReviewFinding, ReviewPublication, Run, Session, job_metadata, run_metadata
 from .publication_lock import publication_lock
 from .reviews import (
     GITHUB_COMMENT_CHARACTERS,
@@ -242,11 +243,11 @@ def summary_identity(run, job):
 def reviewer_runs(run, job):
     return select(Run.id).join(Job, Job.run_id == Run.id).where(
         Run.repo == run.repo, Run.pr == run.pr,
-        Job.config["agent_id"].as_string() == job.config["agent_id"],
-        Run.snapshot["reply"].as_string().is_(None),
-        Run.snapshot["harness_check"].as_boolean().is_not(True),
-        Job.config["fusion_parent_id"].as_string().is_(None),
-        Job.config["comparison_parent_id"].as_string().is_(None),
+        job_metadata["agent_id"].as_string() == job.config["agent_id"],
+        run_metadata["reply"].as_string().is_(None),
+        run_metadata["harness_check"].as_boolean().is_not(True),
+        job_metadata["fusion_parent_id"].as_string().is_(None),
+        job_metadata["comparison_parent_id"].as_string().is_(None),
     )
 
 
@@ -282,10 +283,10 @@ def summary_body(run, jobs, all_jobs, newer):
             if job.status not in TERMINAL:
                 previous = db.execute(select(Run, Job).join(Job, Job.run_id == Run.id).where(
                     Run.id.in_(reviewer_runs(run, job)), Run.created_at < run.created_at,
-                    Job.config["agent_id"].as_string() == job.config["agent_id"],
-                    Job.config["instance"].as_integer() == job.config.get("instance", 1),
-                    Job.config["fusion_parent_id"].as_string().is_(None),
-                    Job.config["comparison_parent_id"].as_string().is_(None), Job.status == "completed",
+                    job_metadata["agent_id"].as_string() == job.config["agent_id"],
+                    job_metadata["instance"].as_integer() == job.config.get("instance", 1),
+                    job_metadata["fusion_parent_id"].as_string().is_(None),
+                    job_metadata["comparison_parent_id"].as_string().is_(None), Job.status == "completed",
                 ).order_by(Run.created_at.desc()).limit(1)).first()
                 if previous:
                     displayed_run, displayed_job = previous
@@ -408,7 +409,9 @@ async def _publish_run(run_id):
         run = db.get(Run, run_id)
         if run.snapshot.get("reply"):
             return  # Rebuttals publish into the original finding thread.
-        all_jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
+        all_jobs = db.scalars(select(Job).where(Job.run_id == run_id).options(
+            defer(Job.logs), with_expression(Job.config, case(
+                (Job.status.not_in(TERMINAL), job_metadata), else_=Job.config)))).all()
         jobs = ordered_jobs(run, all_jobs)
         if run.published == 2:
             return

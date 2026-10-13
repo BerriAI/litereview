@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import defer, load_only
 
-from .db import Artifact, Job, ReviewSession, Run
+from .db import Artifact, Job, ReviewSession, Run, job_metadata
 from .settings import settings
 
 
@@ -26,7 +26,7 @@ def validate(db, job, result):
         return
     ids = set(preview["artifact_ids"])
     sources = [job.id, *db.scalars(select(Job.id).where(
-        Job.run_id == job.run_id, Job.config["fusion_parent_id"].as_string() == job.id))]
+        Job.run_id == job.run_id, job_metadata["fusion_parent_id"].as_string() == job.id))]
     allowed = set(db.scalars(select(Artifact.id).where(Artifact.job_id.in_(sources), Artifact.id.in_(ids))))
     if ids - allowed:
         raise HTTPException(422, "Preview media must be saved artifacts from this job or its fusion branches.")
@@ -38,10 +38,10 @@ def detail(db, sid, job_id=None):
         raise HTTPException(404, "Preview not found.")
     history = db.execute(select(Job.id.label("job_id"), Run.id.label("run_id"), Run.head,
                                 Job.status, Run.created_at).join(Run, Run.id == Job.run_id).where(
-        Job.config["session_id"].as_string() == sid,
-        Job.config["output_type"].as_string() == "preview",
-        Job.config["fusion_parent_id"].as_string().is_(None),
-        Job.config["comparison_parent_id"].as_string().is_(None),
+        job_metadata["session_id"].as_string() == sid,
+        job_metadata["output_type"].as_string() == "preview",
+        job_metadata["fusion_parent_id"].as_string().is_(None),
+        job_metadata["comparison_parent_id"].as_string().is_(None),
     ).order_by(Run.created_at.desc(), Run.id.desc(), Job.id)).all()
     selected = next((row for row in history if not job_id or row.job_id == job_id), None)
     if not selected:
@@ -49,7 +49,7 @@ def detail(db, sid, job_id=None):
     job = db.scalar(select(Job).where(Job.id == selected.job_id).options(defer(Job.logs)))
     run = db.scalar(select(Run).where(Run.id == selected.run_id).options(defer(Run.snapshot)))
     children = list(db.scalars(select(Job).options(load_only(Job.id, Job.status, Job.display_config, Job.result)).where(Job.run_id == run.id,
-        Job.config["fusion_parent_id"].as_string() == job.id).order_by(Job.config["fusion_index"].as_integer())))
+        job_metadata["fusion_parent_id"].as_string() == job.id).order_by(job_metadata["fusion_index"].as_integer())))
     media = db.execute(select(Artifact.id, Artifact.name, Artifact.mime).where(
         Artifact.job_id.in_([job.id, *[c.id for c in children]]))).all()
     return {

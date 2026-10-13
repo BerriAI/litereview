@@ -109,3 +109,52 @@ def test_run_search_filters_before_pagination(owner):
     found = owner.get("/api/runs?limit=1&query=NEEDLE").json()
     assert found["total"] == 1 and found["items"][0]["id"] == "run-0"
     assert owner.get("/api/runs?limit=1&query=%25").json()["total"] == 0
+
+
+async def test_running_session_poll_does_not_read_skill_bundles(owner):
+    from app import review_sessions
+    from app.db import ReviewSession
+
+    seed()
+    with Session.begin() as db:
+        db.add(ReviewSession(id="session", repo="example/repo", pr=1, agent_id="agent", active_run_id="run-2"))
+        job = db.get(Job, "job-2")
+        job.status = "running"
+        job.config = {**job.config, "session_prepared": True}
+    statements = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        await review_sessions.prepare_session("example/repo", 1, "session")
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert not any("jobs.config," in sql or "SELECT jobs.config " in sql for sql in statements)
+    with Session() as db:
+        assert len(db.get(Job, "job-2").config["instructions"]) == 70000
+
+
+def test_fusion_poll_keeps_full_worker_config_available(owner):
+    from types import SimpleNamespace
+
+    from app import fusion
+
+    seed()
+    with Session.begin() as db:
+        parent = db.get(Job, "job-0")
+        parent.status = "waiting"
+        for index in (1, 2):
+            child = db.get(Job, f"job-{index}")
+            child.run_id = parent.run_id
+            child.config = {**child.config, "fusion_parent_id": parent.id, "fusion_index": index - 1}
+    with Session.begin() as db:
+        fusion.advance(db)
+        # Polling must not replace the ORM's immutable config with metadata.
+        reports = fusion.reports(db, SimpleNamespace(id="job-0", run_id="run-0"))
+        assert len(reports) == 2
+        assert all(len(report["instructions"]) == 70000 for report in reports)
+    with Session() as db:
+        assert db.get(Job, "job-0").status == "queued"
+        assert len(db.get(Job, "job-0").config["instructions"]) == 70000

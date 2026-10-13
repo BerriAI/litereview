@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from markdown_it import MarkdownIt
 from sqlalchemy import String, cast, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import load_only
 
 from runner.catalog import HARNESS_VERSIONS, review_capabilities, validate_connection
 
@@ -572,9 +573,11 @@ async def dispatcher():
                         creating = job.id in launching and not launching[job.id].done()
                         if job.id not in stopping and (job.sandbox_id or not creating):
                             stopping[job.id] = asyncio.create_task(cancel_review(job.id))
-                    active = db.scalars(select(Job).where(Job.status.in_(["starting", "running"]))).all()
+                    active = db.scalars(select(Job).options(load_only(
+                        Job.id, Job.status, Job.sandbox_id, Job.started_at, Job.display_config
+                    )).where(Job.status.in_(["starting", "running"]))).all()
                     for job in active:
-                        timeout = job_timeout(job.config)
+                        timeout = job_timeout(job.display_config if "timeout_seconds" in (job.display_config or {}) else job.config)
                         if timeout is not None and job.started_at and now - job.started_at > timeout + 300:
                             job.status = "timed_out"
                             job.finished_at = now
