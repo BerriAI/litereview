@@ -8,6 +8,8 @@ def agent_instructions(cfg, clock, skills):
     if cfg.get("output_type") == "preview":
         from .preview import PREVIEW_INSTRUCTIONS
         instructions += "\n\n" + PREVIEW_INSTRUCTIONS
+        if cfg.get("fusion_stage") == "branch":
+            instructions += "\n\nFor this specialist branch, deliver your assigned evidence and saved media IDs in summary/checks. Do not build the final HTML page; the final agent combines the branches. The preview field is optional for your branch."
     elif cfg.get("show_score") and cfg.get("fusion_stage") != "branch" and cfg.get("task") != "reply":
         instructions += "\n\nThe service calculates and displays the readiness score from findings, required checks and limitations. Do not write a numeric score or a competing verdict in the summary. A complete review with no actionable findings or material verification gaps is 5/5; general caution is not a reason to invent a gap. Report only specific, supported blockers. Recheck every open finding in finding_history against this checkout, even in incremental scope. Submit finding_assessments with each exact id, open/fixed/uncertain status and evidence. Do not duplicate prior findings in findings. A fix needs concrete evidence; missing reassessments prevent 5/5."
     rules = [r for r in cfg.get("rules", []) if r.get("enabled", True)]
