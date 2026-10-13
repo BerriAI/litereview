@@ -5,6 +5,8 @@ import signal
 import subprocess
 from pathlib import Path
 
+from .finding_assessment import FindingAssessment
+from .preview import PreviewDocument
 from .timing import ReviewClock
 
 REPO = Path("/workspace/repo")
@@ -84,6 +86,20 @@ def definitions(cfg):
             ["summary", "findings", "limitations"],
         ),
     ]
+    if cfg.get("show_score") and cfg.get("fusion_stage") != "branch" and cfg.get("task") != "reply" and cfg.get("output_type") != "preview":
+        schema = tools[-1]["function"]["parameters"]
+        schema["properties"]["finding_assessments"] = {
+            "type": "array", "items": FindingAssessment.model_json_schema(),
+            "description": "Recheck each open finding in finding_history at the current commit. Return its exact id, open/fixed/uncertain status and evidence. Do not repeat it in findings. Use [] when there is no open history.",
+        }
+        schema["required"].append("finding_assessments")
+    if cfg.get("output_type") == "preview":
+        schema = tools[-1]["function"]["parameters"]
+        preview = PreviewDocument.model_json_schema()
+        schema["$defs"] = preview.pop("$defs", {})
+        schema["properties"]["preview"] = preview
+        if cfg.get("fusion_stage") != "branch":
+            schema["required"].append("preview")
     if cfg.get("task") == "reply":
         schema = tools[-1]["function"]["parameters"]
         schema["properties"]["rebuttal"] = {
@@ -97,6 +113,9 @@ def definitions(cfg):
         }
         schema["required"].append("rebuttal")
     caps = cfg["capabilities"]
+    if {"browser", "computer"} & set(caps):
+        tools.append(function("recording", "Record the shared browser/desktop at 1280x900. Start before the walkthrough; stop to save an MP4 artifact. Record only the demonstration, never credentials. Stop before finish_review and attach the returned artifact_id to the preview.",
+                              {"action": {"type": "string", "enum": ["start", "stop"]}, "name": S}, ["action"]))
     if cfg.get("minimum_review_seconds"):
         tools.append(function("review_clock", "Check the review start, current time, and time remaining.", {}))
     if "terminal" in caps:
@@ -178,7 +197,13 @@ def mcp_name(cid, name):
 
 
 class Toolset:
+    @property
+    def recording_active(self):
+        return self.recorder.process is not None
+
     def __init__(self, data, relay):
+        from .recording import Recording
+        self.recorder = Recording()
         self.data = data
         self.relay = relay
         self.caps = data["config"]["capabilities"]
@@ -323,6 +348,9 @@ class Toolset:
             raise ValueError("This tool is not enabled for this agent.")
         if name == "review_clock":
             return self.clock.status()
+        if name == "recording":
+            return await (self.recorder.start(args.get("name", "Walkthrough"))
+                          if args["action"] == "start" else self.recorder.stop(self.relay))
         if name == "read_file":
             path = self.path(args["path"])
             if path.suffix.lower() == ".png":
@@ -465,6 +493,7 @@ class Toolset:
         return await self.screen()
 
     async def close(self):
+        await self.recorder.close()
         if self.browser:
             await self.browser.close()
         if self.pw:

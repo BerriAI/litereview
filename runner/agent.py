@@ -55,6 +55,19 @@ class Relay:
         except Exception:
             pass
 
+    async def upload_video(self, path, name):
+        from urllib.parse import quote
+
+        async def chunks():
+            with path.open("rb") as source:
+                while chunk := source.read(256 * 1024):
+                    yield chunk
+        response = await self.client.post("artifact/video", content=chunks(),
+                                          headers={"content-type": "video/mp4", "x-artifact-name": quote(name)})
+        if not response.is_success:
+            raise RuntimeError("Video upload failed. Retry recording stop to preserve the existing video.")
+        return response.json()
+
 
 def extract_archive(raw, root):
     root.mkdir(parents=True, exist_ok=True)

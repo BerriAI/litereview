@@ -57,6 +57,14 @@ def refresh(db, session):
         primary = [j for j in jobs if not j.config.get("fusion_parent_id")
                    and not j.config.get("comparison_parent_id")]
         for job in primary:
+            if job.status == "completed" and not run.snapshot.get("reply"):
+                for assessment in job.result.get("finding_assessments", []):
+                    finding = db.get(ReviewFinding, assessment["id"])
+                    if (finding and finding.session_id == session.id and finding.status == "open"
+                            and assessment["status"] == "fixed" and assessment.get("evidence")):
+                        finding.status = "fixed"
+                        finding.decision = {"reason": "Verified fixed in a later review.",
+                                            "evidence": assessment["evidence"], "run_id": run.id, "head": run.head}
             for index in range(len(job.result.get("findings", []))):
                 identity = f"{job.id}:{index}"
                 if not db.get(ReviewFinding, identity):
@@ -214,7 +222,7 @@ async def prepare_session(repo, pr, key):
                       and baseline.base == run.base and baseline.head != run.head)
     diff, scope, start = run.snapshot["diff"], "full", run.base
     reason = "Full PR review."
-    if cfg.get("review_mode", "full") != "full" and not run.snapshot.get("reply"):
+    if cfg.get("output_type") != "preview" and cfg.get("review_mode", "full") != "full" and not run.snapshot.get("reply"):
         reason = "Full PR review: no compatible earlier completed review."
         if compatible:
             comparison = (await github.repo_request(repo, run.installation, "GET",

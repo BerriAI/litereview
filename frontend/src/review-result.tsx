@@ -58,6 +58,12 @@ export function ReviewResult({
   return (
     <>
       {job.config?.review_scope && <p className="meta">{job.config.review_scope === "incremental" ? "Incremental review" : "Full PR review"} · {job.config.scope_reason}</p>}
+      {job.verdict && <div className={`review-verdict ${job.verdict.state}`}>
+        {job.verdict.score != null && <strong>{job.verdict.score}<span>/5</span></strong>}
+        <div><b>{({ ready: "Ready for human review", blocked: "Changes needed", incomplete: "Review incomplete", running: "Review in progress", skipped: "Review skipped", superseded: "Review superseded" } as Record<string, string>)[job.verdict.state]}</b>
+          {job.verdict.findings != null && <p>{job.verdict.findings} actionable {job.verdict.findings === 1 ? "finding" : "findings"}{job.verdict.required_check_failed ? " · Required check failed" : ""}</p>}</div>
+      </div>}
+      {job.preview_url && <p className="preview-link"><a href={job.preview_url}>Open PR preview <ArrowUpRight size={15} /></a></p>}
       {result.rebuttal && <p><strong>{result.rebuttal.verdict === "withdraw" ? "Finding withdrawn" : result.rebuttal.verdict === "uphold" ? "Finding still applies" : "Unable to conclude"}</strong> · {result.rebuttal.reason}</p>}
       {!finished && (
         <div className="review-progress" role="status">

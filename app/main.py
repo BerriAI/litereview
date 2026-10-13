@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import secrets
 import time
@@ -135,8 +136,8 @@ async def guard(request, call_next):
             return JSONResponse({"detail": "Request origin does not match PUBLIC_URL."}, status_code=403)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Referrer-Policy"] = "same-origin"
-    response.headers["X-Frame-Options"] = "DENY"
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("X-Frame-Options", "DENY")
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     return response
@@ -1100,7 +1101,7 @@ def spend_dashboard():
 
 @app.get("/api/runs")
 def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: int = 0,
-         limit: int | None = None, query: str = "", agent_id: str = ""):
+         limit: int | None = None, query: str = "", agent_id: str = "", pr: int | None = None):
     from . import spend
     with Session() as db:
         stmt = select(Run).where(func.coalesce(Run.display_snapshot, Run.snapshot)["harness_check"].as_boolean().is_not(True))
@@ -1109,6 +1110,8 @@ def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: i
             stmt = stmt.where(searchable.contains(query.lower().strip(), autoescape=True))
         if repo:
             stmt = stmt.where(func.lower(Run.repo) == repo.lower())
+        if pr is not None:
+            stmt = stmt.where(Run.pr == pr)
         if status:
             stmt = stmt.where(Run.status == status)
         display = func.coalesce(Job.display_config, Job.config)
@@ -1156,9 +1159,9 @@ def run_detail(run_id: str, user=Depends(require_user), compact: bool = False):
             job_query = job_query.options(with_expression(Job.config, func.coalesce(Job.display_config, Job.config)))
         all_jobs = db.scalars(job_query).all()
         artifacts = {}
-        for artifact in db.execute(select(Artifact.id, Artifact.name, Artifact.job_id).where(
+        for artifact in db.execute(select(Artifact.id, Artifact.name, Artifact.mime, Artifact.job_id).where(
                 Artifact.job_id.in_([j.id for j in all_jobs]))):
-            artifacts.setdefault(artifact.job_id, []).append({"id": artifact.id, "name": artifact.name})
+            artifacts.setdefault(artifact.job_id, []).append({"id": artifact.id, "name": artifact.name, "mime": artifact.mime})
         jobs = reviews.ordered_jobs(run, all_jobs)
         ratings = feedback.mine(db, [job.id for job in jobs], user)
         show_spend = is_admin(user)
@@ -1195,6 +1198,9 @@ def run_detail(run_id: str, user=Depends(require_user), compact: bool = False):
             } for child in children]
             data["finding_states"] = {str(f.position): {"status": f.status, **f.decision}
                                       for f in db.scalars(select(ReviewFinding).where(ReviewFinding.job_id == job.id))}
+            from . import previews, verdict
+            data["verdict"] = verdict.verdict(job, data["finding_states"])
+            data["preview_url"] = previews.url(job, historical=True)
             followup = db.get(ReviewPublication, f"reply:{run.id}") if run.snapshot.get("reply") else None
             if followup and followup.data.get("verdict"):
                 decision = followup.data["verdict"]
@@ -1222,15 +1228,69 @@ def run_detail(run_id: str, user=Depends(require_user), compact: bool = False):
         return result
 
 
-@app.get("/api/artifacts/{artifact_id}", dependencies=[Depends(require_user)])
-def artifact(artifact_id: str):
+@app.get("/api/previews/{session_id}", dependencies=[Depends(require_user)])
+async def preview_detail(session_id: str, job: str | None = None):
+    from . import previews
     with Session() as db:
-        a = db.get(Artifact, artifact_id)
+        result, run = previews.detail(db, session_id, job)
+    try:
+        async with asyncio.timeout(3):
+            response = await github.repo_request(run.repo, run.installation, "GET", f"pulls/{run.pr}")
+        result["current_head"] = response.json()["head"]["sha"]
+        result["stale"] = result["current_head"] != run.head
+    except (HTTPException, httpx.HTTPError, KeyError, ValueError, TimeoutError):
+        result["current_head"] = None
+        result["stale"] = None
+    return result
+
+
+@app.get("/api/previews/{session_id}/document", dependencies=[Depends(require_user)])
+def preview_document(session_id: str, job: str | None = None):
+    from . import preview_html, previews
+    with Session() as db:
+        result, _ = previews.detail(db, session_id, job)
+    if not result["preview"]:
+        raise HTTPException(404, "Preview is not ready yet.")
+    body, headers = preview_html.render(result["preview"])
+    return Response(body, media_type="text/html", headers=headers)
+
+
+@app.get("/api/artifacts/{artifact_id}", dependencies=[Depends(require_user)])
+def artifact(artifact_id: str, request: Request):
+    with Session() as db:
+        a = db.execute(select(Artifact.mime, func.length(Artifact.content).label("size"))
+                       .where(Artifact.id == artifact_id)).first()
         if not a:
             raise HTTPException(404)
-        return Response(
-            a.content, media_type=a.mime, headers={"Content-Disposition": 'inline; filename="screenshot.png"'}
-        )
+        headers = {"Content-Disposition": 'inline; filename="' + ("walkthrough.mp4" if a.mime == "video/mp4" else "screenshot.png") + '"',
+                   "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Accept-Ranges": "bytes"}
+        size = a.size
+        if requested := request.headers.get("range"):
+            import re
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", requested)
+            if not match or not any(match.groups()):
+                return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
+            left, right = match.groups()
+            start = int(left) if left else max(0, size - int(right))
+            end = min(int(right), size - 1) if left and right else size - 1
+            if start > end or start >= size:
+                return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"})
+            raw = db.scalar(select(func.substr(Artifact.content, start + 1, end - start + 1))
+                            .where(Artifact.id == artifact_id))
+            return Response(raw, status_code=206, media_type=a.mime,
+                            headers={**headers, "Content-Range": f"bytes {start}-{end}/{size}"})
+        raw = db.scalar(select(Artifact.content).where(Artifact.id == artifact_id))
+        return Response(raw, media_type=a.mime, headers=headers)
+
+
+@app.get("/api/artifacts/{artifact_id}/metadata", dependencies=[Depends(require_user)])
+def artifact_metadata(artifact_id: str):
+    with Session() as db:
+        row = db.execute(select(Artifact.id, Artifact.name, Artifact.mime,
+            func.length(Artifact.content).label("bytes")).where(Artifact.id == artifact_id)).first()
+        if not row:
+            raise HTTPException(404)
+        return {**dict(row._mapping), "url": settings().public_url + "/api/artifacts/" + artifact_id}
 
 
 def worker(request: Request, job_id: str):
@@ -1397,6 +1457,32 @@ async def job_artifact(job_id: str, request: Request):
         return {"id": artifact.id}
 
 
+@app.post("/api/internal/jobs/{job_id}/artifact/video")
+async def job_video(job_id: str, request: Request):
+    from urllib.parse import unquote
+
+    from runner.recording import MAX_VIDEO_BYTES
+
+    job = worker(request, job_id)
+    if not {"browser", "computer"} & set(job.config.get("capabilities", [])):
+        raise HTTPException(403, "Recording requires browser or computer access.")
+    raw = bytearray()
+    async for chunk in request.stream():
+        if len(raw) + len(chunk) > MAX_VIDEO_BYTES:
+            raise HTTPException(413, "Video exceeds 64 MB. Record a shorter walkthrough.")
+        raw.extend(chunk)
+    if len(raw) < 16 or raw[4:8] != b"ftyp":
+        raise HTTPException(400, "Upload an MP4 recording.")
+    with Session.begin() as db:
+        identity = hashlib.sha256(job_id.encode() + raw).hexdigest()[:32]
+        if db.get(Artifact, identity):
+            return {"id": identity}
+        media = Artifact(id=identity, job_id=job_id, mime="video/mp4", content=bytes(raw),
+                         name=unquote(request.headers.get("x-artifact-name", "Walkthrough")))
+        db.add(media)
+        return {"id": media.id}
+
+
 @app.post("/api/internal/jobs/{job_id}/finish")
 async def finish(job_id: str, request: Request):
     # Idempotent completion is allowed with the same token after completion.
@@ -1423,8 +1509,12 @@ async def finish(job_id: str, request: Request):
         run = db.get(Run, job.run_id)
         if run.snapshot.get("reply") and result["status"] == "completed" and not result.get("rebuttal"):
             raise HTTPException(422, "A thread follow-up must submit its rebuttal verdict, reason and evidence.")
+        from .previews import validate as validate_preview
         from .review_rules import enforce_checks
+        from .verdict import enforce_history
+        validate_preview(db, job, result)
         enforce_checks(job.config, result)
+        enforce_history(job, result)
         minimum = job.config.get("minimum_review_seconds", 0)
         if job.config.get("fusion"):
             result["limitations"] = list(dict.fromkeys(

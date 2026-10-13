@@ -155,6 +155,32 @@ def test_spend_requires_login_and_empty_workspace_is_zero(client, owner):
     assert client.get("/api/spend").status_code == 401
 
 
+def test_pr_spend_combines_retries_and_fusion_and_retains_superseded_cost(owner):
+    add_run("first")
+    charge(add_job("main", "first"), ".5")
+    charge(add_job("branch", "first", fusion_parent_id="main"), ".2")
+    add_run("retry", status="superseded")
+    charge(add_job("retry-job", "retry"), ".3")
+    with Session.begin() as db:
+        db.get(Job, "retry-job").status = "superseded"
+    add_run("other-pr")
+    with Session.begin() as db:
+        db.get(Run, "other-pr").pr = 2
+    charge(add_job("other-pr-job", "other-pr"), ".1")
+    add_run("other-repo", repo="BerriAI/lens")
+    charge(add_job("other-repo-job", "other-repo"), ".4")
+    add_run("duplicate")
+    with Session.begin() as db:
+        db.get(Run, "duplicate").snapshot = {"request_only": True}
+    data = owner.get("/api/spend").json()
+    row = next(r for r in data["pull_requests"] if r["repo"] == "BerriAI/litellm" and r["pr"] == 1)
+    assert row["runs"] == 2 and row["cost_usd"] == pytest.approx(1)
+    assert len(data["pull_requests"]) == 3
+    assert sum(r["cost_usd"] for r in data["pull_requests"]) == pytest.approx(data["total"]["cost_usd"])
+    filtered = owner.get("/api/runs?repo=BerriAI/litellm&pr=2").json()
+    assert [r["id"] for r in filtered] == ["other-pr"]
+
+
 def test_agent_spend_includes_instances_groups_and_fusion_without_double_counting(owner):
     with Session.begin() as db:
         db.add(Resource(id="agent-a", kind="agents", data={"name": "renamed-reviewer"}))

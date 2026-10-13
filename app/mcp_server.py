@@ -121,7 +121,7 @@ def build(app):
         """Find IDs and names. Kinds: agents, groups, skills, connections, repos, access (People/repository grants). Paginated."""
         result = await api("GET", "/resources/" + kind, params={"query": query, "limit": limit, "offset": offset})
         if not include_details:
-            keys = {"id", "name", "description", "updated_at", "model", "type", "review_mode", "trigger_access",
+            keys = {"id", "name", "description", "updated_at", "model", "type", "review_mode", "trigger_access", "output_type", "show_score",
                     "email", "github_login", "is_admin", "status", "scope", "target_ids", "subject", "identity_sub", "inherited"}
             result["items"] = [{k: v for k, v in row.items() if k in keys} for row in result["items"]]
         return result
@@ -198,9 +198,9 @@ def build(app):
         return await api("PUT", "/default-reviewer", {"agent_id": agent_id})
 
     @tool(read=True)
-    async def litereview_list_runs(repo: str = "", status: str = "", agent_id: str = "", limit: Limit = 25, offset: Offset = 0) -> dict[str, Any]:
+    async def litereview_list_runs(repo: str = "", status: str = "", agent_id: str = "", pr: int | None = None, limit: Limit = 25, offset: Offset = 0) -> dict[str, Any]:
         """List review history with agent names, optionally filtered by owner/repo, status or saved agent ID. Includes group use and replies. Admins receive costs; members do not."""
-        return await api("GET", "/runs", params={"repo": repo, "status": status, "agent_id": agent_id, "limit": limit, "offset": offset})
+        return await api("GET", "/runs", params={"repo": repo, "status": status, "agent_id": agent_id, "limit": limit, "offset": offset, **({"pr": pr} if pr is not None else {})})
 
     @tool(read=True)
     async def litereview_get_run(run_id: Id, include_logs: bool = False) -> dict[str, Any]:
@@ -216,12 +216,20 @@ def build(app):
 
     @tool(read=True)
     async def litereview_get_spend() -> dict[str, Any]:
-        """Admin only: model spend by agent, person, repository and run; includes fusion and comparison costs."""
+        """Admin only: model spend and run counts by agent, person, repository and pull request; includes fusion and comparison costs."""
         return await api("GET", "/spend")
 
+    @tool(read=True, external=True)
+    async def litereview_get_preview(session_id: Id, job_id: Id | None = None) -> dict[str, Any]:
+        """Read the hosted preview, media, progress and history. Checks the current GitHub head for staleness. Find session_id and preview_url on the run. Omit job_id for the latest preview."""
+        return await api("GET", "/previews/" + session_id, params={"job": job_id} if job_id else None)
+
     @tool(read=True)
-    async def litereview_get_artifact(artifact_id: Id) -> Image:
-        """Read a screenshot from the artifacts listed on a run. Returns the actual image for visual inspection."""
+    async def litereview_get_artifact(artifact_id: Id) -> Any:
+        """Read a saved screenshot for visual inspection, or get the authenticated playback URL and metadata for a video."""
+        metadata = await api("GET", "/artifacts/" + artifact_id + "/metadata")
+        if metadata["mime"] == "video/mp4":
+            return metadata
         response = await api("GET", "/artifacts/" + artifact_id, binary=True)
         mime = response.headers.get("content-type", "").split(";", 1)[0]
         if mime not in ("image/png", "image/jpeg", "image/webp"):

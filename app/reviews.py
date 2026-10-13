@@ -399,6 +399,12 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
                       else "Review in progress.", ""]
             continue
         result = job.result
+        from . import previews, verdict
+        grade = verdict.verdict(job, finding_decisions)
+        if grade:
+            lines += ["## " + (f"{grade['score']}/5 · " if grade["score"] is not None else "") + verdict.headline(grade), ""]
+        if preview_link := previews.url(job):
+            lines += [f"[Open preview]({preview_link})", ""]
         if c.get("review_scope"):
             lines += [f"Scope: {c['review_scope']} · {c.get('scope_reason', '')}", ""]
         incomplete = job.status != "completed" or result.get("limitations")

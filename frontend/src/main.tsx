@@ -39,6 +39,7 @@ const Documentation = lazy(() => import("./docs").then(m => ({ default: m.Docume
 import { MCPAuthFields, MCPServers, People } from "./resources";
 import { MCPToolSelector } from "./mcp-tool-selector";
 import { ReviewResult } from "./review-result";
+import { PreviewPage, ReviewMedia } from "./preview";
 import { ReviewRules, ReviewScope } from "./review-settings";
 import { WorkspaceSettings } from "./settings";
 import { LoadingState, RequestActivity } from "./request-state";
@@ -148,6 +149,7 @@ function App() {
   const [runsTotal, setRunsTotal] = useState(0);
   const [runsQuery, setRunsQuery] = useState("");
   const [runsAgent, setRunsAgent] = useState(new URLSearchParams(location.search).get("agent") || "");
+  const [runsPR, setRunsPR] = useState(() => ({ repo: new URLSearchParams(location.search).get("repo") || "", pr: new URLSearchParams(location.search).get("pr") || "" }));
   const [runsRevision, setRunsRevision] = useState(0);
   const runCache = useRef(new Map<string, any>());
   const workspaceRequest = useRef(0);
@@ -238,6 +240,7 @@ function App() {
     history.pushState({}, "", next);
     setPath(next.split("?")[0]);
     setRunsAgent(new URL(next, location.origin).searchParams.get("agent") || "");
+    setRunsPR({ repo: new URL(next, location.origin).searchParams.get("repo") || "", pr: new URL(next, location.origin).searchParams.get("pr") || "" });
     setRuns([]);
     setRunsQuery("");
     setMobileNav(false);
@@ -253,6 +256,7 @@ function App() {
     const fn = () => {
       setPath(location.pathname);
       setRunsAgent(new URLSearchParams(location.search).get("agent") || "");
+      setRunsPR({ repo: new URLSearchParams(location.search).get("repo") || "", pr: new URLSearchParams(location.search).get("pr") || "" });
       setRunsOffset(0);
       setRuns([]);
       setEditor(null);
@@ -425,7 +429,7 @@ function App() {
       inFlight = true;
       let interval = 4000;
       try {
-        const data = await api(runId ? `/runs/${runId}?compact=true` : `/runs?offset=${runsOffset}&limit=30&query=${encodeURIComponent(runsQuery)}&agent_id=${encodeURIComponent(runsAgent)}`,
+        const data = await api(runId ? `/runs/${runId}?compact=true` : `/runs?offset=${runsOffset}&limit=30&query=${encodeURIComponent(runsQuery)}&agent_id=${encodeURIComponent(runsAgent)}&repo=${encodeURIComponent(runsPR.repo)}${runsPR.pr ? `&pr=${encodeURIComponent(runsPR.pr)}` : ""}`,
           { signal: controller.signal, background: loaded });
         if (alive) {
           if (runId) {
@@ -442,7 +446,7 @@ function App() {
     const visible = () => { if (document.visibilityState === "visible") void refresh(); };
     document.addEventListener("visibilitychange", visible);
     return () => { alive = false; clearTimeout(timer); controller.abort(); document.removeEventListener("visibilitychange", visible); };
-  }, [session?.user?.sub, session?.user?.login, isAdmin, active, path, runsOffset, runsRevision, runsQuery, runsAgent]);
+  }, [session?.user?.sub, session?.user?.login, isAdmin, active, path, runsOffset, runsRevision, runsQuery, runsAgent, runsPR.repo, runsPR.pr]);
   useEffect(() => {
     if (!notice) return;
     const t = setTimeout(() => setNotice(""), 6000);
@@ -757,6 +761,7 @@ function App() {
         </div>
       </div>
     );
+  if (route === "previews") return <PreviewPage sessionId={path.split("/")[2] || ""} />;
   if (session.sso_required && (path === "/account" || path === "/start"))
     return (
       <MemberStart
@@ -1264,23 +1269,9 @@ function App() {
                       <FusionResults job={job} repo={run.repo} head={run.head} />
                       {job.artifacts.length > 0 && (
                         <details>
-                          <summary>{job.artifacts.length} screenshots</summary>
+                          <summary>{job.artifacts.length} saved media</summary>
                           <div className="screenshots">
-                            {job.artifacts.map((a: any) => (
-                              <a
-                                key={a.id}
-                                href={"/api/artifacts/" + a.id}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                <img
-                                  src={"/api/artifacts/" + a.id}
-                                  loading="lazy"
-                                  alt={a.name}
-                                />
-                                <span>{a.name}</span>
-                              </a>
-                            ))}
+                            {job.artifacts.map((a: any) => <ReviewMedia key={a.id} artifact={a} />)}
                           </div>
                         </details>
                       )}
@@ -1346,6 +1337,7 @@ function App() {
           ) : (
             <>
               {active === "runs" && <div className="runs-agent-filter">
+                {runsPR.repo && <p>{runsPR.repo} {runsPR.pr && `#${runsPR.pr}`} <button className="text-button" onClick={() => navigate("/runs")}>Clear PR filter</button></p>}
                 <Field label="Filter by agent"><select value={runsAgent} onChange={e => navigate(e.target.value ? `/runs?agent=${encodeURIComponent(e.target.value)}` : "/runs")}>
                   <option value="">All agents</option>
                   {runsAgent && !store.agents.some(a => a.id === runsAgent) && <option value={runsAgent}>Archived agent</option>}
@@ -1939,6 +1931,13 @@ function App() {
               </FormSection>
               {editor.kind === "agents" && (
                 <>
+                  <FormSection title="Output" description="">
+                    <div className="tabs" aria-label="Agent output">
+                      <button type="button" className={editor.data.output_type !== "preview" ? "active" : ""} aria-pressed={editor.data.output_type !== "preview"} onClick={() => update("output_type", "review")}>Code review</button>
+                      <button type="button" className={editor.data.output_type === "preview" ? "active" : ""} aria-pressed={editor.data.output_type === "preview"} onClick={() => update("output_type", "preview")}>PR preview</button>
+                    </div>
+                    {editor.data.output_type === "preview" ? <p className="meta">A hosted walkthrough for human reviewers. Uses the full PR.</p> : <label className="check"><input type="checkbox" checked={!!editor.data.show_score} onChange={e => update("show_score", e.target.checked)} /> Show readiness score</label>}
+                  </FormSection>
                   {editor.id &&
                     store.groups.some((g) =>
                       g.members.some((m: any) => m.agent_id === editor.id),
@@ -2111,7 +2110,7 @@ function App() {
                         required
                       />
                     </Field>
-                    <ReviewScope value={editor.data.review_mode || "full"} onChange={value => update("review_mode", value)} />
+                    {editor.data.output_type !== "preview" && <ReviewScope value={editor.data.review_mode || "full"} onChange={value => update("review_mode", value)} />}
                     <MinimumReviewTime
                       value={editor.data.minimum_minutes || 0}
                       onChange={(value) => update("minimum_minutes", value)}

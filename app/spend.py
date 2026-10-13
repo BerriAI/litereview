@@ -224,29 +224,29 @@ def run_costs(db, runs):
 def dashboard(db):
     snapshot = func.coalesce(Run.display_snapshot, Run.snapshot)
     config = func.coalesce(Job.display_config, Job.config)
-    runs = db.execute(select(Run.id, Run.actor, Run.repo, Run.status)
+    runs = db.execute(select(Run.id, Run.actor, Run.repo, Run.pr, Run.status)
                       .where(snapshot["harness_check"].as_boolean().is_not(True),
-                             snapshot["request_only"].as_boolean().is_not(True),
-                             Run.status != "superseded")
+                             snapshot["request_only"].as_boolean().is_not(True))
                       .order_by(Run.created_at.desc(), Run.id)).all()
     jobs = db.execute(select(Job.id, Job.run_id, Job.model_calls,
                              config["agent_id"].as_string().label("agent_id"),
                              config["name"].as_string().label("name"),
                              config["fusion_parent_id"].as_string().label("fusion_parent_id"))
-                      .where(Job.run_id.in_([r.id for r in runs]), Job.status != "superseded").order_by(Job.id)).all()
+                      .where(Job.run_id.in_([r.id for r in runs])).order_by(Job.id)).all()
     costs = job_costs(db, [j.id for j in jobs])
     jobs_by_run = defaultdict(list)
     jobs_by_id = {job.id: job for job in jobs}
     for job in jobs:
         jobs_by_run[job.run_id].append(job)
     run_summaries = {run.id: cost_summary(jobs_by_run[run.id], costs) for run in runs}
-    users, repos = defaultdict(list), defaultdict(list)
+    users, repos, prs = defaultdict(list), defaultdict(list), defaultdict(list)
     agents, agent_runs, agent_costs = {}, defaultdict(list), defaultdict(dict)
     names = dict(db.execute(select(Resource.id, Resource.data["name"].as_string())
                             .where(Resource.kind == "agents")).all())
     for run in runs:
         users[run.actor.casefold()].append(run)
         repos[run.repo.casefold()].append(run)
+        prs[(run.repo.casefold(), run.pr)].append(run)
         agent_jobs = defaultdict(list)
         for job in jobs_by_run[run.id]:
             parent = jobs_by_id.get(job.fusion_parent_id)
@@ -265,7 +265,7 @@ def dashboard(db):
     def aggregate(rows, summaries):
         known = [summaries[r.id] for r in rows if summaries[r.id]["cost_usd"] is not None]
         complete = [summaries[r.id] for r in rows if summaries[r.id]["complete"]
-                    and r.status in ("completed", "incomplete", "failed", "canceled")]
+                    and r.status in ("completed", "incomplete", "failed", "canceled", "superseded")]
         return {
             "runs": len(rows), "cost_usd": sum(c["cost_usd"] for c in known) if known or not rows else None,
             "average_cost_usd": sum(c["cost_usd"] or 0 for c in complete) / len(complete) if complete else None,
@@ -279,5 +279,8 @@ def dashboard(db):
         [{**agents[key], **aggregate(rows, agent_costs[key])} for key, rows in agent_runs.items()],
         key=lambda row: (-(row["cost_usd"] or 0), row["name"].casefold(), row["id"]),
     )
+    pull_requests = sorted([{"name": f"{rows[0].repo} #{number}", "repo": rows[0].repo, "pr": number,
+                             **aggregate(rows, run_summaries)} for (_, number), rows in prs.items()],
+                           key=lambda row: (-(row["cost_usd"] or 0), row["name"]))
     return {"total": aggregate(runs, run_summaries), "users": breakdown(users),
-            "repositories": breakdown(repos), "agents": agent_breakdown}
+            "repositories": breakdown(repos), "agents": agent_breakdown, "pull_requests": pull_requests}
