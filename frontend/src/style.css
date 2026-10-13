@@ -2012,5 +2012,23 @@ summary:hover {
 @media (max-width: 700px) { .spend-summary { grid-template-columns: 1fr; gap: 12px; } }
 
 /* Keep overlays contained and mobile fields readable without automatic zoom. */
-.sidebar nav, dialog, .modal-body, .table-wrap { overscroll-behavior: contain; }
+.sidebar nav, dialog, .modal-body { overscroll-behavior: contain; }
+/* Wide tables contain sideways gestures while vertical scrolling reaches the page. */
+.table-wrap { overscroll-behavior-x: contain; }
 @media (max-width: 767px) { input, select, textarea { font-size: 16px; } }
+
+fieldset.agent-model { min-width: 0; border: 0; margin: 0; padding: 0; }
+fieldset.agent-model + fieldset.agent-model { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 20px; }
+.agent-model legend { font-weight: 600; font-size: 13px; margin-bottom: 12px; padding: 0; }
+.fusion-role-settings { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.fusion-role-settings > summary { cursor: pointer; color: var(--text); font-size: 13px; }
+.fusion-role-settings[open] > summary { margin-bottom: 14px; }
+.fusion-role-settings .check { align-items: flex-start; margin: 12px 0; }
+.fusion-role-section { margin-top: 18px; }
+.fusion-role-section h4, .final-review-model h4 { margin: 0 0 10px; font-size: 13px; }
+.fusion-role-settings input, .fusion-role-settings textarea { max-width: 100%; }
+.add-model-action { flex-wrap: wrap; }
+
+.runs-agent-filter { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; }
+.runs-agent-filter .field { width: min(320px, 100%); margin: 0; }
+.run-agent-links { display: flex; flex-wrap: wrap; gap: 6px 12px; max-width: 300px; }

@@ -119,6 +119,10 @@ async def launch(job_id, token):
             if job.status not in ("starting", "running"):
                 return
             cfg = job.config
+        from .branch_conditions import should_run
+
+        if not await should_run(job_id):
+            return
         harness = cfg.get("harness", "builtin")
         if harness != "codex":
             raise RuntimeError("This review was queued with a retired harness. Start a new review to use Codex.")

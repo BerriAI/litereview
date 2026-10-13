@@ -147,26 +147,8 @@ def expand(groups, resources):
             except ValueError as exc:
                 raise HTTPException(409, str(exc)) from None
             data["connection"] = {"id": conn.id, **conn.data}
+            data = fusion.snapshot_tools(data, resources)
             data = fusion.snapshot_config(data, resources)
-            data["skills"] = [{"id": sid, **resources[sid].data} for sid in data["skill_ids"]]
-            data["mcp_definitions"] = []
-            for mcp in data["mcps"]:
-                resource = resources.get(mcp["connection_id"])
-                if not resource or resource.kind != "connections" or resource.data["type"] != "mcp":
-                    raise HTTPException(409, "An MCP connection is missing.")
-                selected = set(mcp["tools"])
-                definitions = [t for t in resource.data["tools"] if t["name"] in selected]
-                if len(definitions) != len(selected):
-                    raise HTTPException(409, "An MCP tool changed; test the connection and update the agent.")
-                data["mcp_definitions"].append(
-                    {
-                        "id": resource.id,
-                        "name": resource.data["name"],
-                        "type": "mcp",
-                        "base_url": resource.data["base_url"],
-                        "tools": definitions,
-                    }
-                )
             for instance in range(1, member["count"] + 1):
                 jobs.append(
                     {

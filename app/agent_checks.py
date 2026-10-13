@@ -38,20 +38,24 @@ HTTPServer(('127.0.0.1',8765),Handler).serve_forever()
     return stream.getvalue()
 
 
-def enqueue(data, connection):
-    validate_connection(data.harness, connection["type"])
-    token = secrets.token_hex(5)
+def check_instructions(capabilities):
     instructions = (
         "This is a harness capability check. Read maths.py and the attached skill's supporting file. "
         "Report the supporting file's check word in your summary. Verify add(2, 3) returns 5; there are no planted defects. "
     )
-    if "terminal" in data.capabilities:
+    if "terminal" in capabilities:
         instructions += "Use your native terminal tool to run python /workspace/repo/check.py and report its actual output. "
-    if "browser" in data.capabilities:
+    if "browser" in capabilities:
         instructions += "Use the browser tool to visit http://127.0.0.1:8765, inspect the screenshot, fill Review note with browser-ok and click Save. Inspect the result and report the swatch colour and saved text. "
-    if "computer" in data.capabilities:
+    if "computer" in capabilities:
         instructions += "Use the computer tool to navigate Chromium to http://127.0.0.1:8765, take a screenshot, type desktop-ok in the Review note field, click Save using screen coordinates and inspect a fresh screenshot. Report the colour and saved text. "
     instructions += "Finish with findings=[] and limitations=[] only if every requested check succeeds."
+    return instructions
+
+
+def enqueue(data, connection):
+    validate_connection(data.harness, connection["type"])
+    token = secrets.token_hex(5)
     import base64
 
     cfg = {
@@ -63,7 +67,7 @@ def enqueue(data, connection):
         "agent_id": "check",
         "harness_version": HARNESS_VERSIONS[data.harness],
         "connection": {k: v for k, v in connection.items() if k != "api_key"},
-        "instructions": instructions,
+        "instructions": check_instructions(data.capabilities),
         "skill_ids": ["check-skill"],
         "mcps": [],
         "mcp_definitions": [],
@@ -76,6 +80,15 @@ def enqueue(data, connection):
             }
         ],
     }
+    if cfg.get("fusion"):
+        cfg["fusion"] = {"branches": [
+            {**{k: v for k, v in branch.items()
+                if k in {"name", "connection_id", "model", "reasoning_effort", "capabilities"}},
+             "instructions": check_instructions(branch.get("capabilities")
+                 if branch.get("capabilities") is not None else data.capabilities),
+             "rules": []}
+            for branch in cfg["fusion"]["branches"]
+        ]}
     run = Run(
         id=uid(),
         delivery="check-" + uid(),
@@ -101,7 +114,9 @@ def enqueue(data, connection):
         },
     )
     with Session() as db:
-        cfg = fusion.snapshot_config(cfg, {r.id: r for r in db.scalars(select(Resource))})
+        resources = {r.id: r for r in db.scalars(select(Resource))}
+        resources["check-skill"] = Resource(id="check-skill", kind="skills", data=cfg["skills"][0])
+        cfg = fusion.snapshot_config(cfg, resources)
         db.add(run)
         fusion.enqueue(db, run.id, cfg)
         db.commit()

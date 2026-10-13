@@ -62,7 +62,8 @@ def refresh(db, session):
                 if not db.get(ReviewFinding, identity):
                     db.add(ReviewFinding(id=identity, session_id=session.id, job_id=job.id, position=index))
         if (run and not run.snapshot.get("reply") and primary
-                and all(j.status == "completed" and not j.result.get("limitations") for j in primary)):
+                and all(j.status == "completed" and not j.result.get("limitations") for j in primary)
+                and not any(j.result.get("skipped") for j in jobs)):
             session.baseline_run_id = run.id
             session.fingerprint = primary[0].config.get("review_fingerprint", "")
         session.active_run_id = None

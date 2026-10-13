@@ -198,9 +198,9 @@ def build(app):
         return await api("PUT", "/default-reviewer", {"agent_id": agent_id})
 
     @tool(read=True)
-    async def litereview_list_runs(repo: str = "", status: str = "", limit: Limit = 25, offset: Offset = 0) -> dict[str, Any]:
-        """List review history/progress, optionally for owner/repo and status. Admins receive costs; members do not."""
-        return await api("GET", "/runs", params={"repo": repo, "status": status, "limit": limit, "offset": offset})
+    async def litereview_list_runs(repo: str = "", status: str = "", agent_id: str = "", limit: Limit = 25, offset: Offset = 0) -> dict[str, Any]:
+        """List review history with agent names, optionally filtered by owner/repo, status or saved agent ID. Includes group use and replies. Admins receive costs; members do not."""
+        return await api("GET", "/runs", params={"repo": repo, "status": status, "agent_id": agent_id, "limit": limit, "offset": offset})
 
     @tool(read=True)
     async def litereview_get_run(run_id: Id, include_logs: bool = False) -> dict[str, Any]:

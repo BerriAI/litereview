@@ -142,6 +142,7 @@ function App() {
   const [runsOffset, setRunsOffset] = useState(0);
   const [runsTotal, setRunsTotal] = useState(0);
   const [runsQuery, setRunsQuery] = useState("");
+  const [runsAgent, setRunsAgent] = useState(new URLSearchParams(location.search).get("agent") || "");
   const [runsRevision, setRunsRevision] = useState(0);
   const runCache = useRef(new Map<string, any>());
   const workspaceRequest = useRef(0);
@@ -230,7 +231,10 @@ function App() {
   ]);
   const navigate = (next: string) => {
     history.pushState({}, "", next);
-    setPath(next);
+    setPath(next.split("?")[0]);
+    setRunsAgent(new URL(next, location.origin).searchParams.get("agent") || "");
+    setRuns([]);
+    setRunsQuery("");
     setMobileNav(false);
     setEditor(null);
     setRun(runCache.current.get(next.split("/")[2]) || null);
@@ -243,6 +247,9 @@ function App() {
   useEffect(() => {
     const fn = () => {
       setPath(location.pathname);
+      setRunsAgent(new URLSearchParams(location.search).get("agent") || "");
+      setRunsOffset(0);
+      setRuns([]);
       setEditor(null);
     };
     addEventListener("popstate", fn);
@@ -413,7 +420,7 @@ function App() {
       inFlight = true;
       let interval = 4000;
       try {
-        const data = await api(runId ? `/runs/${runId}?compact=true` : `/runs?offset=${runsOffset}&limit=30&query=${encodeURIComponent(runsQuery)}`,
+        const data = await api(runId ? `/runs/${runId}?compact=true` : `/runs?offset=${runsOffset}&limit=30&query=${encodeURIComponent(runsQuery)}&agent_id=${encodeURIComponent(runsAgent)}`,
           { signal: controller.signal, background: loaded });
         if (alive) {
           if (runId) {
@@ -430,7 +437,7 @@ function App() {
     const visible = () => { if (document.visibilityState === "visible") void refresh(); };
     document.addEventListener("visibilitychange", visible);
     return () => { alive = false; clearTimeout(timer); controller.abort(); document.removeEventListener("visibilitychange", visible); };
-  }, [session?.user?.sub, session?.user?.login, isAdmin, active, path, runsOffset, runsRevision, runsQuery]);
+  }, [session?.user?.sub, session?.user?.login, isAdmin, active, path, runsOffset, runsRevision, runsQuery, runsAgent]);
   useEffect(() => {
     if (!notice) return;
     const t = setTimeout(() => setNotice(""), 6000);
@@ -1292,7 +1299,7 @@ function App() {
                             </div>
                           ))}
                           {!job.logs.length && (
-                            <p>Waiting for the sandbox to start.</p>
+                            <p>{job.result.skipped ? "No sandbox started: this review was skipped." : ["completed", "failed", "timed_out", "superseded"].includes(job.status) ? "No activity recorded." : "Waiting for the sandbox to start."}</p>
                           )}
                         </div>
                       </details>
@@ -1330,6 +1337,14 @@ function App() {
             />
           ) : (
             <>
+              {active === "runs" && <div className="runs-agent-filter">
+                <Field label="Filter by agent"><select value={runsAgent} onChange={e => navigate(e.target.value ? `/runs?agent=${encodeURIComponent(e.target.value)}` : "/runs")}>
+                  <option value="">All agents</option>
+                  {runsAgent && !store.agents.some(a => a.id === runsAgent) && <option value={runsAgent}>Archived agent</option>}
+                  {store.agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                </select></Field>
+                {runsAgent && <button className="text-button" onClick={() => navigate("/runs")}>Clear filter</button>}
+              </div>}
               {active === "agents" && store.agents.length > 0 && (
                 <div className="tabs agent-tabs" aria-label="Filter agents">
                   {[
@@ -1494,6 +1509,7 @@ function App() {
                                     ? "Started"
                                     : "Connection"}
                         </th>
+                        {active === "runs" && <th>Agents</th>}
                         {active === "runs" && isAdmin && <th>Model cost</th>}
                         {active === "agents" && <th aria-sort="descending" title="PR runs using this agent, including groups. Counts each run once; excludes model checks and fusion branches.">Times used ↓</th>}
                         <th><span className="sr-only">Actions</span></th>
@@ -1637,8 +1653,12 @@ function App() {
                               </span>
                             )}
                           </td>
+                          {active === "runs" && <td><div className="run-agent-links">{row.agents?.length ? row.agents.map((agent: any) =>
+                            <a key={agent.id} href={`/runs?agent=${encodeURIComponent(agent.id)}`} onClick={e => { e.preventDefault(); navigate(`/runs?agent=${encodeURIComponent(agent.id)}`); }}>{agent.name}</a>
+                          ) : <span className="meta">No agents started</span>}</div></td>}
                           {active === "runs" && isAdmin && <td><RunCost value={row.spend} /></td>}
-                          {active === "agents" && <td>{(row.usage_count || 0).toLocaleString()}</td>}
+                          {active === "agents" && <td><span>{(row.usage_count || 0).toLocaleString()}</span><br />
+                            <a href={`/runs?agent=${encodeURIComponent(row.id)}`} onClick={e => { e.preventDefault(); navigate(`/runs?agent=${encodeURIComponent(row.id)}`); }}>View runs</a></td>}
                           <td className="row-actions">
                             {active === "agents" && (
                               setup?.default_reviewer_id === row.id ? (
@@ -1941,7 +1961,7 @@ function App() {
                     )}
                     <AgentModels value={editor.data}
                       onChange={(value) => setEditor(current => current && ({ ...current, data: { ...current.data, ...value } }))}
-                      connections={modelConnections} disabled={testingModel} />
+                      connections={modelConnections} skills={store.skills} mcps={mcpConnections} disabled={testingModel} />
                     <div className="model-actions">
                       <button
                         type="button"
@@ -2044,9 +2064,9 @@ function App() {
                       )}
                     </div>
                     <small>
-                      Checks Codex, every selected model, and enabled tools on a sample
+                      Checks Codex, every selected review model, and enabled visual tools on a sample
                       project. Uses Modal and model credits. Your review
-                      instructions, attached skills, and MCP tools are not run
+                      instructions, attached skills, MCP tools, and run conditions are not run
                       in this check. The minimum review time applies to PR
                       reviews, not this check.
                     </small>
@@ -2072,8 +2092,8 @@ function App() {
                     </Field>
                   </FormSection>
                   <FormSection
-                    title="Review instructions"
-                    description="These instructions define the agent’s task, scope, workflow, and voice. Attached skills support them."
+                    title={editor.data.fusion ? "Final reviewer instructions" : "Review instructions"}
+                    description={editor.data.fusion ? "The final reviewer follows these instructions when verifying the parallel reports. Reviewers without separate settings inherit them." : "These instructions define the agent’s task, scope, workflow, and voice. Attached skills support them."}
                   >
                     <Field label="Review instructions">
                       <textarea
@@ -2096,13 +2116,13 @@ function App() {
                     />
                   </FormSection>
                   <FormSection
-                    title="Review rules"
+                    title={editor.data.fusion ? "Final reviewer rules" : "Review rules"}
                     description="Add, edit, disable, or delete requirements without rewriting the base instructions or attached skills."
                   >
                     <ReviewRules rules={editor.data.rules || []} onChange={value => update("rules", value)} />
                   </FormSection>
                   <FormSection
-                    title="Tools & environment"
+                    title={editor.data.fusion ? "Final reviewer tools & environment" : "Tools & environment"}
                     description="Each reviewer can inspect code, run tests, and use Codex subagents when requested by your instructions or skills. Add visual tools if needed."
                   >
                     <div className="included-capability">
@@ -2171,7 +2191,7 @@ function App() {
                     </small>
                   </FormSection>
                   <FormSection
-                    title="Skills"
+                    title={editor.data.fusion ? "Final reviewer skills" : "Skills"}
                     description="Attach reusable instructions and supporting files. The same skill can guide multiple agents."
                   >
                     {!store.skills.length ? (
@@ -2199,7 +2219,7 @@ function App() {
                     </button>
                   </FormSection>
                   <FormSection
-                    title="MCP tools"
+                    title={editor.data.fusion ? "Final reviewer MCP tools" : "MCP tools"}
                     description="Select a server to enable all its current tools. Expand it to choose individual tools."
                   >
                     {!mcpConnections.length ? (
