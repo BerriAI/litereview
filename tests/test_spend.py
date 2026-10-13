@@ -327,5 +327,9 @@ def test_pr_spend_is_separate_for_each_requesting_user(owner):
     rows = {r["actor"]: r for r in data["user_pull_requests"]}
     assert rows["moe"]["runs"] == 2 and rows["moe"]["cost_usd"] == pytest.approx(1)
     assert rows["tin"]["runs"] == 1 and rows["tin"]["cost_usd"] == pytest.approx(.4)
+    users = {r["name"]: r for r in data["users"]}
+    assert users["moe"]["pull_requests"] == 1 and users["moe"]["average_runs_per_pr"] == 2
+    assert users["moe"]["average_pr_cost_usd"] == pytest.approx(1)
+    assert users["tin"]["average_pr_cost_usd"] == pytest.approx(.4)
     assert sum(r["cost_usd"] for r in rows.values()) == pytest.approx(data["pull_requests"][0]["cost_usd"])
     assert {r["id"] for r in owner.get("/api/runs?repo=BerriAI/litellm&pr=1&actor=MOE").json()} == {"moe-first", "moe-retry"}

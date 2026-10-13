@@ -287,6 +287,13 @@ def dashboard(db):
                                   "repo": rows[0].repo, "pr": number, **aggregate(rows, run_summaries)}
                                  for (actor, _, number), rows in user_prs.items()],
                                 key=lambda row: (row["actor"], -(row["cost_usd"] or 0), row["name"]))
-    return {"total": aggregate(runs, run_summaries), "users": breakdown(users),
+    user_breakdown = breakdown(users)
+    for user in user_breakdown:
+        entries = [row for row in user_pull_requests if row["actor"] == user["name"]]
+        priced = [row for row in entries if row["priced_runs"] == row["runs"]]
+        user.update(pull_requests=len(entries), priced_pull_requests=len(priced),
+                    average_pr_cost_usd=sum(row["cost_usd"] for row in priced) / len(priced) if priced else None,
+                    average_runs_per_pr=user["runs"] / len(entries) if entries else 0)
+    return {"total": aggregate(runs, run_summaries), "users": user_breakdown,
             "repositories": breakdown(repos), "agents": agent_breakdown, "pull_requests": pull_requests,
             "user_pull_requests": user_pull_requests}

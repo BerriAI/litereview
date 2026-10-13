@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { api, ApiError } from "./api";
 import { LoadingState } from "./request-state";
+import { SearchPicker } from "./ui";
 
 type Cost = { cost_usd: number | null; complete: boolean; estimated: boolean };
 type Summary = { runs: number; cost_usd: number | null; average_cost_usd: number | null; priced_runs: number; unpriced_runs: number; estimated: boolean };
-type Breakdown = Summary & { name: string; id?: string; deleted?: boolean; repo?: string; pr?: number; actor?: string };
+type Breakdown = Summary & { name: string; id?: string; deleted?: boolean; repo?: string; pr?: number; actor?: string; pull_requests?: number; priced_pull_requests?: number; average_pr_cost_usd?: number | null; average_runs_per_pr?: number };
 type SpendData = { total: Summary; users: Breakdown[]; repositories: Breakdown[]; agents: Breakdown[]; pull_requests: Breakdown[]; user_pull_requests: Breakdown[] };
 export const dollars = (value: number | null | undefined) => value == null ? "Unavailable" :
   value > 0 && value < 0.01 ? "$" + value.toFixed(4) : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
@@ -71,16 +72,17 @@ export function SpendPage() {
       <button aria-pressed={group === "pull_requests"} className={group === "pull_requests" ? "active" : ""} onClick={() => setGroup("pull_requests")}>By pull request</button>
     </div>
     {group === "agents" && <p className="spend-note">Each agent counts a PR run once, including use through groups. Costs include all instances and fusion stages. A run with multiple agents appears in each agent’s count.</p>}
-    {group === "pull_requests" && <label className="field">Requested by<select value={prUser} onChange={e => setPrUser(e.target.value)}>
-      <option value="">All users</option>{data.users.map(user => <option key={user.name} value={user.name}>{user.name}</option>)}
-    </select></label>}
+    {group === "pull_requests" && <div className="spend-user-filter"><SearchPicker label="Requested by" value={prUser} onChange={setPrUser}
+      options={[{value: "", label: "All users"}, ...data.users.map(user => ({value: user.name, label: user.name}))]} /></div>}
     {rows.length ? <div className="table-wrap" tabIndex={0} role="region" aria-label={`Spend by ${label.toLowerCase()}`}>
-      <table><thead><tr><th>{label}</th><th>Runs</th><th>Total cost</th><th>Cost per run</th></tr></thead>
+      <table><thead><tr><th>{label}</th>{group === "users" && <th>PRs</th>}<th>Runs</th>{group === "users" && <th>Runs per PR</th>}<th>Total cost</th><th>{group === "users" ? "Cost per PR" : "Cost per run"}</th></tr></thead>
         <tbody>{rows.map(row => <tr key={row.id || row.name}>
           <td>{row.repo ? <a href={`https://github.com/${row.repo}/pull/${row.pr}`} target="_blank" rel="noreferrer">{row.name}</a> : group === "users" ? <button className="text-button" onClick={() => { setPrUser(row.name); setGroup("pull_requests"); }}>{row.name} · View PRs</button> : row.name}{row.deleted && <small>Deleted agent</small>}{row.unpriced_runs > 0 && <small>{row.unpriced_runs} {row.unpriced_runs === 1 ? "run has" : "runs have"} incomplete cost data</small>}</td>
+          {group === "users" && <td>{row.pull_requests}</td>}
           <td>{row.repo ? <a href={`/runs?repo=${encodeURIComponent(row.repo)}&pr=${row.pr}${row.actor ? `&actor=${encodeURIComponent(row.actor)}` : ""}`}>{row.runs.toLocaleString()}</a> : row.runs.toLocaleString()}</td>
+          {group === "users" && <td>{row.average_runs_per_pr?.toLocaleString("en-US", {maximumFractionDigits: 1})}</td>}
           <td>{dollars(row.cost_usd)}{row.unpriced_runs > 0 && row.cost_usd != null ? "+" : ""}{row.estimated && <span className="cost-estimate"> est.</span>}</td>
-          <td>{dollars(row.average_cost_usd)}<small>{row.priced_runs} priced {row.priced_runs === 1 ? "run" : "runs"}</small></td>
+          <td>{dollars(group === "users" ? row.average_pr_cost_usd : row.average_cost_usd)}<small>{group === "users" ? `${row.priced_pull_requests} fully priced PRs` : `${row.priced_runs} priced ${row.priced_runs === 1 ? "run" : "runs"}`}</small></td>
         </tr>)}</tbody>
       </table>
     </div> : <div className="empty-state"><h2>{group === "agents" ? "No agent runs yet" : "No runs yet"}</h2><p>Spend appears here after your first PR review.</p></div>}
