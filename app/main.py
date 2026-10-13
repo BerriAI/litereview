@@ -310,6 +310,10 @@ def validate_resource(kind, data, db, resource_id):
                 validate_connection("codex", branch_conn.data["type"])
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from None
+            if condition := branch.get("condition"):
+                decision_conn = exists(condition["connection_id"], "connections")
+                if decision_conn.data["type"] not in ("gateway", "openai"):
+                    raise HTTPException(400, "Choose a gateway or OpenAI connection for the decision model.")
         conn = exists(data["connection_id"], "connections")
         if conn.data["type"] == "mcp":
             raise HTTPException(400, "Choose a model connection.")
@@ -317,16 +321,17 @@ def validate_resource(kind, data, db, resource_id):
             validate_connection(data.get("harness", "codex"), conn.data["type"])
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
-        for sid in data["skill_ids"]:
-            exists(sid, "skills")
-        for mcp in data["mcps"]:
-            c = exists(mcp.get("connection_id"), "connections")
-            if (
-                c.data["type"] != "mcp"
-                or not isinstance(mcp.get("tools"), list)
-                or not set(mcp["tools"]).issubset({t["name"] for t in c.data["tools"]})
-            ):
-                raise HTTPException(400, "Select valid tools from a tested MCP connection.")
+        for stage in [data, *(data.get("fusion") or {}).get("branches", [])]:
+            for sid in stage.get("skill_ids") or []:
+                exists(sid, "skills")
+            for mcp in stage.get("mcps") or []:
+                c = exists(mcp.get("connection_id"), "connections")
+                if (
+                    c.data["type"] != "mcp"
+                    or not isinstance(mcp.get("tools"), list)
+                    or not set(mcp["tools"]).issubset({t["name"] for t in c.data["tools"]})
+                ):
+                    raise HTTPException(400, "Select valid tools from a tested MCP connection.")
     if kind == "groups":
         for member in data["members"]:
             exists(member["agent_id"], "agents")
@@ -555,11 +560,12 @@ def delete_resource(kind: str, resource_id: str):
                 rule["target_id"] == resource_id for rule in other.data.get("review_rules", [])
             ):
                 raise HTTPException(409, f'Remove this reviewer from automatic reviews in "{other.data["name"]}" first.')
-            if other.kind == "agents" and (
-                resource_id == other.data["connection_id"]
-                or any(b["connection_id"] == resource_id for b in (other.data.get("fusion") or {}).get("branches", []))
-                or resource_id in other.data["skill_ids"]
-                or any(m["connection_id"] == resource_id for m in other.data["mcps"])
+            if other.kind == "agents" and any(
+                resource_id == stage["connection_id"]
+                or resource_id == (stage.get("condition") or {}).get("connection_id")
+                or resource_id in (stage.get("skill_ids") or [])
+                or any(m["connection_id"] == resource_id for m in stage.get("mcps") or [])
+                for stage in [other.data, *(other.data.get("fusion") or {}).get("branches", [])]
             ):
                 raise HTTPException(409, f'Remove this item from agent "{other.data["name"]}" first.')
             if other.kind == "groups" and (any(m["agent_id"] == resource_id for m in other.data["members"])):
@@ -675,7 +681,9 @@ async def test_agent_model(data: AgentModel):
     tested = set()
     result = None
     for selected in selections:
-        key = (selected.connection_id, selected.model)
+        capabilities = selected.capabilities if selected.capabilities is not None else data.capabilities
+        vision = bool({"browser", "computer"} & set(capabilities))
+        key = (selected.connection_id, selected.model, vision)
         if key in tested:
             continue
         connection = providers.connection(selected.connection_id)
@@ -684,7 +692,7 @@ async def test_agent_model(data: AgentModel):
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
         result = await providers.probe(
-            connection, selected.model, bool({"browser", "computer"} & set(data.capabilities)))
+            connection, selected.model, vision)
         tested.add(key)
     return result
 
@@ -1090,7 +1098,8 @@ def spend_dashboard():
 
 
 @app.get("/api/runs")
-def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: int = 0, limit: int | None = None, query: str = ""):
+def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: int = 0,
+         limit: int | None = None, query: str = "", agent_id: str = ""):
     from . import spend
     with Session() as db:
         stmt = select(Run).where(func.coalesce(Run.display_snapshot, Run.snapshot)["harness_check"].as_boolean().is_not(True))
@@ -1101,6 +1110,12 @@ def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: i
             stmt = stmt.where(func.lower(Run.repo) == repo.lower())
         if status:
             stmt = stmt.where(Run.status == status)
+        display = func.coalesce(Job.display_config, Job.config)
+        primary = (display["fusion_parent_id"].as_string().is_(None),
+                   display["comparison_parent_id"].as_string().is_(None))
+        if agent_id:
+            stmt = stmt.where(select(Job.id).where(Job.run_id == Run.id, *primary,
+                display["agent_id"].as_string() == agent_id).exists())
         if offset < 0 or (limit is not None and not 1 <= limit <= 100):
             raise HTTPException(422, "Use a nonnegative offset and a limit between 1 and 100.")
         total = db.scalar(select(func.count()).select_from(stmt.subquery()))
@@ -1112,6 +1127,15 @@ def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: i
         if is_admin(user):
             costs = spend.run_costs(db, rows)
             output = [{**run_public(r), "spend": costs[r.id]} for r in rows]
+        agents_by_run = {}
+        if rows:
+            agents = db.execute(select(Job.run_id, display["agent_id"].as_string(),
+                display["name"].as_string()).where(Job.run_id.in_([r.id for r in rows]), *primary).distinct())
+            for run_id, aid, name in agents:
+                if aid and name:
+                    agents_by_run.setdefault(run_id, {})[aid] = {"id": aid, "name": name}
+        for item in output:
+            item["agents"] = sorted(agents_by_run.get(item["id"], {}).values(), key=lambda a: a["name"])
         if limit is not None:
             return {"items": output, "total": total, "has_more": offset + len(output) < total,
                     "next_offset": offset + len(output) if offset + len(output) < total else None}

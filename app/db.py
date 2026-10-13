@@ -101,7 +101,7 @@ class Job(Base):
 # These projections never replace the worker's original snapshot.
 JOB_DISPLAY_KEYS = (
     "agent_id", "name", "group", "instance", "model", "run_order", "target_kind", "target_id",
-    "fusion_parent_id", "fusion_index", "fusion_stage", "comparison_parent_id", "session_id",
+    "fusion_parent_id", "fusion_index", "fusion_stage", "fusion_role", "branch_decision", "comparison_parent_id", "session_id",
     "review_scope", "scope_reason",
 )
 

@@ -50,8 +50,60 @@ class ModelSelection(BaseModel):
     reasoning_effort: Literal["low", "medium", "high", "xhigh"] | None = None
 
 
+class ReviewRuleInstruction(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex, min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1)
+    instructions: str = Field(min_length=1)
+    enabled: bool = True
+    required: bool = True
+
+
+class BranchCondition(BaseModel):
+    connection_id: str = Field(min_length=1, description="Saved gateway or OpenAI connection serving /v1/decisions.")
+    model: str = Field(min_length=1, description="An available decision model ID, such as the gateway's Jev deployment.")
+    instructions: str = Field(min_length=1, description="Yes/no criterion evaluated against the PR title and body. True runs this branch; false skips it.")
+    threshold: float = Field(default=0.5, ge=0, le=1, description="Run when the probability of true is at least this value. Decision failures run the branch, rather than silently dropping coverage.")
+
+
+class FusionBranch(ModelSelection):
+    name: str = Field(default="", description="Optional role label, e.g. Drift and reuse.")
+    instructions: str | None = Field(default=None, min_length=1, description="Replace this branch's instructions. Omitted or null inherits the agent instructions; the aggregator keeps its own instructions.")
+    skill_ids: list[str] | None = Field(default=None, description="Replace branch skills. Null inherits the agent skills; [] attaches none.")
+    mcps: list[dict] | None = Field(default=None, description="Replace branch MCP selections: [{connection_id, tools}]. Null inherits; [] disables MCP tools.")
+    capabilities: list[Literal["terminal", "browser", "computer"]] | None = Field(default=None, description="Replace branch capabilities. Null inherits; terminal is always included.")
+    rules: list[ReviewRuleInstruction] | None = Field(default=None, description="Replace branch review rules. Null inherits; [] applies none. The aggregator keeps the agent rules.")
+    paths: list[str] | None = Field(default=None, description="Optional changed-path gate over the full captured PR diff, including both names of renames. Any matching path qualifies. Repository-relative, case-sensitive: exact files, directories ending in /, * and ? within a segment, ** across directories. Null or [] disables this gate. Evaluated before condition; when both gates are set, both must match.")
+    condition: BranchCondition | None = Field(default=None, description="Optional decision-model gate. Null disables this gate. Evaluated once per accepted branch against the snapshotted PR title/body, after any path gate passes and before starting its sandbox.")
+
+    @field_validator("paths")
+    @classmethod
+    def relative_paths(cls, values):
+        if not values:
+            return None
+        paths = list(dict.fromkeys(p.strip().removeprefix("./") for p in values if p.strip()))
+        if not paths or any(not p or p.startswith(("/", "!")) or "\\" in p
+                            or any(s in ("", ".", "..") for s in p.rstrip("/").split("/"))
+                            or any("**" in s and s != "**" for s in p.split("/")) for p in paths):
+            raise ValueError("Use repository-relative files or directories ending in /; ** must be a full path segment. Exclusions are not supported.")
+        return paths
+
+    @field_validator("capabilities")
+    @classmethod
+    def included_tools(cls, values):
+        from runner.catalog import review_capabilities
+
+        return None if values is None else review_capabilities(values)
+
+    @field_validator("rules")
+    @classmethod
+    def unique_rules(cls, values):
+        if values is not None and len({rule.id for rule in values}) != len(values):
+            raise ValueError("Review rules must have unique IDs within each branch.")
+        return values
+
+
 class Fusion(BaseModel):
-    branches: list[ModelSelection] = Field(min_length=1, max_length=16)
+    branches: list[FusionBranch] = Field(min_length=1, max_length=16, description="Independent parallel reviewers. The agent's top-level model, instructions, skills, rules and tools configure the final aggregator and supply defaults for branches.")
 
 
 class AgentModel(ModelSelection):
@@ -67,14 +119,6 @@ class AgentModel(ModelSelection):
         from runner.catalog import review_capabilities
 
         return review_capabilities(values)
-
-
-class ReviewRuleInstruction(BaseModel):
-    id: str = Field(default_factory=lambda: uuid4().hex, min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
-    name: str = Field(min_length=1)
-    instructions: str = Field(min_length=1)
-    enabled: bool = True
-    required: bool = True
 
 
 class Agent(ReviewTarget, AgentModel):

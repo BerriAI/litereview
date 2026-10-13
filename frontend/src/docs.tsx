@@ -364,10 +364,37 @@ export function Documentation() {
           <p>
             To combine independent reviews into one result, open a reviewer in
             <a href="/agents"> PR agents</a> and choose Add model under Model.
-            Adding a second model enables fusion automatically. Every model uses
-            the same instructions, skills, and tools. Choose the Final review model,
-            save, and run Test agent. You can add up to 16 models; remove extra
-            models to return to a single reviewer.
+            Adding a second model enables fusion. Under Role, skills &amp; tools, give each
+            reviewer separate instructions, skills, rules, and tools, or leave it
+            using the agent settings. The Final reviewer uses the agent settings below
+            to verify and combine the reports. Save, then run Test agent to check
+            review-model compatibility. You can add up to 16 parallel reviewers.
+            Use a single reviewer keeps the final reviewer settings.
+          </p>
+          <p>
+            Under Run condition, enable Run only for matching files or directories
+            to gate a reviewer by the PR’s changed paths. Enter one repository-relative
+            path per line: an exact file, a directory ending in /, or a glob such as
+            <code> litellm/llms/**</code>. Any match qualifies. <code>*</code> stays within
+            one directory; <code>**</code> crosses directories. Matching is case-sensitive
+            and uses the full captured PR diff, including both names of renamed files,
+            even on incremental runs. No match skips the branch without using credits.
+            If paths cannot be read, the reviewer runs with a warning.
+          </p>
+          <p>
+            You can also choose a decision model such as Jev and
+            enter a yes/no criterion. It reads the PR title and body before starting
+            that reviewer. A probability at or above the threshold (default 0.5) runs
+            it; false skips it. If the decision fails, the reviewer runs and a warning
+            appears in Runs. Model criteria use the description, not the code diff.
+            When both gates are enabled, the path gate runs first and both must match.
+            Decision calls also use credits and appear in spend.
+          </p>
+          <p>
+            If every branch skips, no final review runs. Runs explicitly says no code
+            review was performed. Skipped branches do not advance the incremental
+            baseline. Test agent does not evaluate these conditions or execute saved
+            instructions, skills, or MCP tools.
           </p>
           <p>
             Each branch gets its own checkout. The aggregator verifies their reports
@@ -502,7 +529,7 @@ export function Documentation() {
           <p>For an existing GitHub App, enable Pull request under its Permissions &amp; events and keep Issue comment enabled. Return to Repositories to refresh the connection check. Apps created by this version include both subscriptions.</p>
           <p>After a matching event, check Runs for the automatic trigger and reviewed commit. If nothing starts, check the event subscription, enabled rule, author and label filters, and repository permissions. Drafts and closed PRs are skipped. Saving a rule does not run reviews retroactively.</p>
           <p>Each agent instance runs automatically once per PR commit, including when rules overlap. Failed reviews are not retried automatically; use an explicit <code>@litereview agent-name</code> comment to run again. Disabling a rule stops future triggers and lets accepted runs finish. Automatic review spend is attributed to the PR author.</p>
-          <p>PR agents sorts by Times used: the number of PR runs that used each agent, including group use and incomplete runs. Model checks and fusion branches are excluded. Ties sort by name.</p>
+          <p>PR agents sorts by Times used: the number of PR runs that used each agent, including group use and incomplete runs. Model checks and fusion branches are excluded. Ties sort by name. Choose View runs to open that agent’s history. Runs lists the agents on each row; click an agent name or use Filter by agent to narrow the list.</p>
         </section>
         <section>
           <h2>License and contributions</h2>

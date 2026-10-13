@@ -281,3 +281,34 @@ def test_screenshot_tool_returns_image_content(mcp_client):
     assert not result.get("isError")
     assert result["content"][0]["type"] == "image"
     assert base64.b64decode(result["content"][0]["data"]) == png
+
+
+def test_mcp_configures_independent_fusion_roles_and_decision_conditions(mcp_client):
+    c = mcp_client
+    issued, _ = token(c)
+    access = issued['access_token']
+    connection = call(c, access, 'create_connection', {'data': {'name': 'Review models', 'type': 'gateway'}})
+    decision = call(c, access, 'create_connection', {'data': {'name': 'Decision models', 'type': 'gateway'}})
+    skill = call(c, access, 'create_skill', {'data': {'name': 'drift', 'instructions': 'Look for existing helpers.'}})
+    agent = call(c, access, 'create_agent', {'data': {
+        'name': 'fusion-review', 'connection_id': connection['id'], 'model': 'final-model',
+        'instructions': 'Verify and combine reports.', 'fusion': {'branches': [
+            {'connection_id': connection['id'], 'model': 'correctness'},
+            {'connection_id': connection['id'], 'model': 'drift', 'name': 'Drift and reuse',
+             'instructions': 'Only inspect drift.', 'paths': ['src/**', 'lib/'], 'skill_ids': [skill['id']], 'rules': [], 'mcps': [],
+             'condition': {'connection_id': decision['id'], 'model': 'jev-test', 'instructions': 'Does this PR change code?'}},
+        ]}}})
+    assert agent['instructions'] == 'Verify and combine reports.'
+    branch = agent['fusion']['branches'][1]
+    assert branch['instructions'] == 'Only inspect drift.' and branch['condition']['threshold'] == 0.5
+    updated = call(c, access, 'update_agent', {'resource_id': agent['id'], 'expected_updated_at': agent['updated_at'],
+                                              'changes': {'instructions': 'Updated final instructions.'}})
+    assert updated['fusion'] == agent['fusion']
+    assert call(c, access, 'get_resource', {'kind': 'agents', 'resource_id': agent['id']})['fusion'] == updated['fusion']
+    schema = call(c, access, 'get_schema', {'kind': 'agents'})
+    assert 'condition' in schema['$defs']['FusionBranch']['properties']
+    assert 'paths' in schema['$defs']['FusionBranch']['properties']
+    assert branch['paths'] == ['src/**', 'lib/']
+    assert 'threshold' in schema['$defs']['BranchCondition']['properties']
+    assert c.delete('/api/resources/connections/' + decision['id']).status_code == 409
+    assert c.delete('/api/resources/skills/' + skill['id']).status_code == 409

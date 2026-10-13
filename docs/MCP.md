@@ -32,7 +32,17 @@ Use `litereview_test_connection` to discover actual model IDs. Never infer that 
 
 Terminal access is always included. Browser and computer capabilities are optional. Skills are reusable Markdown instructions with optional base64-encoded supporting files. Attach their IDs through `skill_ids`. MCP tools are chosen per agent using a saved MCP connection ID and discovered tool names in `mcps`; merely saving a connection does not attach its tools.
 
-For fusion, `fusion.branches` lists the independent model configurations, and the agent's top-level model is the final review model. Every branch and the final model consume credits. Groups reference saved agent IDs and instance counts; they do not copy agents.
+For fusion, `fusion.branches` lists independent parallel reviewers. The agent's top-level model, instructions, skills, rules and tools configure the final reviewer that verifies and combines their reports. Each branch can set a role `name` and its own `instructions`, `skill_ids`, `rules`, `capabilities` and `mcps`. Omitted or null fields inherit the agent settings; a supplied field replaces that field for the branch. Empty arrays mean no skills, rules or MCP tools; terminal access is always included. The final reviewer keeps its own settings. Runtime limits and review scope apply to all stages; minimum review time applies to branches.
+
+A branch can set `paths: ["litellm/llms/**", "litellm/litellm_core_utils/prompt_templates/"]` to run only when the full captured PR diff changes a matching file. Any match qualifies. Paths are repository-relative and case-sensitive: use an exact file, a directory ending in `/`, `*` or `?` within a path segment, or `**` across directories. Both old and new names of renamed files count, as do deleted and binary files. The path gate uses the full PR diff even for incremental reviews. Null or `[]` disables it. An unreadable diff runs the branch with a warning. No match skips it before any decision call or sandbox, using no model or sandbox credits.
+
+A branch can also set `condition: {connection_id, model, instructions, threshold}`. Choose a real decision-model ID available on a saved gateway or OpenAI connection. LiteReview calls the [LiteLLM Decisions API](https://docs.litellm.ai/docs/decisions) with a predicate over the accepted PR's title and body. This supports Jev through a LiteLLM gateway. `threshold` defaults to `0.5`; probability at or above it runs the branch. Below it skips the branch without starting its sandbox. Null disables the model gate. When `paths` and `condition` are both set, the path gate runs first and both must match. An unavailable, refused, or malformed decision runs the branch and records a warning. Conditions use PR text, not the diff, so they are routing hints for specialist reviews, not proof that a change is safe.
+
+Runs shows path matches and each model decision, probability, threshold and criterion. Skips are shown as skipped, not as completed code reviews. If all branches skip, the final reviewer does not run and the result explicitly says no code review was performed. Skipped branches do not advance the incremental baseline, so later reviews can still cover previously skipped changes. Decision calls are included in spend; every running branch and the final reviewer also consume credits. Test agent checks review-model and visual-tool compatibility; it does not evaluate branch conditions or execute saved instructions, skills or MCP tools.
+
+For example, to add a drift specialist alongside a correctness reviewer, first discover the connection, models and skill IDs, then patch `fusion.branches` with both reviewers. Give the specialist its own drift/reuse instructions and skill IDs, and `rules: []` if the agent's general requirements should not apply to that specialist. Keep the top-level instructions focused on verification, deduplication and the final report. Add a condition only when the user wants that specialist to run selectively. Read back the saved branches and all top-level settings to confirm the intended inheritance. Arrays replace the saved array: preserve other branches when editing one.
+
+Groups reference saved agent IDs and instance counts; they do not copy agents.
 
 Example requests:
 
@@ -48,7 +58,7 @@ An enabled rule is included in the review's immutable configuration and should r
 
 Example rules:
 
-- **Real end-to-end proof:** Require inspectable PR evidence identifying the tested commit, real entry point and dependencies, commands/actions, and observed result. Mocks, absent credentials, skipped integrations and unsupported “tested locally” claims do not satisfy the check. Mark missing evidence `not_run`, required, and explain what is missing.
+- **LLM translation test evidence:** For changes to LLM request/response translations, accept comprehensive passing E2E tests or integration tests whose fixtures have verifiable origins in real data. Prefer tests that drive the actual application harness. Evidence can live in tests, CI or linked artifacts; do not require duplicate proof in the PR description. Record unrelated changes as not applicable, and specify any missing coverage, provenance or execution results.
 - **Breaking-change guidance:** Identify concrete backwards incompatibility. If present, require a conventional `!` marker in the PR title and describe migration impact. Pass when there is no breaking change; a missing marker alone is not a defect.
 - **Evidence-based findings:** Report a reachable trigger, affected code and observed consequence. A caveat acknowledging a defect does not waive it. Reject speculative or duplicate findings.
 
@@ -98,7 +108,7 @@ For an OSS reviewer, verify the App's access, allow that agent in repository gra
 
 `litereview_request_review` starts a paid review on a connected open PR and publishes results on GitHub. The signed-in user must have a verified GitHub link. Pass exact agent/group names or [] for the default. Reuse `request_id` on retries. Read the returned status and any rejection; a run ID alone does not imply work started.
 
-Use `litereview_list_runs` with repository/status filters and pagination, then `litereview_get_run`. Logs are opt-in. Results include findings, checks, limitations, session history and private comparisons. Costs are included only for admins; `litereview_get_spend` gives the workspace breakdown. Missing pricing is unknown cost, not zero.
+Use `litereview_list_runs` with repository/status/`agent_id` filters and pagination. Run summaries include the saved agent IDs and names, deduplicated across group instances and fusion branches. In the UI, use **PR agents → View runs** or the **Runs → Filter by agent** control. Use `litereview_get_run` for details. Logs are opt-in. Results include findings, checks, limitations, session history and private comparisons. Costs are included only for admins; `litereview_get_spend` gives the workspace breakdown. Missing pricing is unknown cost, not zero.
 
 `litereview_check_agent` starts a paid private sample-project check. Poll `litereview_get_agent_check` until terminal, inspect its result, or use `litereview_cancel_agent_check` to stop it. The check verifies model/runtime/tool compatibility; it does not execute review instructions or prove correctness on a real PR. This MCP does not offer arbitrary PR cancellation, deployment or merging.
 
