@@ -2012,7 +2012,9 @@ summary:hover {
 @media (max-width: 700px) { .spend-summary { grid-template-columns: 1fr; gap: 12px; } }
 
 /* Keep overlays contained and mobile fields readable without automatic zoom. */
-.sidebar nav, dialog, .modal-body, .table-wrap { overscroll-behavior: contain; }
+.sidebar nav, dialog, .modal-body { overscroll-behavior: contain; }
+/* Wide tables contain sideways gestures while vertical scrolling reaches the page. */
+.table-wrap { overscroll-behavior-x: contain; }
 @media (max-width: 767px) { input, select, textarea { font-size: 16px; } }
 
 fieldset.agent-model { min-width: 0; border: 0; margin: 0; padding: 0; }

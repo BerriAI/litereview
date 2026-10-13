@@ -48,9 +48,10 @@ export function MCPConnect() {
         </details>
         <p className="settings-permissions">Connected clients use your workspace permissions and can start paid reviews. Only admins can see spend or manage admin roles.</p>
         <div className="settings-step"><h3>Connected clients</h3>
+          <p className="meta">Access refreshes automatically. Sign in again after 30 days, or if a connection is revoked.</p>
           {!data.connections.length && <p className="meta">No clients connected yet. They’ll appear here after you approve a connection.</p>}
           {data.connections.map((connection: any) => <div className="mcp-client" key={connection.id}>
-            <span>{connection.name}<small>Connected {new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(connection.created_at * 1000)}</small></span>
+            <span>{connection.name}<small>Sign in again by {new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(connection.expires_at * 1000)}</small></span>
             <button disabled={!!busy} onClick={async () => {
               setBusy(connection.id); setError(""); setNotice("");
               try { await api(`/mcp/connections/${connection.id}`, send("DELETE")); await load(); setNotice("Client disconnected. Reconnect it to grant access again."); }

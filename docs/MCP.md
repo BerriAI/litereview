@@ -10,7 +10,9 @@ For Claude Code, use the command shown in Settings, then open `/mcp` to complete
 
 Ask: “Show my LiteReview agents and their review scope.” A successful connection can call `litereview_get_workspace` and list real agents. Healthy service status alone does not prove the MCP connection works.
 
-Only approved workspace Google accounts can connect. A non-member who can invoke an OSS agent from GitHub cannot access this MCP or the dashboard. Revoke your clients in **Settings → Connect an AI assistant**. Access tokens expire after one hour, refresh tokens rotate, and connections require reauthorization after 30 days. Revocation or removal from the deployment's allowed Google domains takes effect on subsequent requests. Ordinary browser sign-out does not disconnect your authorized MCP clients.
+Only approved workspace Google accounts can connect. A non-member who can invoke an OSS agent from GitHub cannot access this MCP or the dashboard. Revoke your clients in **Settings → Connect an AI assistant**. Clients refresh access automatically for up to 30 days after connection, then require Google sign-in again. Ordinary browser sign-out does not disconnect your authorized MCP clients. Revocation or removal from the deployment's allowed Google domains takes effect on subsequent requests.
+
+Access tokens last one hour. Refresh tokens rotate, and retries within 60 seconds return the same replacement tokens so parallel requests or a lost response do not disconnect the client. Existing access tokens keep their original expiry. Reusing a rotated refresh token after that retry window revokes the connection.
 
 ## Start here
 
@@ -116,7 +118,7 @@ Optional `minimum_minutes` means useful review work after setup. `maximum_minute
 
 ## Troubleshooting
 
-- **401:** Reconnect the MCP and complete Google sign-in/consent. A revoked, expired, wrong-resource or disallowed-workspace token is rejected.
+- **401:** The client should refresh an expired access token automatically. If refresh fails, reconnect through the client's MCP settings and complete Google sign-in/consent. A revoked connection, the 30-day expiry, a wrong resource or a disallowed workspace requires resolving that cause; retrying an old token will not restore access.
 - **403:** Check the current account and required admin role. Do not try a different endpoint to bypass the restriction.
 - **409:** Read the resource again; it changed or still has references. Explain the dependency instead of deleting unrelated resources.
 - **422:** Read the tool/schema error, correct the named fields and retry. Partial updates preserve omitted values.

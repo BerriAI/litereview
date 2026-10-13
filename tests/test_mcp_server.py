@@ -1,8 +1,11 @@
+import asyncio
 import base64
 import hashlib
 import re
 import secrets
 import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -10,9 +13,20 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from test_sso import enable, identity
 
-from app.db import Artifact, Base, MCPGrant, MCPToken, Resource, Session, WorkspaceAdmin, engine
+from app.db import (
+    Artifact,
+    Base,
+    MCPAuthorization,
+    MCPGrant,
+    MCPToken,
+    Resource,
+    Session,
+    WorkspaceAdmin,
+    engine,
+)
 from app.main import app
 from app.schemas import Agent
+from app.security import digest
 from app.settings import settings
 
 URL = "http://localhost:8769"
@@ -114,13 +128,99 @@ def test_pkce_redirect_resource_code_replay_and_refresh_rotation(mcp_client):
     assert response.status_code == 200
     rotated = response.json()
     assert rotated["refresh_token"] != issued["refresh_token"]
-    assert c.get("/api/session", headers={"Authorization": "Bearer " + issued["access_token"]}).json()["user"] is None
+    assert c.get("/api/session", headers={"Authorization": "Bearer " + issued["access_token"]}).json()["user"]
     assert c.get("/api/session", headers={"Authorization": "Bearer " + rotated["access_token"]}).json()["user"]
+    retried = c.post("/token", data=refresh)
+    assert retried.status_code == 200
+    assert retried.json()["access_token"] == rotated["access_token"]
+    assert retried.json()["refresh_token"] == rotated["refresh_token"]
+    with Session.begin() as db:
+        cache = db.get(MCPAuthorization, digest(issued["refresh_token"]))
+        assert all(value not in str(cache.data) for key, value in rotated.items() if key.endswith("token"))
+        cache.expires_at = time.time() - 1
     assert c.post("/token", data=refresh).status_code == 400
     assert c.get("/api/session", headers={"Authorization": "Bearer " + rotated["access_token"]}).json()["user"] is None
     with Session() as db:
         assert db.scalar(select(MCPGrant)).revoked
         assert all(t.token_hash not in issued.values() for t in db.scalars(select(MCPToken)))
+
+
+def test_parallel_refreshes_and_restart_retry_keep_one_token_pair(mcp_client):
+    from app.mcp_auth import Provider
+
+    issued, form = token(mcp_client)
+    ready = Barrier(4)
+
+    def refresh():
+        async def run():
+            provider = Provider()  # Separate workers share only the database.
+            client = await provider.get_client(form["client_id"])
+            loaded = await provider.load_refresh_token(client, issued["refresh_token"])
+            assert loaded
+            ready.wait(timeout=10)
+            return await provider.exchange_refresh_token(client, loaded, ["litereview"])
+        return asyncio.run(run())
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: refresh(), range(4)))
+    assert len({r.access_token for r in results}) == 1
+    assert len({r.refresh_token for r in results}) == 1
+    with Session.begin() as db:
+        assert not db.scalar(select(MCPGrant)).revoked
+        assert len(db.scalars(select(MCPToken)).all()) == 4
+        cache = db.get(MCPAuthorization, digest(issued["refresh_token"]))
+        cache.data = {**cache.data, "issued_at": cache.data["issued_at"] - 20}
+    # A lost response can be recovered by a fresh Provider after a restart.
+    async def retry():
+        provider = Provider()
+        client = await provider.get_client(form["client_id"])
+        loaded = await provider.load_refresh_token(client, issued["refresh_token"])
+        return await provider.exchange_refresh_token(client, loaded, ["litereview"])
+    retried = asyncio.run(retry())
+    assert retried.access_token == results[0].access_token
+    assert retried.refresh_token == results[0].refresh_token
+    assert retried.expires_in <= results[0].expires_in - 19
+    form = {"grant_type": "refresh_token", "client_id": form["client_id"], "refresh_token": retried.refresh_token}
+    assert mcp_client.post("/token", data=form).status_code == 200
+
+
+@pytest.mark.parametrize("change", ["revoked", "expired", "workspace", "resource", "audience"])
+def test_refresh_retry_rechecks_authorization(mcp_client, monkeypatch, change):
+    issued, form = token(mcp_client)
+    refresh = {"grant_type": "refresh_token", "client_id": form["client_id"], "refresh_token": issued["refresh_token"]}
+    rotated = mcp_client.post("/token", data=refresh).json()
+    with Session.begin() as db:
+        grant = db.scalar(select(MCPGrant))
+        if change == "revoked":
+            grant.revoked = True
+        elif change == "expired":
+            grant.expires_at = time.time() - 1
+        elif change == "resource":
+            grant.resource = "https://other.example/mcp"
+        elif change == "audience":
+            grant.audience = "other-google-client"
+    if change == "workspace":
+        monkeypatch.setattr(settings(), "google_allowed_domains", "different.example")
+    assert mcp_client.post("/token", data=refresh).status_code == 400
+    for access in [issued["access_token"], rotated["access_token"]]:
+        assert mcp_client.post("/api/mcp", json={}, headers={"Authorization": "Bearer " + access}).status_code == 401
+
+
+def test_refresh_rejects_wrong_client_resource_scope_and_preserves_access_expiry(mcp_client):
+    issued, form = token(mcp_client)
+    refresh = {"grant_type": "refresh_token", "client_id": form["client_id"], "refresh_token": issued["refresh_token"]}
+    other = register(mcp_client)
+    for changes in [{"client_id": other["client_id"]}, {"resource": "https://other.example/mcp"}, {"scope": "admin"}]:
+        assert mcp_client.post("/token", data={**refresh, **changes}).status_code == 400
+    with Session() as db:
+        original_expiry = db.get(MCPToken, digest(issued["access_token"])).expires_at
+    rotated = mcp_client.post("/token", data=refresh).json()
+    with Session.begin() as db:
+        old = db.get(MCPToken, digest(issued["access_token"]))
+        assert old.expires_at == original_expiry
+        old.expires_at = time.time() - 1
+    assert mcp_client.post("/api/mcp", json={}, headers={"Authorization": "Bearer " + issued["access_token"]}).status_code == 401
+    assert call(mcp_client, rotated["access_token"], "get_workspace")["user"]
 
 
 def test_consent_requires_browser_identity_and_csrf(mcp_client):

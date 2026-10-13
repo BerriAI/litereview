@@ -1,6 +1,7 @@
 """MCP OAuth delegates login to existing Google SSO, never Google tokens to clients."""
 
 import html
+import json
 import secrets
 import time
 from urllib.parse import urlencode, urlparse
@@ -29,6 +30,7 @@ router = APIRouter()
 SCOPE = "litereview"
 ACCESS_SECONDS = 3600
 GRANT_SECONDS = 30 * 86400
+REFRESH_RETRY_SECONDS = 60
 
 
 def endpoint():
@@ -85,6 +87,17 @@ def issue_tokens(db, grant):
         db.add(MCPToken(token_hash=digest(raw), grant_id=grant.id, kind=kind, expires_at=expires))
     return OAuthToken(access_token=access, refresh_token=refresh, token_type="Bearer",
                       expires_in=int(min(ACCESS_SECONDS, grant.expires_at - time.time())), scope=" ".join(grant.scopes))
+
+
+def refresh_result(db, token_hash, client_id):
+    """Retry a lost/concurrent refresh response without rotating or revoking again."""
+    cached = db.get(MCPAuthorization, token_hash)
+    if (not cached or cached.kind != "refresh_retry" or cached.client_id != client_id
+            or cached.expires_at <= time.time()):
+        return None
+    data = json.loads(decrypt(cached.data["response"]))
+    data["expires_in"] = max(1, data["expires_in"] - int(time.time() - cached.data["issued_at"]))
+    return OAuthToken(**data)
 
 
 class Provider:
@@ -156,10 +169,10 @@ class Provider:
             grant = db.get(MCPGrant, row.grant_id) if row else None
             if not row or row.kind != "refresh" or not grant or grant.client_id != client.client_id:
                 return None
-            if row.used:
-                grant.revoked = True  # Reusing a rotated token revokes its whole grant.
-                return None
             if row.expires_at <= time.time() or not grant_identity(db, grant):
+                return None
+            if row.used and not refresh_result(db, row.token_hash, client.client_id):
+                grant.revoked = True  # Replay outside the bounded retry window revokes the grant.
                 return None
             return RefreshToken(token=refresh_token, client_id=client.client_id, scopes=grant.scopes,
                                 expires_at=int(row.expires_at), resource=grant.resource, subject=grant.identity_sub)
@@ -169,18 +182,25 @@ class Provider:
         with Session.begin() as db:
             row = db.get(MCPToken, digest(refresh_token.token))
             grant = db.get(MCPGrant, row.grant_id, with_for_update=True) if row else None
-            if (not row or not grant_identity(db, grant) or grant.client_id != client.client_id
+            if (not row or row.kind != "refresh" or not grant_identity(db, grant) or grant.client_id != client.client_id
                     or set(scopes) != {SCOPE}):
                 raise TokenError("invalid_grant", "Reconnect to LiteReview.")
             consumed = db.execute(update(MCPToken).where(MCPToken.token_hash == row.token_hash,
                                   MCPToken.used.is_(False), MCPToken.expires_at > time.time())
                                   .values(used=True).returning(MCPToken.token_hash)).scalar_one_or_none()
             if not consumed:
-                grant.revoked, failed = True, True
+                result = refresh_result(db, row.token_hash, client.client_id)
+                if result is None:
+                    grant.revoked, failed = True, True
             else:
-                db.execute(update(MCPToken).where(MCPToken.grant_id == grant.id, MCPToken.kind == "access")
-                           .values(used=True))
+                # Existing access tokens remain valid until their original expiry.
+                # In-flight requests may still use one while the client refreshes.
                 result = issue_tokens(db, grant)
+                db.execute(delete(MCPAuthorization).where(MCPAuthorization.kind == "refresh_retry",
+                                                          MCPAuthorization.expires_at <= time.time()))
+                db.add(MCPAuthorization(key=row.token_hash, kind="refresh_retry", client_id=client.client_id,
+                    expires_at=time.time() + REFRESH_RETRY_SECONDS,
+                    data={"issued_at": time.time(), "response": encrypt(result.model_dump_json())}))
         if failed:
             raise TokenError("invalid_grant", "Refresh token was already used. Reconnect to LiteReview.")
         return result
