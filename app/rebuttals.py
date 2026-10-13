@@ -247,7 +247,7 @@ async def publish_reply(run_id):
         marker = f"<!-- litereview:{run.id}:reply -->"
         label = {"withdraw": "Finding withdrawn", "uphold": "Finding still applies", "uncertain": "Unable to conclude"}[verdict["verdict"]]
         body = "\n\n".join([marker, f"**{label}**", reviews.md(verdict["reason"]),
-                             *[reviews.md(e) for e in verdict.get("evidence", [])],
+                             *([reviews.evidence_details(verdict["evidence"])] if verdict.get("evidence") else []),
                              *([reviews.md(warning)] if warning else []),
                              f"Reviewed `{run.head[:12]}` · [View follow-up]({settings().public_url}/runs/{run.id})"])
         existing = await marked_comments(run, f"pulls/{run.pr}/comments")
