@@ -77,7 +77,7 @@ Under **PR agents → reviewer → Model**, expand **Reasoning effort** to use t
 
 ### Combine independent reviews with Fusion
 
-Open **PR agents → reviewer → Model** and choose **Add model**. Select another model to enable fusion automatically, with up to 16 models. Every model uses the same review instructions, skills, and enabled tools. The question mark beside **Add model** explains how they work together. Remove extra models to return to a single reviewer.
+Open **PR agents → reviewer → Model** and choose **Add model**. Select another model to enable fusion automatically, with up to 16 models. Each branch can have its own instructions, skills, rules, and tools, with optional file-path or decision-model gates. Omitted branch settings inherit the agent settings. The final review model keeps the top-level agent settings. The question mark beside **Add model** explains how they work together. Remove extra models to return to a single reviewer.
 
 Choose the **Final review model** below the selected models, then save and run **Test agent**. The test exercises every stage on a private sample project. For a PR review, branches run in separate checkouts; the aggregator gets a fresh checkout and their reports, verifies the claims, and publishes one final review. In **Runs**, expand **Fusion** to inspect each branch's result and activity. Branch results start collapsed. If a branch fails, its incomplete coverage remains in the final result. If every branch fails, aggregation does not run.
 
@@ -127,3 +127,13 @@ LiteReview acknowledges an accepted command with 👀 and keeps one summary comm
 On a run page, expand a finished reviewer and choose **Helpful** or **Needs work**. You can add an optional note about a missed bug, false positive, unclear explanation, or something that worked well. Each person has one editable rating per reviewer result. Your rating, name, and note are visible to workspace admins and are not posted to GitHub. Google workspace sign-in is required when SSO is enabled; public agent invocation does not grant dashboard access.
 
 Admins can open **Feedback** to filter by rating or reviewer and follow a rating back to the exact review, PR, and model. Feedback does not change agent instructions automatically.
+
+## Readiness and previews
+
+Choose **Code review → Show readiness score** to show a prominent verdict. Completed reviews with no actionable findings or material verification gaps earn **5/5**; incomplete reviews have no numeric score. Follow-up reviews reassess earlier open findings.
+
+Choose **PR preview** to create a hosted walkthrough using the full PR. Fusion specialists can explain the change and related PRs, inspect behavior and contracts, and demonstrate the feature. The final agent combines their evidence in an HTML page shaped for that PR, with optional interactive request paths, screenshots, and video. A shared design language provides typography, spacing, color and layout primitives; it does not prescribe sections or components. Code-derived paths are labeled separately from observed tests. Preview links stay stable for each agent and PR; history and commit warnings help readers identify what they are viewing. Pages and media require workspace sign-in.
+
+Browser and computer agents can start and stop a desktop recording, then attach the saved video. They must use the real checkout and label fixtures or simulations. Missing required demonstrations remain visible as limitations.
+
+Install the [LiteReview skill](../skills/litereview/SKILL.md) in your coding assistant to iterate on verified issues and request a preview after the current commit earns 5/5. You can also request a preview directly before reaching 5/5. The skill never merges your PR.

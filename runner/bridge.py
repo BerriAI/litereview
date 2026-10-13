@@ -56,9 +56,12 @@ class Bridge:
             jsonschema.validate(arguments, schema["parameters"])
             await self.relay.event("Using " + name)
             if name == "lr_finish_review":
+                if getattr(self.tools, "recording_active", False) is True:
+                    raise ValueError("Stop the active recording before submitting so the video is saved.")
                 if self.cfg.get("minimum_review_seconds"):
                     self.tools.clock.require_elapsed()
                 self.result = {**arguments, "status": "completed"}
+                await self.relay("finish", self.result)
                 self.finished.set()
                 return content_blocks({"submitted": True})
             return content_blocks(await self.tools.execute(name.removeprefix("lr_"), arguments))

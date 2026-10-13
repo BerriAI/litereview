@@ -4,6 +4,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from runner.finding_assessment import FindingAssessment
+from runner.preview import PreviewDocument
+
 
 class Connection(BaseModel):
     name: str = Field(min_length=1)
@@ -123,6 +126,8 @@ class AgentModel(ModelSelection):
 
 class Agent(ReviewTarget, AgentModel):
     instructions: str = Field(min_length=1)
+    output_type: Literal["review", "preview"] = Field(default="review", description="review publishes findings; preview builds a hosted, signed-in review companion from agent-authored HTML and saved media.")
+    show_score: bool = Field(default=False, description="Show a server-calculated 1–5 readiness score. Completed reviews with no actionable findings or material gaps get 5/5. Previews are unscored.")
     trigger_access: Literal["workspace", "anyone"] = Field(default="workspace", description="workspace requires approved callers; anyone allows external human PR commenters. Repository grants still apply. Does not grant dashboard or MCP access.")
     rules: list[ReviewRuleInstruction] = Field(default_factory=list, description="Named requirements supplementing base instructions and skills. Use rule tools to edit one without replacing the array.")
     review_mode: Literal["full", "incremental", "compare"] = Field(default="full", description="full: whole PR each time. incremental: new changes since the last compatible successful review, otherwise full. compare: incremental plus a private full review; both cost credits.")
@@ -277,6 +282,8 @@ class ReviewResult(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     checks: list[ReviewCheck] = Field(default_factory=list)
     rebuttal: RebuttalDecision | None = None
+    preview: PreviewDocument | None = None
+    finding_assessments: list[FindingAssessment] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def required_checks_are_blockers(self):

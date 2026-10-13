@@ -4,7 +4,6 @@ import {
   Check,
   ChevronRight,
   Loader2,
-  LockKeyhole,
   MoreHorizontal,
   Plus,
   RefreshCw,
@@ -234,7 +233,6 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
       <header className="page-heading">
         <div>
           <h1 tabIndex={-1}>Repositories</h1>
-          <p>Connect GitHub to choose where LiteReview can run.</p>
         </div>
       </header>
       {p.ssoRequired && (
@@ -524,7 +522,7 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
               return (
                 <li key={repo.id}>
                   <button className="row-name" onClick={() => p.onEdit({ ...repo, review_events_enabled: status?.review_events_enabled })}>
-                    {repo.name}
+                    {repo.name.split("/").slice(1).join("/")}
                   </button>
                   <span className="repo-reviewers">
                     {allowed.map((a) => a.name).join(", ") || "None permitted"}
@@ -575,14 +573,7 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
         </>
       )}
       {installUrl && status && status.state !== "unconfigured" && <section className="organization-add">
-        <div><h2>Add organization</h2><p>Use this LiteReview App in another GitHub organization. Choose the organization and repositories on GitHub; they appear here when you return.</p></div>
-        <a className="button" href={installUrl} target="_blank" rel="noreferrer"><Plus size={16} /> Choose organization in GitHub <ArrowUpRight size={14} /></a>
-        <button className="text-button" disabled={checking} onClick={() => setRefresh(v => v + 1)}>{checking ? "Checking…" : "Check installation"}</button>
-        <p className="meta">Organizations share this workspace’s agents, members, model connections, and spend.</p>
-        <details className="duration-help"><summary>Organization not listed?</summary>
-          <p>An organization owner may need to approve installation. If GitHub only shows the App’s owner, its owner must open the App’s General settings and change “Where can this GitHub App be installed?” to “Any account.” Then retry the installation.</p>
-          <a href={appUrl} target="_blank" rel="noreferrer">Open LiteReview on GitHub</a>
-        </details>
+        <a className="button text-button" href={installUrl} target="_blank" rel="noreferrer"><Plus size={16} /> Add organization <ArrowUpRight size={14} /></a>
       </section>}
       {!!status?.excluded?.length && (
         <details className="duration-help">
@@ -614,17 +605,6 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
             ))}
         </details>
       )}
-      <p className="repository-policy">
-        <LockKeyhole size={14} />
-        <span>
-          {p.ssoRequired
-            ? "Public and private repositories are supported. Sign in with Google and link GitHub once to request reviews with your permitted reviewers."
-            : "Public and private repositories are supported. New selections allow approved People to use their permitted reviewers."}{" "}
-          <button className="text-button" onClick={p.onPeople}>
-            Manage people
-          </button>
-        </span>
-      </p>
     </section>
   );
 }

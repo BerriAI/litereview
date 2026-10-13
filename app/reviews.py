@@ -370,6 +370,13 @@ def md(value):
     return "".join(lines)
 
 
+def evidence_details(items):
+    if not items:
+        return ""
+    return "\n\n".join(["<details>\n<summary>Evidence</summary>",
+                         *[md(item) for item in items], "</details>"])
+
+
 def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None, finding_links=None,
                    finding_decisions=None):
     if run.status == "rejected":
@@ -399,6 +406,12 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
                       else "Review in progress.", ""]
             continue
         result = job.result
+        from . import previews, verdict
+        grade = verdict.verdict(job, finding_decisions)
+        if grade:
+            lines += ["## " + (f"{grade['score']}/5 · " if grade["score"] is not None else "") + verdict.headline(grade), ""]
+        if preview_link := previews.url(job):
+            lines += [f"[Open preview]({preview_link})", ""]
         if c.get("review_scope"):
             lines += [f"Scope: {c['review_scope']} · {c.get('scope_reason', '')}", ""]
         incomplete = job.status != "completed" or result.get("limitations")
@@ -440,8 +453,8 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
                 md(finding["explanation"]),
                 "",
             ]
-            for evidence in finding.get("evidence", []):
-                visible += [md(evidence), ""]
+            if evidence := evidence_details(finding.get("evidence", [])):
+                visible += [evidence, ""]
         if result.get("limitations"):
             visible += ["**Couldn’t complete**", ""]
             visible += [f"- {md(limit)}" for limit in result["limitations"]]

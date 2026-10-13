@@ -102,7 +102,7 @@ class Job(Base):
 JOB_DISPLAY_KEYS = (
     "agent_id", "name", "group", "instance", "model", "run_order", "target_kind", "target_id",
     "fusion_parent_id", "fusion_index", "fusion_stage", "fusion_role", "branch_decision", "comparison_parent_id", "session_id",
-    "review_scope", "scope_reason",
+    "review_scope", "scope_reason", "output_type", "show_score", "finding_history", "task",
 )
 
 

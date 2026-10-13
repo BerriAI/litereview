@@ -27,6 +27,11 @@ export function Documentation() {
         </p>
 
         <section>
+          <h2>Review, fix, then preview</h2>
+          <p>Use the <a href="https://github.com/BerriAI/litereview/blob/main/skills/litereview/SKILL.md">LiteReview skill</a> in your coding assistant to request a review, fix verified issues, and repeat until the current commit earns 5/5. The skill then requests a preview for your human reviewer. It does not merge the PR.</p>
+          <p>In an agent’s editor, choose <strong>Code review → Show readiness score</strong> for a scored review, or <strong>PR preview</strong> for a hosted walkthrough. A preview can include related PRs, interactive request paths, screenshots, videos and test evidence. Fusion specialists can contribute to one preview, with the final agent assembling the page. Preview pages and saved media require workspace sign-in.</p>
+        </section>
+        <section>
           <h2>Before you connect a team</h2>
           <p>
             LiteReview is an MIT-licensed beta for one trusted workspace per

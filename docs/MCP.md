@@ -52,6 +52,42 @@ Example requests:
 - “Change code-review to New changes, preserving its prompt and rules.” Patch only `review_mode="incremental"`.
 - “Have the security group run two independent instances.” Read and patch its `members` array, keeping other members unchanged.
 
+## Readiness and previews
+
+Set `show_score=true` on a code-review agent to show a prominent server-calculated
+verdict in GitHub and run details. A completed review with no actionable findings,
+failed required checks or material verification gaps earns 5/5. An incomplete
+review has no score. Incremental reviews must assess earlier open findings before
+they can earn 5/5. Read the structured `verdict` from `litereview_get_run` and match
+the run's `head` to the current GitHub head before using it in an automation.
+
+Set `output_type="preview"` to build a hosted review companion. Previews always
+use the full PR and have no score. The same fusion settings let specialists cover
+the change and PR stack, behavior and contracts, and a real walkthrough. The final
+agent combines their evidence and saved media into
+an HTML page shaped for that PR. Code-derived walkthroughs are labeled separately from
+observed test paths. Browser/computer agents can record the desktop with the
+`recording` tool, then attach its saved MP4 ID. Recording stops at a 64 MB file
+limit; agents must stop/save it before finishing. Unavailable demonstrations stay
+visible as limitations rather than fabricated evidence.
+
+`preview_url` on run details links to that exact result. `litereview_get_preview`
+reads content, progress, media and history; omit `job_id` to use the latest result
+for an agent–PR pair. The page flags new commits and keeps earlier previews.
+All pages and media require the workspace's normal sign-in. Public PR invocation
+does not grant preview access. Video artifact reads return metadata and a protected
+playback URL; image reads return the image.
+
+The public [LiteReview skill](../skills/litereview/SKILL.md) runs the fix/review
+loop and requests a preview after 5/5. It lives in the coding assistant; review
+agents themselves do not push fixes. Preview can also be requested independently
+before a PR is ready.
+
+`litereview_get_spend` includes a `pull_requests` breakdown with model cost and
+run count for each repository/PR, including fusion and superseded work. Filter
+`litereview_list_runs` by `repo` and `pr` to inspect those runs. Admin access is
+required for spend.
+
 ## Rules
 
 Rules add editable requirements to one agent without rewriting its base instructions or skills. Each has a stable `id`, `name`, `instructions`, `enabled` and `required`. Use `litereview_add_rule`, `litereview_update_rule`, and `litereview_delete_rule`. Existing long prompts are not automatically split or rewritten; that requires a deliberate edit to avoid changing their meaning.

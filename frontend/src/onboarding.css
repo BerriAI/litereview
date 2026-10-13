@@ -594,11 +594,15 @@
   display: none;
 }
 
-.organization-section { margin: 24px 0; border: 1px solid var(--line); border-radius: 10px; }
-.organization-section .organization-row { margin: 0; border-radius: 10px 10px 0 0; }
-.organization-section .repo-list-heading, .organization-section .repo-help { padding-left: 20px; padding-right: 20px; }
+.organization-section { margin: 36px 0; }
+.organization-section .organization-row { margin: 0 0 16px; padding: 0; border: 0; }
+.organization-section .organization-name strong { font-size: 18px; font-weight: 550; }
+.organization-section .organization-name small { display: block; color: var(--muted); font-size: 12px; }
+.organization-section .repo-list-heading { padding: 8px 12px; border: 0; }
 .organization-section .repo-list { margin: 0; }
-.organization-add { margin: 28px 0; padding: 24px; border: 1px dashed var(--border); border-radius: 10px; }
-.organization-add h2 { margin-top: 0; font-size: 16px; }
-.organization-add p { max-width: 680px; }
-.organization-add > .text-button { margin-left: 12px; }
+.organization-section .repo-list > li { min-height: 60px; padding: 12px; border: 0; border-radius: 6px; }
+.organization-section .repo-list > li:hover { background: var(--subtle); }
+.organization-add { margin: 28px 0; }
+.organization-add .button { padding-left: 0; border: 0; background: none; }
+.repositories-page .github-account-summary { border: 0; padding-bottom: 0; }
+.repositories-page .setup-focus, .repositories-page .setup-recovery { border: 0; padding: 20px 0; }

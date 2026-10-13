@@ -119,6 +119,13 @@ async def exercise_client(url):
                     "not_run,no", "no", f"{'yes' if workspace['is_admin'] else 'no'},{schema['properties']['trigger_access']['default']}", "yes,no"]
                 expected = [q.findtext("answer") for q in ET.parse(Path("docs/MCP_EVAL.xml")).getroot()]
                 assert answers == expected  # Verified answer key; this does not claim an LLM evaluation ran.
+                preview = await call("create_agent", data={"name": "preview-acceptance",
+                    "connection_id": oss["connection_id"], "model": oss["model"],
+                    "instructions": "Explain the change in plain English.", "output_type": "preview",
+                    "show_score": False, "capabilities": ["terminal", "computer"]})
+                saved_preview = await call("get_resource", kind="agents", resource_id=preview["id"])
+                assert saved_preview["output_type"] == "preview" and not saved_preview["show_score"]
+                assert "computer" in saved_preview["capabilities"]
                 before_refresh = storage.tokens.access_token
                 oauth.context.token_expiry_time = time.time() - 1
                 assert (await call("get_workspace"))["is_admin"]

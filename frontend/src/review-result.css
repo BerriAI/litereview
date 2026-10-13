@@ -224,3 +224,10 @@
 .review-finding[open] > summary {
   margin-bottom: 14px;
 }
+.review-verdict { display: flex; align-items: center; gap: 20px; margin: 24px 0; }
+.review-verdict > strong { font-size: 48px; font-weight: 550; line-height: 1; letter-spacing: -2px; }
+.review-verdict > strong span { color: var(--muted); font-size: 24px; letter-spacing: -1px; }
+.review-verdict b { font-size: 18px; font-weight: 550; }
+.review-verdict p { color: var(--muted); font-size: 13px; margin-top: 5px; }
+.review-verdict.ready > strong { color: var(--green); }
+.preview-link a { display: inline-flex; align-items: center; gap: 6px; font-size: 16px; }
