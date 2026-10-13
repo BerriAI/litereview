@@ -308,6 +308,35 @@ def test_mcp_admin_permissions_rechecked_and_user_can_revoke(mcp_client, monkeyp
     assert denied.status_code == 401
 
 
+def test_mcp_review_feedback_roundtrip_and_admin_permissions(mcp_client):
+    from app.db import Job, Run
+
+    c = mcp_client
+    issued, _ = token(c)
+    access = issued["access_token"]
+    with Session.begin() as db:
+        run = Run(delivery="feedback-test", repo="BerriAI/litereview", pr=1, actor="member", head="a" * 40, base="b" * 40, snapshot={})
+        db.add(run)
+        db.flush()
+        job = Job(run_id=run.id, status="completed", config={"name": "reviewer", "agent_id": "agent", "model": "test"})
+        db.add(job)
+        db.flush()
+        jid = job.id
+    saved = call(c, access, "rate_review", {"job_id": jid, "rating": "down", "note": "Missed the changed path"})
+    assert saved["rating"] == "down"
+    assert rpc(c, access, "tools/call", {"name": "litereview_list_feedback"})["isError"]
+    with Session.begin() as db:
+        db.add(WorkspaceAdmin(identity_sub="google-sub", granted_by="test"))
+    report = call(c, access, "list_feedback", {"agent_id": "agent", "rating": "down"})
+    assert report["total"] == 1 and report["items"][0]["reporter"] == "member@berri.ai"
+    call(c, access, "rate_review", {"job_id": jid, "rating": "up", "note": "Correction: it was covered"})
+    assert call(c, access, "list_feedback", {"rating": "down"})["total"] == 0
+    assert call(c, access, "list_feedback")["total"] == 1
+    with Session.begin() as db:
+        db.delete(db.get(WorkspaceAdmin, "google-sub"))
+    assert rpc(c, access, "tools/call", {"name": "litereview_list_feedback"})["isError"]
+
+
 def test_mcp_origin_host_resource_and_workspace_rechecked(mcp_client, monkeypatch):
     c = mcp_client
     issued, _ = token(c)

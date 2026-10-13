@@ -333,6 +333,19 @@ def build(app):
         """Spend one model request to draft agent instructions. Does not save or run the agent. You can also draft directly and use create_agent."""
         return await api("POST", "/agents/generate", {"prompt": prompt})
 
+    @tool(idempotent=True)
+    async def litereview_rate_review(job_id: Id, rating: Literal["up", "down"],
+                                     note: Annotated[str, Field(max_length=4000)] = "") -> dict[str, Any]:
+        """Save the signed-in user's feedback on a finished reviewer result. Updates their existing rating. Admins can read the rating, note and author; it is not posted to GitHub."""
+        return await api("PUT", f"/jobs/{job_id}/feedback", {"rating": rating, "note": note})
+
+    @tool(read=True)
+    async def litereview_list_feedback(rating: Literal["up", "down"] | None = None,
+                                       agent_id: str = "", limit: Limit = 30, offset: Offset = 0) -> dict[str, Any]:
+        """Admins: read reviewer feedback with PR, model, author and notes. Filter down to find reviews that need improvement. Paginated; members cannot read other people's feedback."""
+        return await api("GET", "/feedback", params={"agent_id": agent_id, "limit": limit, "offset": offset,
+                                                      **({"rating": rating} if rating else {})})
+
     @server.resource("litereview://guide", mime_type="text/markdown")
     def operator_guide() -> str:
         """Complete LiteReview operator skill, options and workflows."""

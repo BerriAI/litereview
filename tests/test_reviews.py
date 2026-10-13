@@ -385,7 +385,7 @@ def test_duplicate_comment_publication_recovers_existing_comment(owner, monkeypa
     monkeypatch.setattr(github, "repo_request", request)
     asyncio.run(reviews.publish(run_id))
     assert "POST" not in calls
-    assert calls.count("PATCH") == 4
+    assert calls.count("PATCH") == 2  # Both instances update their reviewer's shared summary.
 
 
 def test_model_connection_snapshot_is_immutable(owner, monkeypatch):

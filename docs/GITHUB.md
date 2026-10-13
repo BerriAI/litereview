@@ -67,3 +67,9 @@ Trigger a matching event on an open, non-draft PR. The resulting entry in **Runs
 Drafts, closed PRs, and obsolete webhook deliveries are skipped. Overlapping rules run each agent instance at most once per PR commit; groups retain their requested instance count. Failed attempts are not automatically retried on the same commit. Use an explicit `@litereview agent-name` comment to request another review. Disabling a rule stops future triggers; accepted runs keep their configuration and continue.
 
 **PR agents** lists the most-used agents first. **Times used** counts PR runs, including group use and incomplete runs, once per agent per run. Private model checks and fusion branches do not increase the count. Ties sort by name.
+
+## Add another organization
+
+Open **Repositories → Add organization → Choose organization in GitHub**. Select the organization, choose its repositories, and approve installation of the existing LiteReview App. When you return, LiteReview syncs access and shows the organization in its own section below the others. Use **Check installation** if it has not appeared. Each organization’s **Manage GitHub access** action opens its own installation.
+
+If GitHub only shows the App owner, the App owner must change **General → Where can this GitHub App be installed? → Any account** in GitHub App settings. An organization owner may also need to approve installation. This does not require new App credentials. Organizations connected to this deployment share the workspace’s agents, members, model connections, and spend.

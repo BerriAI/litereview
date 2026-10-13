@@ -73,7 +73,9 @@ class GitHubFixture:
                 self.reactions[suffix] = self.sequence
             return httpx.Response(200, json={"id": self.reactions[suffix]})
         if method == "PATCH":
-            comment = next(c for c in self.comments + self.threads if c["id"] == int(suffix.split("/")[-1]))
+            comment = next((c for c in self.comments + self.threads if c["id"] == int(suffix.split("/")[-1])), None)
+            if not comment:
+                raise github.GitHubError(httpx.Response(404, json={"message": "Not Found"}), method, suffix)
             comment.update(body)
             return httpx.Response(200, json=comment)
         if method == "DELETE":
@@ -104,14 +106,14 @@ def publication(owner, monkeypatch):
 async def test_agents_finish_independently_and_eyes_are_removed(publication):
     fake = publication
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 2 and len(fake.reactions) == 3
+    assert len(fake.comments) == 1 and len(fake.reactions) == 2
     assert all("### 👀 reviewer" in c["body"] for c in fake.comments)
     calls = len(fake.calls)
     await reviews.publish(fake.run_id)
     assert len(fake.calls) == calls  # Polls without transitions do not call GitHub.
     finish(fake.run_id, one=True, findings=[FINDING])
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 2 and len(fake.threads) == 1 and len(fake.reactions) == 2
+    assert len(fake.comments) == 1 and len(fake.threads) == 1 and len(fake.reactions) == 2
     completed = next(c for c in fake.comments if "### ✅" in c["body"])
     assert f"#discussion_r{fake.threads[0]['id']}" in completed["body"]
     assert "stale entry" not in completed["body"]
@@ -127,7 +129,7 @@ async def test_agents_finish_independently_and_eyes_are_removed(publication):
         assert db.get(Run, fake.run_id).status == "running"
     finish(fake.run_id, "failed")
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 2 and not fake.reactions
+    assert len(fake.comments) == 1 and not fake.reactions
     assert any("### ⚠️ reviewer" in c["body"] for c in fake.comments)
     assert any("Review incomplete." in c["body"] for c in fake.comments)
     calls = len(fake.calls)
@@ -166,9 +168,9 @@ async def test_lost_responses_recover_without_duplicates(publication, monkeypatc
     with pytest.raises(httpx.ReadTimeout):
         await reviews.publish(fake.run_id)
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 2
+    assert len(fake.comments) == 1
     assert len(fake.threads) == (2 if effect in ("thread", "remove_eyes") else 0)
-    assert len(fake.reactions) == (0 if effect in ("thread", "remove_eyes") else 3)
+    assert len(fake.reactions) == (0 if effect in ("thread", "remove_eyes") else 2)
 
 
 @pytest.mark.parametrize(
@@ -347,7 +349,7 @@ async def test_completion_between_lost_eyes_response_and_retry(publication, monk
         await reviews.publish(fake.run_id)
     finish(fake.run_id)
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 2 and not fake.reactions
+    assert len(fake.comments) == 1 and not fake.reactions
 
 
 async def test_retry_scans_all_pages_and_ignores_user_markers(publication):
@@ -359,7 +361,7 @@ async def test_retry_scans_all_pages_and_ignores_user_markers(publication):
     await reviews.publish(fake.run_id)
     assert all(c["body"] == marker for c in fake.comments[:100])
     assert "### ✅" in fake.comments[100]["body"]
-    assert len(fake.comments) == 102
+    assert len(fake.comments) == 101
     assert any(path.endswith("page=2") for _, path, _ in fake.calls)
 
 
@@ -412,7 +414,7 @@ async def test_overlapping_publishers_do_not_duplicate_comments_or_threads(
         release.set()
         await first
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 2
+    assert len(fake.comments) == 1
     assert len(fake.threads) == (2 if terminal else 0)
 
 
@@ -435,7 +437,7 @@ async def test_cancelled_publisher_releases_lock_and_recovers_post(publication, 
         await first
     monkeypatch.setattr(github, "repo_request", fake.request)
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 2
+    assert len(fake.comments) == 1
 
 
 def test_publication_lock_excludes_another_process_and_releases_on_exit(client):
@@ -492,10 +494,143 @@ async def test_waiting_comment_updates_when_sandbox_starts(publication):
             for job in db.scalars(select(Job).where(Job.run_id == fake.run_id)):
                 job.status = status
         await reviews.publish(fake.run_id)
-        assert len(fake.comments) == 2
+        assert len(fake.comments) == 1
         assert all(message in c['body'] for c in fake.comments)
         calls = len(fake.calls)
         await reviews.publish(fake.run_id)
         assert len(fake.calls) == calls
     with Session() as db:
         assert db.get(Run, fake.run_id).status == 'running'
+
+
+async def test_reruns_reuse_first_summary_and_keep_inline_findings(publication):
+    fake = publication
+    finish(fake.run_id, findings=[FINDING])
+    await reviews.publish(fake.run_id)
+    original_id = fake.comments[0]["id"]
+    threads = [dict(c) for c in fake.threads]
+    fake.head = "c" * 40
+    newer = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "new-review")
+    await reviews.publish(newer)
+    assert len(fake.comments) == 1 and fake.comments[0]["id"] == original_id
+    assert newer in fake.comments[0]["body"] and "### 👀" in fake.comments[0]["body"]
+    finish(newer, findings=[{**FINDING, "title": "New finding"}])
+    await reviews.publish(newer)
+    assert len(fake.comments) == 1 and "New finding" in fake.comments[0]["body"]
+    assert fake.threads[:2] == threads and len(fake.threads) == 3
+    assert all(f"#issuecomment-{original_id}" in t["body"] for t in fake.threads)
+    assert not fake.reactions
+
+
+async def test_adopts_legacy_progress_and_retires_other_instance_comments(publication):
+    from app.publication import add_eyes, load_state, save_state
+
+    fake = publication
+    with Session() as db:
+        run = db.get(Run, fake.run_id)
+        jobs = db.scalars(select(Job).where(Job.run_id == run.id).order_by(Job.id)).all()
+    original = []
+    for job in jobs:
+        comment = (await fake.request(run.repo, run.installation, "POST", "issues/1/comments",
+            json={"body": f"<!-- litereview:{run.id}:job:{job.id} -->\n\nReviewing…"})).json()
+        original.append(comment["id"])
+        checkpoint = {"comment_ids": [comment["id"]], "ready": True, "status": "queued"}
+        await add_eyes(run, comment["id"], checkpoint, f"job:{job.id}")
+        save_state(f"job:{job.id}", checkpoint)
+    finish(run.id)
+    await reviews.publish(run.id)
+    assert [c["id"] for c in fake.comments] == original
+    assert "### ✅ reviewer" in fake.comments[0]["body"]
+    assert "Reviewing…" not in str(fake.comments)
+    assert f"#issuecomment-{original[0]}" in fake.comments[1]["body"]
+    assert not fake.reactions
+    assert all(load_state(f"job:{j.id}")["complete"] for j in jobs)
+
+
+async def test_older_completion_or_reply_cannot_replace_newer_summary(publication):
+    from app.db import ReviewPublication
+
+    fake = publication
+    await reviews.publish(fake.run_id)
+    fake.head = "c" * 40
+    newer = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "new-head")
+    finish(newer)
+    await reviews.publish(newer)
+    body = fake.comments[0]["body"]
+    await reviews.publish(fake.run_id)
+    with Session.begin() as db:
+        db.get(Run, fake.run_id).published = 1
+        for job in db.scalars(select(Job).where(Job.run_id == fake.run_id)):
+            checkpoint = db.get(ReviewPublication, f"job:{job.id}")
+            checkpoint.data = {**checkpoint.data, "complete": False}
+    await reviews.publish(fake.run_id)
+    assert len(fake.comments) == 1 and fake.comments[0]["body"] == body
+    assert newer in body
+
+
+@pytest.mark.parametrize("lost_response", [False, True])
+async def test_deleted_summary_is_recreated_once(publication, monkeypatch, lost_response):
+    fake = publication
+    finish(fake.run_id)
+    await reviews.publish(fake.run_id)
+    removed = fake.comments.pop()["id"]
+    newer = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "rerun")
+    lost = False
+
+    async def request(*args, **kwargs):
+        nonlocal lost
+        response = await fake.request(*args, **kwargs)
+        if lost_response and not lost and args[2:4] == ("POST", "issues/1/comments"):
+            lost = True
+            raise httpx.ReadTimeout("Lost replacement response")
+        return response
+
+    monkeypatch.setattr(github, "repo_request", request)
+    if lost_response:
+        with pytest.raises(httpx.ReadTimeout):
+            await reviews.publish(newer)
+    await reviews.publish(newer)
+    assert len(fake.comments) == 1 and fake.comments[0]["id"] != removed
+    assert newer in fake.comments[0]["body"]
+
+
+async def test_shorter_rerun_clears_outdated_overflow(publication):
+    fake = publication
+    finish(fake.run_id)
+    with Session.begin() as db:
+        for job in db.scalars(select(Job).where(Job.run_id == fake.run_id)):
+            job.result = {**job.result, "summary": "Outdated verdict.\n" * 5000}
+    await reviews.publish(fake.run_id)
+    original = [c["id"] for c in fake.comments]
+    assert len(original) > 1
+    newer = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "shorter")
+    finish(newer)
+    await reviews.publish(newer)
+    assert [c["id"] for c in fake.comments] == original
+    assert all("Outdated verdict" not in c["body"] for c in fake.comments)
+    assert all("View the latest review" in c["body"] for c in fake.comments[1:])
+
+
+async def test_different_run_publishers_share_the_pr_lock(publication, monkeypatch):
+    fake = publication
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def request(*args, **kwargs):
+        if args[2:4] == ("POST", "issues/1/comments") and not entered.is_set():
+            entered.set()
+            await release.wait()
+        return await fake.request(*args, **kwargs)
+
+    monkeypatch.setattr(github, "repo_request", request)
+    first = asyncio.create_task(reviews.publish(fake.run_id))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        finish(fake.run_id)
+        newer = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "concurrent-rerun")
+        await asyncio.wait_for(reviews.publish(newer), 2)
+        assert not fake.comments
+    finally:
+        release.set()
+        await first
+    await reviews.publish(newer)
+    assert len(fake.comments) == 1 and newer in fake.comments[0]["body"]

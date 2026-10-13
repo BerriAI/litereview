@@ -29,6 +29,7 @@ import {
   LockKeyhole,
   Users,
   DollarSign,
+  MessageSquare,
 } from "lucide-react";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
@@ -43,6 +44,7 @@ import { WorkspaceSettings } from "./settings";
 import { LoadingState, RequestActivity } from "./request-state";
 import { AgentModels, FusionResults } from "./fusion";
 import { RunCost, SpendPage } from "./spend";
+import { FeedbackPage, ReviewFeedback } from "./feedback";
 import { AgentFromPrompt } from "./agent-generation";
 import { AutomaticReviews, reviewEvents } from "./automatic-reviews";
 import { api, send } from "./api";
@@ -85,6 +87,7 @@ const icons = {
   skills: BookOpen,
   runs: History,
   spend: DollarSign,
+  feedback: MessageSquare,
 };
 const titles = {
   repos: "Repositories",
@@ -97,6 +100,7 @@ const titles = {
   skills: "Skills",
   runs: "Runs",
   spend: "Spend",
+  feedback: "Feedback",
 };
 const descriptions = {
   repos: "Choose where LiteReview can run.",
@@ -110,6 +114,7 @@ const descriptions = {
   skills: "Reusable instructions and files for your agents.",
   runs: "Review progress, findings, and visual evidence from each agent.",
   spend: "Model costs across agents, reviews, people, and repositories.",
+  feedback: "See which reviews helped and where your agents need improvement.",
 };
 function App() {
   const [session, setSession] = useState<any>(undefined);
@@ -824,7 +829,7 @@ function App() {
   const hideRepoTable = active === "connections" && tab === "github";
   const PageIcon = icons[navActive];
   const isRunDetail = active === "runs" && Boolean(path.split("/")[2]);
-  const pageLoading = (active !== "runs" && active !== "spend" && !workspaceLoaded) ||
+  const pageLoading = (active !== "runs" && active !== "spend" && active !== "feedback" && !workspaceLoaded) ||
     (active === "runs" && !runsLoaded && !(isRunDetail ? run : runs.length));
   const newKind: Kind =
     active === "connections"
@@ -854,7 +859,7 @@ function App() {
         </div>
         <nav aria-label="Main navigation">
           {[
-            ["Review", ["agents", "groups", "runs", ...(isAdmin ? ["spend"] : [])]],
+            ["Review", ["agents", "groups", "runs", ...(isAdmin ? ["spend", "feedback"] : [])]],
             ["Resources", ["mcp", "skills", "models"]],
             ["Workspace", ["repos", "access", "connections"]],
           ].map(([label, keys]) => (
@@ -998,7 +1003,7 @@ function App() {
                 </div>
                 <p>{pageDescription}</p>
               </div>
-              {active !== "runs" &&
+              {active !== "runs" && active !== "feedback" &&
                 rows.length > 0 &&
                 !(
                   active === "access" &&
@@ -1033,7 +1038,7 @@ function App() {
           )}
           {workspaceLoaded &&
             active !== "repos" &&
-            active !== "spend" &&
+            active !== "spend" && active !== "feedback" &&
             (needsRepositories || needsGithubAccount) && (
               <section
                 className="github-next-step"
@@ -1071,8 +1076,8 @@ function App() {
                 )}
               </section>
             )}
-          {!pageLoading && active !== "spend" && <div className="page-request-status"><RequestActivity /></div>}
-          {!workspaceLoaded && active !== "runs" && active !== "spend" &&
+          {!pageLoading && active !== "spend" && active !== "feedback" && <div className="page-request-status"><RequestActivity /></div>}
+          {!workspaceLoaded && active !== "runs" && active !== "spend" && active !== "feedback" &&
             <LoadingState label="Loading workspace…" error={error} retry={retryWorkspace} />}
           {workspaceLoaded && active === "connections" && tab === "github" && (
             <WorkspaceSettings setup={setup} connections={store.connections.filter(c => c.type !== "mcp")}
@@ -1133,9 +1138,11 @@ function App() {
               }
             />
           )}
-          {(!workspaceLoaded && active !== "runs" && active !== "spend") || (active === "connections" && tab === "github") ? null : active === "runs" && !runsLoaded && !(path.split("/")[2] ? run : runs.length) ? (
+          {(!workspaceLoaded && active !== "runs" && active !== "spend" && active !== "feedback") || (active === "connections" && tab === "github") ? null : active === "runs" && !runsLoaded && !(path.split("/")[2] ? run : runs.length) ? (
             <LoadingState label={path.split("/")[2] ? "Loading review…" : "Loading runs…"} error={error}
               retry={() => { setError(""); setRunsRevision(v => v + 1); }} />
+          ) : active === "feedback" ? (
+            isAdmin ? <FeedbackPage agents={store.agents} /> : <p role="status">Feedback is available to workspace admins only.</p>
           ) : active === "spend" ? (
             isAdmin ? <SpendPage /> : <p role="status">Spend is available to workspace admins only.</p>
           ) : active === "runs" && path.split("/")[2] ? (
@@ -1241,6 +1248,7 @@ function App() {
                         <code>{job.config.model}</code>
                       </p>
                       <ReviewResult job={job} repo={run.repo} head={run.head} />
+                      {job.feedback_eligible && <ReviewFeedback jobId={job.id} initial={job.feedback} />}
                       {job.session_history?.length > 0 && <details>
                         <summary>Review history for this agent and PR</summary>
                         <ul>{job.session_history.map((earlier: any) => <li key={earlier.id}>

@@ -334,13 +334,13 @@ export function People({
               )}
               {!row.inherited && (
                 <button
-                  className="icon"
                   disabled={busy}
-                  aria-label={`Reset access for ${row.name}`}
+                  aria-label={`Use workspace default for ${row.name}`}
                   title="Reset to workspace default"
                   onClick={() => reset(row)}
                 >
                   <RotateCcw size={15} />
+                  Use workspace default
                 </button>
               )}
             </div>

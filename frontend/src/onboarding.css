@@ -593,3 +593,12 @@
 .sidebar nav button.selected::before {
   display: none;
 }
+
+.organization-section { margin: 24px 0; border: 1px solid var(--line); border-radius: 10px; }
+.organization-section .organization-row { margin: 0; border-radius: 10px 10px 0 0; }
+.organization-section .repo-list-heading, .organization-section .repo-help { padding-left: 20px; padding-right: 20px; }
+.organization-section .repo-list { margin: 0; }
+.organization-add { margin: 28px 0; padding: 24px; border: 1px dashed var(--border); border-radius: 10px; }
+.organization-add h2 { margin-top: 0; font-size: 16px; }
+.organization-add p { max-width: 680px; }
+.organization-add > .text-button { margin-left: 12px; }

@@ -116,6 +116,39 @@ def test_cannot_connect_repository_no_longer_available(owner, monkeypatch):
     assert owner.get("/api/resources/repos").json() == []
 
 
+def test_multiple_organizations_sync_with_independent_installations_and_preserve_access(owner, monkeypatch):
+    configured(monkeypatch)
+    installs = [{"id": 42, "account": {"login": "BerriAI"}, "html_url": "https://github.com/settings/installations/42"},
+                {"id": 43, "account": {"login": "LiteLLM-Labs"}, "html_url": "https://github.com/settings/installations/43"}]
+
+    async def request(method, path, token=None):
+        if path == "/app":
+            return httpx.Response(200, json={"name": "LiteReview", "html_url": "https://github.com/apps/litereview"})
+        if path.startswith("/app/installations?"):
+            return httpx.Response(200, json=installs)
+        if path.endswith("access_tokens"):
+            return httpx.Response(200, json={"token": path.split("/")[3]})
+        assert path.startswith("/installation/repositories?")
+        names = ["BerriAI/litereview", "BerriAI/removed"] if token == "42" else ["LiteLLM-Labs/example"]
+        return httpx.Response(200, json={"repositories": [{"full_name": name} for name in names]})
+
+    monkeypatch.setattr(github, "request", request)
+    first = owner.post("/api/github/sync").json()
+    assert first["added"] == 3
+    assert [(i["account"], i["installation_id"], i["manage_url"]) for i in first["installations"]] == [
+        (i["account"]["login"], i["id"], i["html_url"]) for i in installs]
+    repos = owner.get("/api/resources/repos").json()
+    removed = next(r for r in repos if r["name"] == "BerriAI/removed")
+    owner.delete("/api/resources/repos/" + removed["id"]).raise_for_status()
+    grant = next(g for g in owner.get("/api/resources/access").json() if g["name"] == "berriai/litereview")
+    owner.delete("/api/resources/access/" + grant["id"]).raise_for_status()
+    synced = owner.post("/api/github/sync").json()
+    assert synced["added"] == 0 and synced["excluded"] == ["berriai/removed"]
+    assert {(r["name"], r["installation_id"]) for r in owner.get("/api/resources/repos").json()} == {
+        ("BerriAI/litereview", 42), ("LiteLLM-Labs/example", 43)}
+    assert not any(g["name"] == grant["name"] for g in owner.get("/api/resources/access").json())
+
+
 def test_expired_manifest_returns_to_recoverable_setup_without_overwriting_app(owner, monkeypatch):
     with Session() as db:
         db.add(Resource(id="github", kind="system", data={}, secret=encrypt(json.dumps({"app_id": "keep"}))))
