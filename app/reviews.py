@@ -303,6 +303,9 @@ async def accept(payload, delivery):
         head=head,
         base=base,
         snapshot={
+            "trigger": {"type": "mcp" if original_delivery.startswith("mcp:") else "comment",
+                        **({"command": body} if original_delivery.startswith("mcp:") else {}),
+                        **({"comment_id": comment_id} if comment_id is not None else {})},
             "trigger_comment_id": comment_data.get("id"),
             "groups": selected,
             "repository": repository,
@@ -388,7 +391,8 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
     lines = [marker, ""]
     if newer:
         lines += [f"> New commits were pushed. This review covers `{run.head[:12]}`.", ""]
-    counts = Counter((j.config.get("group"), j.config["name"]) for j in (all_jobs or jobs))
+    counts = Counter((j.config.get("group"), j.config["name"]) for j in (all_jobs or jobs)
+                     if not j.config.get("fusion_parent_id") and not j.config.get("comparison_parent_id"))
     for job in jobs:
         c = job.config
         label = md(c["name"])
@@ -400,7 +404,8 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
         icon = (("⚠️ " if incomplete else "✅ ") if job.status in TERMINAL else "👀 ") if agent_comment else ""
         lines += [f"### {icon}{label}", ""]
         if job.status not in TERMINAL:
-            lines += ["Stopping this review for a newer commit." if job.status == "cancelling"
+            lines += [md(fusion.progress(job, all_jobs or jobs)) if fusion.progress(job, all_jobs or jobs)
+                      else "Stopping this review for a newer commit." if job.status == "cancelling"
                       else "Waiting for this agent’s current work." if job.status == "blocked"
                       else "Waiting to start." if job.status == "queued"
                       else "Preparing the review sandbox." if job.status == "starting"

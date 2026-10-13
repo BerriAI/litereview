@@ -4,8 +4,8 @@ import { LoadingState } from "./request-state";
 
 type Cost = { cost_usd: number | null; complete: boolean; estimated: boolean };
 type Summary = { runs: number; cost_usd: number | null; average_cost_usd: number | null; priced_runs: number; unpriced_runs: number; estimated: boolean };
-type Breakdown = Summary & { name: string; id?: string; deleted?: boolean; repo?: string; pr?: number };
-type SpendData = { total: Summary; users: Breakdown[]; repositories: Breakdown[]; agents: Breakdown[]; pull_requests: Breakdown[] };
+type Breakdown = Summary & { name: string; id?: string; deleted?: boolean; repo?: string; pr?: number; actor?: string };
+type SpendData = { total: Summary; users: Breakdown[]; repositories: Breakdown[]; agents: Breakdown[]; pull_requests: Breakdown[]; user_pull_requests: Breakdown[] };
 export const dollars = (value: number | null | undefined) => value == null ? "Unavailable" :
   value > 0 && value < 0.01 ? "$" + value.toFixed(4) : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
 
@@ -22,6 +22,7 @@ export function SpendPage() {
   const [error, setError] = useState("");
   const [group, setGroup] = useState<"users" | "repositories" | "agents" | "pull_requests">("agents");
   const [revision, setRevision] = useState(0);
+  const [prUser, setPrUser] = useState("");
   const retry = () => { setError(""); setRevision(v => v + 1); };
   useEffect(() => {
     let active = true, inFlight = false, loaded = false;
@@ -51,6 +52,7 @@ export function SpendPage() {
   if (!data) return <LoadingState label="Loading spend…" error={error} retry={retry} />;
   const total = data.total;
   const label = { users: "User", repositories: "Repository", agents: "Agent", pull_requests: "Pull request" }[group];
+  const rows = group === "pull_requests" && prUser ? data.user_pull_requests.filter(row => row.actor === prUser) : data[group];
   return <div className="spend-page">
     {error && <div className="error" role="alert">{error} <button onClick={retry}>Retry</button></div>}
     <dl className="spend-summary">
@@ -69,11 +71,14 @@ export function SpendPage() {
       <button aria-pressed={group === "pull_requests"} className={group === "pull_requests" ? "active" : ""} onClick={() => setGroup("pull_requests")}>By pull request</button>
     </div>
     {group === "agents" && <p className="spend-note">Each agent counts a PR run once, including use through groups. Costs include all instances and fusion stages. A run with multiple agents appears in each agent’s count.</p>}
-    {data[group].length ? <div className="table-wrap" tabIndex={0} role="region" aria-label={`Spend by ${label.toLowerCase()}`}>
+    {group === "pull_requests" && <label className="field">Requested by<select value={prUser} onChange={e => setPrUser(e.target.value)}>
+      <option value="">All users</option>{data.users.map(user => <option key={user.name} value={user.name}>{user.name}</option>)}
+    </select></label>}
+    {rows.length ? <div className="table-wrap" tabIndex={0} role="region" aria-label={`Spend by ${label.toLowerCase()}`}>
       <table><thead><tr><th>{label}</th><th>Runs</th><th>Total cost</th><th>Cost per run</th></tr></thead>
-        <tbody>{data[group].map(row => <tr key={row.id || row.name}>
-          <td>{row.repo ? <a href={`https://github.com/${row.repo}/pull/${row.pr}`} target="_blank" rel="noreferrer">{row.name}</a> : row.name}{row.deleted && <small>Deleted agent</small>}{row.unpriced_runs > 0 && <small>{row.unpriced_runs} {row.unpriced_runs === 1 ? "run has" : "runs have"} incomplete cost data</small>}</td>
-          <td>{row.repo ? <a href={`/runs?repo=${encodeURIComponent(row.repo)}&pr=${row.pr}`}>{row.runs.toLocaleString()}</a> : row.runs.toLocaleString()}</td>
+        <tbody>{rows.map(row => <tr key={row.id || row.name}>
+          <td>{row.repo ? <a href={`https://github.com/${row.repo}/pull/${row.pr}`} target="_blank" rel="noreferrer">{row.name}</a> : group === "users" ? <button className="text-button" onClick={() => { setPrUser(row.name); setGroup("pull_requests"); }}>{row.name} · View PRs</button> : row.name}{row.deleted && <small>Deleted agent</small>}{row.unpriced_runs > 0 && <small>{row.unpriced_runs} {row.unpriced_runs === 1 ? "run has" : "runs have"} incomplete cost data</small>}</td>
+          <td>{row.repo ? <a href={`/runs?repo=${encodeURIComponent(row.repo)}&pr=${row.pr}${row.actor ? `&actor=${encodeURIComponent(row.actor)}` : ""}`}>{row.runs.toLocaleString()}</a> : row.runs.toLocaleString()}</td>
           <td>{dollars(row.cost_usd)}{row.unpriced_runs > 0 && row.cost_usd != null ? "+" : ""}{row.estimated && <span className="cost-estimate"> est.</span>}</td>
           <td>{dollars(row.average_cost_usd)}<small>{row.priced_runs} priced {row.priced_runs === 1 ? "run" : "runs"}</small></td>
         </tr>)}</tbody>

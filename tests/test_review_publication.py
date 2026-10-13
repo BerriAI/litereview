@@ -517,13 +517,48 @@ async def test_reruns_reuse_first_summary_and_keep_inline_findings(publication):
     newer = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "new-review")
     await reviews.publish(newer)
     assert len(fake.comments) == 1 and fake.comments[0]["id"] == original_id
-    assert newer in fake.comments[0]["body"] and "### 👀" in fake.comments[0]["body"]
+    body = fake.comments[0]["body"]
+    assert newer in body and "Updating for" in body and "Last completed review" in body
+    assert FINDING["title"] in body and "Checked the changed paths." in body
+    assert "Review in progress" not in body and "### 👀" not in body
     finish(newer, findings=[{**FINDING, "title": "New finding"}])
     await reviews.publish(newer)
     assert len(fake.comments) == 1 and "New finding" in fake.comments[0]["body"]
     assert fake.threads[:2] == threads and len(fake.threads) == 3
     assert all(f"#issuecomment-{original_id}" in t["body"] for t in fake.threads)
     assert not fake.reactions
+
+
+async def test_fusion_progress_refreshes_summary_when_a_branch_finishes(publication):
+    fake = publication
+    with Session.begin() as db:
+        parent = db.scalar(select(Job).where(Job.run_id == fake.run_id))
+        parent.status = "waiting"
+        parent.config = {**parent.config, "fusion_stage": "aggregator"}
+        pid = parent.id
+        for index, role in enumerate(["Correctness", "UI drift"]):
+            db.add(Job(id=f"progress-{index}", run_id=fake.run_id, status="running", config={
+                **parent.config, "fusion_parent_id": pid, "fusion_index": index,
+                "fusion_stage": "branch", "fusion_role": role}))
+    await reviews.publish(fake.run_id)
+    comment_id = fake.comments[0]["id"]
+    assert "Correctness: reviewing" in fake.comments[0]["body"]
+    with Session.begin() as db:
+        db.get(Job, "progress-0").status = "completed"
+    await reviews.publish(fake.run_id)
+    assert fake.comments[0]["id"] == comment_id
+    assert "1 of 2 specialists completed" in fake.comments[0]["body"]
+    assert "UI drift: reviewing" in fake.comments[0]["body"]
+    calls = len(fake.calls)
+    await reviews.publish(fake.run_id)
+    assert len(fake.calls) == calls
+    with Session.begin() as db:
+        db.get(Job, "progress-1").status = "completed"
+        db.get(Job, "progress-1").result = {"skipped": True}
+        db.get(Job, pid).status = "running"
+    await reviews.publish(fake.run_id)
+    assert "1 skipped" in fake.comments[0]["body"]
+    assert "Final reviewer is checking" in fake.comments[0]["body"]
 
 
 async def test_adopts_legacy_progress_and_retires_other_instance_comments(publication):
@@ -638,3 +673,24 @@ async def test_different_run_publishers_share_the_pr_lock(publication, monkeypat
         await first
     await reviews.publish(newer)
     assert len(fake.comments) == 1 and newer in fake.comments[0]["body"]
+
+
+async def test_mcp_requests_leave_one_visible_attributed_command(publication):
+    fake = publication
+    with Session.begin() as db:
+        run = db.get(Run, fake.run_id)
+        run.snapshot = {**run.snapshot, "trigger_comment_id": None,
+                        "trigger": {"type": "mcp", "command": "@litereview reviewer"}}
+    await reviews.publish(fake.run_id)
+    requests = [c for c in fake.comments if "litereview:request:" in c["body"]]
+    assert len(requests) == 1
+    assert "@litereview reviewer" in requests[0]["body"]
+    assert "Requested by @" in requests[0]["body"] and "through MCP" in requests[0]["body"]
+    assert fake.comments[0]["id"] == requests[0]["id"]
+    calls = len(fake.calls)
+    await reviews.publish(fake.run_id)
+    assert len(fake.calls) == calls
+    finish(fake.run_id)
+    await reviews.publish(fake.run_id)
+    assert len([c for c in fake.comments if "litereview:request:" in c["body"]]) == 1
+    assert not fake.reactions

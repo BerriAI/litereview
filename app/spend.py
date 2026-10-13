@@ -239,7 +239,7 @@ def dashboard(db):
     for job in jobs:
         jobs_by_run[job.run_id].append(job)
     run_summaries = {run.id: cost_summary(jobs_by_run[run.id], costs) for run in runs}
-    users, repos, prs = defaultdict(list), defaultdict(list), defaultdict(list)
+    users, repos, prs, user_prs = defaultdict(list), defaultdict(list), defaultdict(list), defaultdict(list)
     agents, agent_runs, agent_costs = {}, defaultdict(list), defaultdict(dict)
     names = dict(db.execute(select(Resource.id, Resource.data["name"].as_string())
                             .where(Resource.kind == "agents")).all())
@@ -247,6 +247,7 @@ def dashboard(db):
         users[run.actor.casefold()].append(run)
         repos[run.repo.casefold()].append(run)
         prs[(run.repo.casefold(), run.pr)].append(run)
+        user_prs[(run.actor.casefold(), run.repo.casefold(), run.pr)].append(run)
         agent_jobs = defaultdict(list)
         for job in jobs_by_run[run.id]:
             parent = jobs_by_id.get(job.fusion_parent_id)
@@ -282,5 +283,10 @@ def dashboard(db):
     pull_requests = sorted([{"name": f"{rows[0].repo} #{number}", "repo": rows[0].repo, "pr": number,
                              **aggregate(rows, run_summaries)} for (_, number), rows in prs.items()],
                            key=lambda row: (-(row["cost_usd"] or 0), row["name"]))
+    user_pull_requests = sorted([{"actor": actor, "name": f"{rows[0].repo} #{number}",
+                                  "repo": rows[0].repo, "pr": number, **aggregate(rows, run_summaries)}
+                                 for (actor, _, number), rows in user_prs.items()],
+                                key=lambda row: (row["actor"], -(row["cost_usd"] or 0), row["name"]))
     return {"total": aggregate(runs, run_summaries), "users": breakdown(users),
-            "repositories": breakdown(repos), "agents": agent_breakdown, "pull_requests": pull_requests}
+            "repositories": breakdown(repos), "agents": agent_breakdown, "pull_requests": pull_requests,
+            "user_pull_requests": user_pull_requests}

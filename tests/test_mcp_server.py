@@ -371,6 +371,7 @@ def test_mcp_paginated_discovery_and_request_identity(mcp_client, monkeypatch):
     args = {"repo": "owner/repo", "pr": 1, "reviewers": ["reviewer"], "request_id": "request-one"}
     run = call(c, access, "request_review", args)
     assert run["actor"] == "trusted" and len(run["jobs"]) == 1
+    assert run["trigger"] == {"type": "mcp", "command": "@litereview reviewer"}
     assert call(c, access, "request_review", args)["id"] == run["id"]
     assert call(c, access, "list_runs", {"repo": "owner/repo", "limit": 1})["total"] == 1
 
