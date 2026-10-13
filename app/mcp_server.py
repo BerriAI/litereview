@@ -297,7 +297,7 @@ def build(app):
     @tool(external=True)
     async def litereview_request_review(repo: str, pr: Annotated[int, Field(ge=1)],
                                         reviewers: list[str], request_id: Id) -> dict[str, Any]:
-        """Start a PAID PR review and publish on GitHub as the linked user. Use saved reviewer names, [] for default. Reuse request_id when retrying."""
+        """Start a PAID PR review. LiteReview posts a visible GitHub request comment attributed to the linked user, then publishes results. Prefer posting @litereview with authenticated GitHub access when available. Use saved reviewer names, [] for default. Reuse request_id when retrying."""
         from sqlalchemy import func, select
 
         from . import reviews

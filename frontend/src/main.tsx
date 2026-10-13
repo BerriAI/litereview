@@ -149,7 +149,7 @@ function App() {
   const [runsTotal, setRunsTotal] = useState(0);
   const [runsQuery, setRunsQuery] = useState("");
   const [runsAgent, setRunsAgent] = useState(new URLSearchParams(location.search).get("agent") || "");
-  const [runsPR, setRunsPR] = useState(() => ({ repo: new URLSearchParams(location.search).get("repo") || "", pr: new URLSearchParams(location.search).get("pr") || "" }));
+  const [runsPR, setRunsPR] = useState(() => ({ repo: new URLSearchParams(location.search).get("repo") || "", pr: new URLSearchParams(location.search).get("pr") || "", actor: new URLSearchParams(location.search).get("actor") || "" }));
   const [runsRevision, setRunsRevision] = useState(0);
   const runCache = useRef(new Map<string, any>());
   const workspaceRequest = useRef(0);
@@ -240,7 +240,7 @@ function App() {
     history.pushState({}, "", next);
     setPath(next.split("?")[0]);
     setRunsAgent(new URL(next, location.origin).searchParams.get("agent") || "");
-    setRunsPR({ repo: new URL(next, location.origin).searchParams.get("repo") || "", pr: new URL(next, location.origin).searchParams.get("pr") || "" });
+    setRunsPR({ repo: new URL(next, location.origin).searchParams.get("repo") || "", pr: new URL(next, location.origin).searchParams.get("pr") || "", actor: new URL(next, location.origin).searchParams.get("actor") || "" });
     setRuns([]);
     setRunsQuery("");
     setMobileNav(false);
@@ -256,7 +256,7 @@ function App() {
     const fn = () => {
       setPath(location.pathname);
       setRunsAgent(new URLSearchParams(location.search).get("agent") || "");
-      setRunsPR({ repo: new URLSearchParams(location.search).get("repo") || "", pr: new URLSearchParams(location.search).get("pr") || "" });
+      setRunsPR({ repo: new URLSearchParams(location.search).get("repo") || "", pr: new URLSearchParams(location.search).get("pr") || "", actor: new URLSearchParams(location.search).get("actor") || "" });
       setRunsOffset(0);
       setRuns([]);
       setEditor(null);
@@ -429,7 +429,7 @@ function App() {
       inFlight = true;
       let interval = 4000;
       try {
-        const data = await api(runId ? `/runs/${runId}?compact=true` : `/runs?offset=${runsOffset}&limit=30&query=${encodeURIComponent(runsQuery)}&agent_id=${encodeURIComponent(runsAgent)}&repo=${encodeURIComponent(runsPR.repo)}${runsPR.pr ? `&pr=${encodeURIComponent(runsPR.pr)}` : ""}`,
+        const data = await api(runId ? `/runs/${runId}?compact=true` : `/runs?offset=${runsOffset}&limit=30&query=${encodeURIComponent(runsQuery)}&agent_id=${encodeURIComponent(runsAgent)}&actor=${encodeURIComponent(runsPR.actor)}&repo=${encodeURIComponent(runsPR.repo)}${runsPR.pr ? `&pr=${encodeURIComponent(runsPR.pr)}` : ""}`,
           { signal: controller.signal, background: loaded });
         if (alive) {
           if (runId) {
@@ -446,7 +446,7 @@ function App() {
     const visible = () => { if (document.visibilityState === "visible") void refresh(); };
     document.addEventListener("visibilitychange", visible);
     return () => { alive = false; clearTimeout(timer); controller.abort(); document.removeEventListener("visibilitychange", visible); };
-  }, [session?.user?.sub, session?.user?.login, isAdmin, active, path, runsOffset, runsRevision, runsQuery, runsAgent, runsPR.repo, runsPR.pr]);
+  }, [session?.user?.sub, session?.user?.login, isAdmin, active, path, runsOffset, runsRevision, runsQuery, runsAgent, runsPR.repo, runsPR.pr, runsPR.actor]);
   useEffect(() => {
     if (!notice) return;
     const t = setTimeout(() => setNotice(""), 6000);
@@ -1207,7 +1207,7 @@ function App() {
                     </div>
                     <div>
                       <dt>{run.trigger?.type === "automatic" ? "Automatic review" : "Triggered by"}</dt>
-                      <dd className="summary-caller">{run.trigger?.type === "automatic" ? `${reviewEvents[run.trigger.event] || run.trigger.event} · @${run.actor}` : run.actor}</dd>
+                      <dd className="summary-caller">{run.trigger?.type === "automatic" ? `${reviewEvents[run.trigger.event] || run.trigger.event} · @${run.actor}` : run.trigger?.type === "mcp" ? `MCP · @${run.actor}` : run.trigger?.type === "comment" ? `GitHub comment · @${run.actor}` : run.actor}</dd>
                     </div>
                   </dl>
                   {run.error && <div className="error">{run.error}</div>}
@@ -1298,7 +1298,7 @@ function App() {
                             </div>
                           ))}
                           {!job.logs.length && (
-                            <p>{job.result.skipped ? "No sandbox started: this review was skipped." : ["completed", "failed", "timed_out", "superseded"].includes(job.status) ? "No activity recorded." : "Waiting for the sandbox to start."}</p>
+                            <p>{job.result.skipped ? "No sandbox started: this review was skipped." : ["completed", "failed", "timed_out", "superseded"].includes(job.status) ? "No activity recorded." : job.progress || "Waiting for the sandbox to start."}</p>
                           )}
                         </div>
                       </details>
@@ -1337,7 +1337,7 @@ function App() {
           ) : (
             <>
               {active === "runs" && <div className="runs-agent-filter">
-                {runsPR.repo && <p>{runsPR.repo} {runsPR.pr && `#${runsPR.pr}`} <button className="text-button" onClick={() => navigate("/runs")}>Clear PR filter</button></p>}
+                {(runsPR.repo || runsPR.actor) && <p>{runsPR.repo} {runsPR.pr && `#${runsPR.pr}`} {runsPR.actor && `· Requested by ${runsPR.actor}`} <button className="text-button" onClick={() => navigate("/runs")}>Clear PR filter</button></p>}
                 <Field label="Filter by agent"><select value={runsAgent} onChange={e => navigate(e.target.value ? `/runs?agent=${encodeURIComponent(e.target.value)}` : "/runs")}>
                   <option value="">All agents</option>
                   {runsAgent && !store.agents.some(a => a.id === runsAgent) && <option value={runsAgent}>Archived agent</option>}

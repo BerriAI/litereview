@@ -144,7 +144,9 @@ For an OSS reviewer, verify the App's access, allow that agent in repository gra
 
 ## Runs and costs
 
-`litereview_request_review` starts a paid review on a connected open PR and publishes results on GitHub. The signed-in user must have a verified GitHub link. Pass exact agent/group names or [] for the default. Reuse `request_id` on retries. Read the returned status and any rejection; a run ID alone does not imply work started.
+Request reviews with a visible GitHub PR comment such as `@litereview code-review` when authenticated GitHub access is available. Use MCP to read progress and findings. A comment makes the request visible to everyone reviewing the PR.
+
+`litereview_request_review` also starts a paid review on a connected open PR. LiteReview posts the command in a GitHub comment attributed to the signed-in user before publishing its summary. The user must have a verified GitHub link. Pass exact agent/group names or [] for the default. Reuse `request_id` on retries, and do not also post a separate command for the same request. Read the returned status and any rejection; a run ID alone does not imply work started.
 
 Use `litereview_list_runs` with repository/status/`agent_id` filters and pagination. Run summaries include the saved agent IDs and names, deduplicated across group instances and fusion branches. In the UI, use **PR agents → View runs** or the **Runs → Filter by agent** control. Use `litereview_get_run` for details. Logs are opt-in. Results include findings, checks, limitations, session history and private comparisons. Costs are included only for admins; `litereview_get_spend` gives the workspace breakdown. Missing pricing is unknown cost, not zero.
 

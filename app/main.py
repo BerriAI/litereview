@@ -1086,7 +1086,10 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
 
 
 def run_public(run):
-    return {"trigger": run.snapshot.get("trigger"), "notices": run.snapshot.get("notices", []), **{
+    trigger = run.snapshot.get("trigger")
+    if not trigger and (run.delivery or "").startswith("mcp:"):
+        trigger = {"type": "mcp"}
+    return {"trigger": trigger, "notices": run.snapshot.get("notices", []), **{
         k: getattr(run, k)
         for k in ("id", "repo", "pr", "actor", "head", "base", "status", "comment_id", "created_at", "error")
     }}
@@ -1101,7 +1104,7 @@ def spend_dashboard():
 
 @app.get("/api/runs")
 def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: int = 0,
-         limit: int | None = None, query: str = "", agent_id: str = "", pr: int | None = None):
+         limit: int | None = None, query: str = "", agent_id: str = "", pr: int | None = None, actor: str = ""):
     from . import spend
     with Session() as db:
         stmt = select(Run).where(func.coalesce(Run.display_snapshot, Run.snapshot)["harness_check"].as_boolean().is_not(True))
@@ -1110,6 +1113,8 @@ def runs(user=Depends(require_user), repo: str = "", status: str = "", offset: i
             stmt = stmt.where(searchable.contains(query.lower().strip(), autoescape=True))
         if repo:
             stmt = stmt.where(func.lower(Run.repo) == repo.lower())
+        if actor:
+            stmt = stmt.where(func.lower(Run.actor) == actor.casefold())
         if pr is not None:
             stmt = stmt.where(Run.pr == pr)
         if status:
@@ -1186,6 +1191,7 @@ def run_detail(run_id: str, user=Depends(require_user), compact: bool = False):
                 )
             }
             data["artifacts"] = artifacts.get(job.id, [])
+            data["progress"] = fusion.progress(job, all_jobs)
             data["feedback"] = ratings.get(job.id)
             data["feedback_eligible"] = feedback.eligible(run, job)
             children = sorted([j for j in all_jobs if j.config.get("fusion_parent_id") == job.id],
@@ -1193,6 +1199,7 @@ def run_detail(run_id: str, user=Depends(require_user), compact: bool = False):
             data["branches"] = [{
                 "id": child.id, "status": child.status, "config": child.config,
                 "model_calls": child.model_calls, "sandbox_id": child.sandbox_id,
+                "started_at": child.started_at, "finished_at": child.finished_at,
                 "result": child.result, "logs": child.logs,
                 "artifacts": artifacts.get(child.id, []),
             } for child in children]
@@ -1510,9 +1517,10 @@ async def finish(job_id: str, request: Request):
         if run.snapshot.get("reply") and result["status"] == "completed" and not result.get("rebuttal"):
             raise HTTPException(422, "A thread follow-up must submit its rebuttal verdict, reason and evidence.")
         from .previews import validate as validate_preview
-        from .review_rules import enforce_checks
+        from .review_rules import enforce_checks, validate_checks
         from .verdict import enforce_history
         validate_preview(db, job, result)
+        validate_checks(job.config, result)
         enforce_checks(job.config, result)
         enforce_history(job, result)
         minimum = job.config.get("minimum_review_seconds", 0)

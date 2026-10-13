@@ -42,3 +42,42 @@ def test_only_enabled_rules_reach_review_prompt_and_replies_keep_focus():
     result = {"checks": [], "limitations": []}
     enforce_checks({**config, "task": "reply"}, result)
     assert result == {"checks": [], "limitations": []}
+
+
+@pytest.mark.parametrize("outcome", ["passed", "not_run"])
+def test_missing_rule_id_can_be_corrected_before_worker_finishes(owner, outcome):
+    from test_previews import AUTH, seed
+
+    from app.db import Job, Session
+
+    seed(output_type="review", supports_finish_retry=True,
+         rules=[{"id": "e2e", "name": "E2E", "required": True}])
+    result = {"status": "completed", "summary": "E2E checked", "findings": [], "limitations": [],
+              "checks": [{"name": "e2e: translation coverage", "status": outcome, "required": True,
+                          "details": "Verified coverage" if outcome == "passed" else "Execution evidence unavailable"}]}
+    path = "/api/internal/jobs/preview-job/finish"
+    response = owner.post(path, headers=AUTH, json=result)
+    assert response.status_code == 422 and "rule_id" in response.json()["detail"]
+    with Session() as db:
+        assert db.get(Job, "preview-job").status == "running"
+        assert db.get(Job, "preview-job").result == {}
+    result["checks"][0]["rule_id"] = "e2e"
+    assert owner.post(path, headers=AUTH, json=result).status_code == 200
+    with Session() as db:
+        saved = db.get(Job, "preview-job").result
+        assert saved["checks"][0]["status"] == outcome
+        assert bool(saved["limitations"]) == (outcome == "not_run")
+
+
+def test_older_workers_keep_their_completion_contract_during_rollout(owner):
+    from test_previews import AUTH, seed
+
+    from app.db import Job, Session
+
+    seed(output_type="review", rules=[{"id": "e2e", "name": "E2E", "required": True}])
+    result = {"status": "completed", "summary": "Review result", "findings": [], "checks": [], "limitations": []}
+    assert owner.post("/api/internal/jobs/preview-job/finish", headers=AUTH, json=result).status_code == 200
+    with Session() as db:
+        saved = db.get(Job, "preview-job").result
+        assert saved["checks"][0]["status"] == "not_run"
+        assert saved["limitations"]

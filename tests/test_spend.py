@@ -313,3 +313,23 @@ def test_gateway_header_cost_is_used_only_after_nonstream_response(client, monke
         row = db.query(ModelUsage).one()
         assert row.cost_usd == Decimal(expected)
         assert row.source == source
+
+
+def test_pr_spend_is_separate_for_each_requesting_user(owner):
+    add_run("moe-first", actor="Moe")
+    charge(add_job("moe-main", "moe-first"), ".5")
+    charge(add_job("moe-branch", "moe-first", fusion_parent_id="moe-main"), ".2")
+    add_run("moe-retry", actor="moe", status="superseded")
+    charge(add_job("moe-retry-job", "moe-retry"), ".3")
+    add_run("tin-first", actor="tin")
+    charge(add_job("tin-job", "tin-first"), ".4")
+    data = owner.get("/api/spend").json()
+    rows = {r["actor"]: r for r in data["user_pull_requests"]}
+    assert rows["moe"]["runs"] == 2 and rows["moe"]["cost_usd"] == pytest.approx(1)
+    assert rows["tin"]["runs"] == 1 and rows["tin"]["cost_usd"] == pytest.approx(.4)
+    users = {r["name"]: r for r in data["users"]}
+    assert users["moe"]["pull_requests"] == 1 and users["moe"]["average_runs_per_pr"] == 2
+    assert users["moe"]["average_pr_cost_usd"] == pytest.approx(1)
+    assert users["tin"]["average_pr_cost_usd"] == pytest.approx(.4)
+    assert sum(r["cost_usd"] for r in rows.values()) == pytest.approx(data["pull_requests"][0]["cost_usd"])
+    assert {r["id"] for r in owner.get("/api/runs?repo=BerriAI/litellm&pr=1&actor=MOE").json()} == {"moe-first", "moe-retry"}

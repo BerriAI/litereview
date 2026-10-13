@@ -8,7 +8,7 @@ import httpx
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from . import github, review_sessions, tracing
+from . import fusion, github, review_sessions, tracing
 from .db import Job, ReviewFinding, ReviewPublication, Run, Session
 from .publication_lock import publication_lock
 from .reviews import (
@@ -278,12 +278,29 @@ def summary_body(run, jobs, all_jobs, newer):
     sections = [f"<!-- litereview:summary:{summary_identity(run, jobs[0])} -->"]
     with Session() as db:
         for job in jobs:
+            displayed_run, displayed_job = run, job
+            if job.status not in TERMINAL:
+                previous = db.execute(select(Run, Job).join(Job, Job.run_id == Run.id).where(
+                    Run.id.in_(reviewer_runs(run, job)), Run.created_at < run.created_at,
+                    Job.config["agent_id"].as_string() == job.config["agent_id"],
+                    Job.config["instance"].as_integer() == job.config.get("instance", 1),
+                    Job.config["fusion_parent_id"].as_string().is_(None),
+                    Job.config["comparison_parent_id"].as_string().is_(None), Job.status == "completed",
+                ).order_by(Run.created_at.desc()).limit(1)).first()
+                if previous:
+                    displayed_run, displayed_job = previous
             decisions = {str(f.position): {"status": f.status, **f.decision} for f in db.scalars(
-                select(ReviewFinding).where(ReviewFinding.job_id == job.id))}
-            body = render_comment(run, [job], newer, agent_comment=True, all_jobs=all_jobs,
-                                  finding_links=load_state(f"job:{job.id}").get("findings"),
+                select(ReviewFinding).where(ReviewFinding.job_id == displayed_job.id))}
+            body = render_comment(displayed_run, [displayed_job], newer and displayed_run.id == run.id,
+                                  agent_comment=True, all_jobs=all_jobs if displayed_run.id == run.id else None,
+                                  finding_links=load_state(f"job:{displayed_job.id}").get("findings"),
                                   finding_decisions=decisions)
             section, footer = body.split("\n", 1)[1].rsplit("\n---\n", 1)
+            if displayed_run.id != run.id:
+                note = fusion.progress(job, all_jobs) or {"blocked": "Waiting for this agent's current work.",
+                    "queued": "Queued.", "starting": "Starting.", "cancelling": "Stopping for a newer commit."}.get(job.status, "Checking the changes.")
+                section = (f"> Updating for `{run.head[:12]}` · [View current run]({settings().public_url}/runs/{run.id}). {md(note)}\n\n"
+                           f"Last completed review · `{displayed_run.head[:12]}`\n\n" + section.strip())
             sections.append(section.strip())
     return "\n\n".join(sections) + "\n\n---\n" + footer
 
@@ -338,7 +355,7 @@ async def publish_reviewer(run, jobs, all_jobs, existing, newer, allowed):
             if job.status in TERMINAL:
                 tracing.finish_job(job, run)
                 await publish_findings(run, job, parent_id, checkpoint, job_key, allowed)
-            checkpoint.update(ready=True, status=job.status)
+            checkpoint.update(ready=True, status=job.status, progress=fusion.progress(job, all_jobs))
             save_state(job_key, checkpoint)
         except (HTTPException, httpx.HTTPError) as exc:
             errors.append(exc)
@@ -423,6 +440,15 @@ async def _publish_run(run_id):
             run.comment_id = await write_comments(run, render_comment(run, []), existing, state, key)
             status = "rejected"
         else:
+            if run.snapshot.get("trigger", {}).get("type") == "mcp" and not state.get("request_comment_id"):
+                existing = await marked_comments(run, f"issues/{run.pr}/comments")
+                request_key = f"request:{run.id}"
+                request_state = load_state(request_key)
+                command = run.snapshot["trigger"].get("command") or "@litereview " + " ".join(dict.fromkeys(j.config["name"] for j in jobs))
+                body = (f"<!-- litereview:request:{run.id} -->\n\n{command}\n\n"
+                        f"Requested by @{md(run.actor)} through MCP. [View run]({settings().public_url}/runs/{run.id}).")
+                state["request_comment_id"] = await write_comments(run, body, existing, request_state, request_key)
+                save_state(key, state)
             if run.snapshot.get("notices"):
                 notice_key = f"notice:{run.id}"
                 notice_state = load_state(notice_key)
@@ -435,7 +461,7 @@ async def _publish_run(run_id):
                     await write_comments(run, body, existing, notice_state, notice_key)
                     notice_state["complete"] = True
                     save_state(notice_key, notice_state)
-            trigger = run.snapshot.get("trigger_comment_id")
+            trigger = run.snapshot.get("trigger_comment_id") or state.get("request_comment_id")
             if trigger and not state.get("acknowledged"):
                 if not done or run.published == 1:
                     try:
@@ -450,7 +476,8 @@ async def _publish_run(run_id):
                 for j in jobs
                 if not load_state(f"job:{j.id}").get("complete")
                 and (j.status in TERMINAL or not load_state(f"job:{j.id}").get("ready")
-                     or load_state(f"job:{j.id}").get("status") != j.status)
+                     or load_state(f"job:{j.id}").get("status") != j.status
+                     or load_state(f"job:{j.id}").get("progress") != fusion.progress(j, all_jobs))
             ]
             if pending:
                 existing = await marked_comments(run, f"issues/{run.pr}/comments")
@@ -467,7 +494,7 @@ async def _publish_run(run_id):
                     if not any(job in pending for job in reviewer_jobs):
                         continue
                     try:
-                        await publish_reviewer(run, reviewer_jobs, jobs, existing, newer, allowed)
+                        await publish_reviewer(run, reviewer_jobs, all_jobs, existing, newer, allowed)
                     except (HTTPException, httpx.HTTPError) as exc:
                         errors.append(exc)
                 if errors:

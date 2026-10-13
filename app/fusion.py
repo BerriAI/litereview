@@ -124,6 +124,33 @@ def branches(db, parent):
     ).order_by(Job.config["fusion_index"].as_integer())))
 
 
+def progress(parent, jobs):
+    """Describe specialist and final-review work without suggesting the page is loading."""
+    if parent.config.get("fusion_stage") != "aggregator" or parent.status not in {"waiting", "queued", "starting", "running"}:
+        return None
+    children = sorted((j for j in jobs if j.config.get("fusion_parent_id") == parent.id),
+                      key=lambda j: j.config.get("fusion_index", 0))
+    if not children:
+        return None
+    completed = sum(j.status == "completed" and not j.result.get("skipped") for j in children)
+    skipped = sum(bool(j.result.get("skipped")) for j in children)
+    failed = sum(j.status in {"failed", "timed_out", "superseded"} for j in children)
+    counts = [f"{completed} of {len(children)} specialists completed"]
+    if skipped:
+        counts.append(f"{skipped} skipped")
+    if failed:
+        counts.append(f"{failed} did not finish")
+    if parent.status == "waiting":
+        active = [j for j in children if j.status not in TERMINAL | {"superseded"}]
+        stages = {"queued": "queued", "blocked": "waiting", "starting": "starting", "running": "reviewing", "cancelling": "stopping"}
+        detail = "; ".join(f"{j.config.get('fusion_role') or 'Branch ' + str(j.config.get('fusion_index', 0) + 1)}: {stages.get(j.status, j.status)}" for j in active)
+        detail = detail + "." if detail else "Preparing the final reviewer."
+    else:
+        detail = {"queued": "Final reviewer is queued.", "starting": "Starting the final reviewer.",
+                  "running": "Final reviewer is checking and combining the specialist results."}[parent.status]
+    return " · ".join(counts) + ". " + detail
+
+
 def advance(db):
     """Recoverably release aggregators once every branch has stopped."""
     for parent in db.scalars(select(Job).where(Job.status == "waiting")):

@@ -19,10 +19,10 @@ as part of the loop.
    and agent. Read candidate runs with `litereview_get_run`. Match the captured
    head exactly and use the primary result, not a fusion branch or private
    comparison. A score from an older commit does not qualify.
-3. If that reviewer is already running on this head, wait for it. Otherwise use
-   `litereview_request_review` with a fresh `request_id`, or post
-   `@litereview code-review` if MCP cannot request it. Reuse the same request ID
-   on uncertain retries; do not submit through both paths. A newer head replaces
+3. If that reviewer is already running on this head, wait for it. Otherwise post
+   `@litereview code-review` as a visible GitHub PR comment using authenticated
+   GitHub access. Use MCP to inspect runs, not to silently request them. If the
+   comment response is lost, check the PR before posting it again. A newer head replaces
    the previous active review for that reviewer and PR.
 4. Read findings, carried-forward finding assessments, checks and limitations.
    Inspect the cited code and evidence. Fix valid issues, run relevant checks,
@@ -46,8 +46,8 @@ do not keep buying identical reviews. There is no arbitrary output-token cap.
 
 ## Give the human a preview
 
-Once the exact current head qualifies, request `@litereview preview` through MCP
-or GitHub and wait for its primary result. Read `preview_url` and, if available,
+Once the exact current head qualifies, post `@litereview preview` as a GitHub PR
+comment and wait for its primary result. Read `preview_url` and, if available,
 `litereview_get_preview`. Confirm that the preview covers the same current head.
 If code changes, return to review before presenting it as ready.
 

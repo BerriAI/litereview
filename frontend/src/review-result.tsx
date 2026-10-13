@@ -69,12 +69,12 @@ export function ReviewResult({
         <div className="review-progress" role="status">
           <Loader2 size={16} className="spin" />
           <span>
-            {job.status === "cancelling" ? "Stopping this review for a newer commit…"
+            {job.progress || (job.status === "cancelling" ? "Stopping this review for a newer commit…"
               : job.status === "blocked" ? "Waiting for this agent’s current work…" : job.status === "queued"
               ? "Waiting to start…"
               : job.status === "starting"
                 ? "Preparing the review…"
-                : "Reviewing the changes…"}
+                : "Reviewing the changes…")}
           </span>
         </div>
       )}
