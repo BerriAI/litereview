@@ -8,9 +8,10 @@ from contextlib import contextmanager
 
 import anyio
 from sqlalchemy import select, text
+from sqlalchemy.orm import defer, undefer
 
 from . import fusion, github
-from .db import Job, ReviewFinding, ReviewPublication, ReviewSession, Run, Session
+from .db import Job, ReviewFinding, ReviewPublication, ReviewSession, Run, Session, job_metadata, run_metadata
 
 TERMINAL = {"completed", "failed", "timed_out", "superseded"}
 
@@ -39,8 +40,8 @@ def fingerprint(cfg):
 
 
 def jobs_for(db, session, run_id):
-    return list(db.scalars(select(Job).where(Job.run_id == run_id,
-                                            Job.config["agent_id"].as_string() == session.agent_id)))
+    return list(db.scalars(select(Job).options(defer(Job.config), defer(Job.logs), undefer(Job.display_config))
+                          .where(Job.run_id == run_id, job_metadata["agent_id"].as_string() == session.agent_id)))
 
 
 def refresh(db, session):
@@ -76,7 +77,7 @@ def refresh(db, session):
             session.fingerprint = primary[0].config.get("review_fingerprint", "")
         session.active_run_id = None
     next_job = db.scalar(select(Job).join(Run, Run.id == Job.run_id).where(
-        Job.config["session_id"].as_string() == session.id, Job.status == "blocked"
+        job_metadata["session_id"].as_string() == session.id, Job.status == "blocked"
     ).order_by(Run.created_at, Run.id, Job.id))
     if next_job:
         session.active_run_id = next_job.run_id
@@ -97,8 +98,8 @@ def get_session(db, run, agent_id):
         # Adopt pre-upgrade work so a deploy does not bypass duplicate protection.
         previous = db.scalar(select(Run).join(Job, Job.run_id == Run.id).where(
             Run.repo == run.repo, Run.pr == run.pr, Run.id != run.id,
-            Job.config["agent_id"].as_string() == agent_id,
-            Job.status.not_in(TERMINAL), Run.snapshot["harness_check"].as_boolean().is_not(True)
+            job_metadata["agent_id"].as_string() == agent_id,
+            Job.status.not_in(TERMINAL), run_metadata["harness_check"].as_boolean().is_not(True)
         ).order_by(Run.created_at))
         if previous:
             session.active_run_id = previous.id
@@ -211,7 +212,9 @@ async def prepare_session(repo, pr, key):
         refresh(db, session)
         jobs = jobs_for(db, session, session.active_run_id) if session.active_run_id else []
         candidates = [j for j in jobs if j.status in ("queued", "waiting")
-                      and not j.config.get("session_prepared")]
+                      and not ((j.display_config or {}).get("session_prepared")
+                               if "session_prepared" in (j.display_config or {})
+                               else j.config.get("session_prepared"))]
         if not candidates:
             return
         run = db.get(Run, session.active_run_id)

@@ -103,6 +103,7 @@ JOB_DISPLAY_KEYS = (
     "agent_id", "name", "group", "instance", "model", "run_order", "target_kind", "target_id",
     "fusion_parent_id", "fusion_index", "fusion_stage", "fusion_role", "branch_decision", "comparison_parent_id", "session_id",
     "review_scope", "scope_reason", "output_type", "show_score", "finding_history", "task",
+    "timeout_seconds", "review_fingerprint",
 )
 
 
@@ -114,7 +115,13 @@ def run_display(snapshot):
 
 
 def job_display(config):
-    return {**{k: config[k] for k in JOB_DISPLAY_KEYS if k in config}, "fusion": bool(config.get("fusion"))}
+    return {**{k: config[k] for k in JOB_DISPLAY_KEYS if k in config}, "fusion": bool(config.get("fusion")),
+            "session_prepared": bool(config.get("session_prepared")),
+            "timeout_seconds": config.get("timeout_seconds")}
+
+
+job_metadata = func.coalesce(Job.display_config, Job.config)
+run_metadata = func.coalesce(Run.display_snapshot, Run.snapshot)
 
 
 @event.listens_for(Run, "before_insert")

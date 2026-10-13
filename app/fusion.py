@@ -1,13 +1,15 @@
 """Independent review branches followed by one source-grounded aggregate review."""
 
 import time
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 from sqlalchemy import select, update
+from sqlalchemy.orm import load_only
 
 from runner.catalog import review_capabilities, validate_connection
 
-from .db import Artifact, Job, uid
+from .db import Artifact, Job, job_metadata, uid
 
 TERMINAL = {"completed", "failed", "timed_out"}
 BRANCH_SETTINGS = {"instructions", "skill_ids", "mcps", "capabilities", "rules"}
@@ -117,11 +119,15 @@ def enqueue(db, run_id, config):
     return parent
 
 
-def branches(db, parent):
-    return list(db.scalars(select(Job).where(
+def branches(db, parent, *, metadata_only=False):
+    query = (select(Job.id, Job.status, Job.result, job_metadata.label("config"))
+             if metadata_only else select(Job)).where(
         Job.run_id == parent.run_id,
-        Job.config["fusion_parent_id"].as_string() == parent.id,
-    ).order_by(Job.config["fusion_index"].as_integer())))
+        job_metadata["fusion_parent_id"].as_string() == parent.id,
+    ).order_by(job_metadata["fusion_index"].as_integer())
+    if metadata_only:
+        return [SimpleNamespace(**row._mapping) for row in db.execute(query)]
+    return list(db.scalars(query))
 
 
 def progress(parent, jobs):
@@ -153,8 +159,8 @@ def progress(parent, jobs):
 
 def advance(db):
     """Recoverably release aggregators once every branch has stopped."""
-    for parent in db.scalars(select(Job).where(Job.status == "waiting")):
-        children = branches(db, parent)
+    for parent in db.scalars(select(Job).options(load_only(Job.id, Job.run_id)).where(Job.status == "waiting")):
+        children = branches(db, parent, metadata_only=True)
         if not children or any(child.status not in TERMINAL for child in children):
             continue
         values = {"status": "queued"}
