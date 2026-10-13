@@ -241,6 +241,7 @@ async def connection_status():
         "reply_events_enabled": "pull_request_review_comment" in app.get("events", []),
         "repositories": sorted(repos, key=lambda r: r["name"].lower()),
         "installations": [
-            {"account": i["account"]["login"], "suspended": bool(i.get("suspended_at"))} for i in installs
+            {"account": i["account"]["login"], "suspended": bool(i.get("suspended_at")),
+             "installation_id": i["id"], "manage_url": i.get("html_url", "")} for i in installs
         ],
     }

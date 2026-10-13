@@ -200,6 +200,7 @@ async def test_command_order_survives_updates_and_controls_publication(owner, mo
     fake = GitHubFixture(run_id)
     monkeypatch.setattr(github, "repo_request", fake.request)
     await reviews.publish(run_id)
-    assert [c["body"].split("\n", 1)[0] for c in fake.comments] == [
-        f"<!-- litereview:{run_id}:job:{job_id} -->" for job_id in expected
-    ]
+    assert len(fake.comments) == 2
+    assert "### 👀 second" in fake.comments[0]["body"]
+    assert "### 👀 reviewer" in fake.comments[1]["body"]
+    assert all("Run 1" in c["body"] and "Run 2" in c["body"] for c in fake.comments)

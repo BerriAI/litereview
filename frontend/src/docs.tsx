@@ -138,11 +138,12 @@ export function Documentation() {
             <li>
               <h3>Read the results</h3>
               <p>
-                LiteReview reacts with 👀 and creates a progress comment for
-                each agent. Completed reviews show ✅; failed or incomplete
+                LiteReview reacts with 👀 and keeps one summary comment per
+                agent and PR. Reruns edit the original comment in place; group
+                instances share that summary. Earlier runs remain in history. Completed reviews show ✅; failed or incomplete
                 reviews show ⚠️. Findings link to inline threads where you can
                 reply; findings without a usable diff line stay in the agent
-                comment. The agent’s 👀 reaction disappears when it finishes,
+                comment. The summary’s 👀 reaction disappears when all its instances finish,
                 and the request’s disappears when all agents finish. ✅ means
                 completed, not issue-free. Expand Checks and execution details
                 for verification results. Open <a href="/runs">Runs</a> and
@@ -151,6 +152,9 @@ export function Documentation() {
                 agent could not finish work required by its instructions.
                 Optional checks that were not run appear under Checks without
                 making the review incomplete. Agents do not push fixes.
+                Rate a finished reviewer as Helpful or Needs work on its run page,
+                with an optional note. Your name and feedback are visible to workspace
+                admins under Feedback; ratings do not change agent instructions.
               </p>
               <p>
                 Each agent keeps its review history for that PR. Repeating a

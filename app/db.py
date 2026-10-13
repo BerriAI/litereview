@@ -161,6 +161,17 @@ class ReviewPublication(Base):
     data: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class ReviewFeedback(Base):
+    __tablename__ = "review_feedback"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(40), index=True)
+    reporter: Mapped[str] = mapped_column(String(320))
+    rating: Mapped[str] = mapped_column(String(10), index=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[float] = mapped_column(Float)
+    updated_at: Mapped[float] = mapped_column(Float, index=True)
+
+
 class AutomaticReviewClaim(Base):
     __tablename__ = "automatic_review_claims"
     # Atomic with Run/Job insertion; survives redeliveries and overlapping rules.

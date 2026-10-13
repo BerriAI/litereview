@@ -1,0 +1,18 @@
+.review-feedback { margin: 24px 0; padding: 20px; border: 1px solid var(--border); border-radius: 10px; }
+.feedback-prompt, .feedback-entry-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.feedback-votes, .feedback-filters, .feedback-pagination { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.feedback-votes button[aria-pressed="true"] { background: var(--tint); border-color: var(--accent); color: var(--accent); }
+.review-feedback form { display: grid; gap: 8px; margin-top: 16px; }
+.review-feedback textarea { width: 100%; resize: vertical; min-height: 80px; }
+.review-feedback form button { justify-self: start; }
+.feedback-filters { align-items: end; margin-bottom: 24px; gap: 16px; }
+.feedback-filters label { display: grid; gap: 6px; min-width: 180px; }
+.feedback-list { display: grid; gap: 12px; }
+.feedback-entry { padding: 20px; border: 1px solid var(--border); border-radius: 10px; overflow-wrap: anywhere; }
+.feedback-entry-heading { margin-bottom: 8px; }
+.feedback-rating { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.feedback-rating.down { color: #965e16; }
+.feedback-rating.up { color: #2f6b47; }
+.feedback-note { white-space: pre-wrap; }
+.feedback-entry .meta { margin-bottom: 0; }
+.feedback-pagination { justify-content: flex-end; margin-top: 16px; }

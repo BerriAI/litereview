@@ -22,7 +22,7 @@ type Status = {
   review_events_enabled?: boolean;
   reply_events_enabled?: boolean;
   repositories: { name: string; installation_id: number }[];
-  installations: { account: string; suspended: boolean }[];
+  installations: { account: string; suspended: boolean; installation_id?: number; manage_url?: string }[];
   excluded?: string[];
 };
 type Readiness = {
@@ -162,6 +162,15 @@ export function GitHubSetup(p: Props) {
     r.name.toLowerCase().includes(query.toLowerCase()),
   );
   const hasRepos = p.connected.some(available);
+  const accounts = [...new Set([
+    ...p.connected.map(r => r.name.split("/")[0]),
+    ...(status?.installations || []).map(i => i.account),
+  ].map(name => name.toLowerCase()))].map(key => {
+    const installation = status?.installations.find(i => i.account.toLowerCase() === key);
+    const saved = p.connected.filter(r => r.name.split("/")[0].toLowerCase() === key);
+    return { key, name: installation?.account || saved[0]?.name.split("/")[0] || key,
+      installation, repos: repos.filter(r => r.name.split("/")[0].toLowerCase() === key) };
+  }).filter(account => !query || account.repos.length).sort((a, b) => a.name.localeCompare(b.name));
   const checked = readiness?.agents.filter((a) => a.checked) || [];
   const organization = p.setup.github_organization || "";
   const mismatch =
@@ -227,20 +236,6 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
           <h1 tabIndex={-1}>Repositories</h1>
           <p>Connect GitHub to choose where LiteReview can run.</p>
         </div>
-        {hasRepos && !error && (
-          <a
-            className={
-              "button " +
-              (needs === "review" && readiness?.has_review ? "primary" : "")
-            }
-            href={installUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <Plus size={16} />
-            Add repositories
-          </a>
-        )}
       </header>
       {p.ssoRequired && (
         <div className="github-account-summary">
@@ -361,40 +356,6 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
           </div>
         ) : (
           <>
-            <div className="organization-row">
-              <ProviderMark type="github" />
-              <div className="organization-name">
-                <strong>{organization || status.owner || "GitHub"}</strong>
-                <small>GitHub repositories</small>
-              </div>
-              <span className="connected-label">
-                <Check size={14} />
-                Connected
-              </span>
-              <details className="connection-menu">
-                <summary aria-label="GitHub connection options">
-                  <MoreHorizontal size={18} />
-                </summary>
-                <div>
-                  <a
-                    className="button"
-                    href={installUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Manage GitHub access
-                  </a>
-                  <button onClick={p.onSettings}>App settings</button>
-                  <button
-                    disabled={checking}
-                    onClick={() => setRefresh((v) => v + 1)}
-                  >
-                    <RefreshCw size={14} />
-                    Sync repositories
-                  </button>
-                </div>
-              </details>
-            </div>
             {status?.reply_events_enabled === false && <p className="notice">
               To let reviewers respond to finding-thread replies, enable <strong>Pull request review comment</strong> under your GitHub App’s Permissions &amp; events. Then use Sync repositories to refresh this check.
             </p>}
@@ -501,7 +462,7 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
             organization owner must restore it on GitHub.
           </p>
         ))}
-      {p.connected.length > 0 && (
+      {(p.connected.length > 0 || !!status?.installations.length) && (
         <>
           {p.connected.length > 5 && (
             <label className="repo-search">
@@ -513,14 +474,30 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
               />
             </label>
           )}
-          <div className="repo-list-heading" aria-hidden="true">
+          {accounts.map(account => <section className="organization-section" key={account.key} aria-label={`${account.name} repositories`}>
+            <div className="organization-row">
+              <ProviderMark type="github" />
+              <div className="organization-name"><strong>{account.name}</strong><small>{account.repos.length} {account.repos.length === 1 ? "repository" : "repositories"}</small></div>
+              <span className={account.installation && !account.installation.suspended && !error ? "connected-label" : "muted"}>
+                {account.installation && !account.installation.suspended && !error && <Check size={14} />}
+                {error ? "Unverified" : checking && !status ? "Checking…" : account.installation?.suspended ? "Suspended" : account.installation ? "Connected" : "Access missing"}
+              </span>
+              <details className="connection-menu"><summary aria-label={`GitHub options for ${account.name}`}><MoreHorizontal size={18} /></summary>
+                <div>
+                  <a className="button" href={account.installation?.manage_url || installUrl} target="_blank" rel="noreferrer">Manage GitHub access</a>
+                  <button onClick={p.onSettings}>App settings</button>
+                  <button disabled={checking} onClick={() => setRefresh(v => v + 1)}><RefreshCw size={14} /> Sync repositories</button>
+                </div>
+              </details>
+            </div>
+          {account.repos.length > 0 && <><div className="repo-list-heading" aria-hidden="true">
             <span>Repository</span>
             <span>Reviewer</span>
             <span>Status</span>
             <span />
           </div>
           <ul className="repo-list">
-            {repos.map((repo) => {
+            {account.repos.map((repo) => {
               const grant = p.access.find(
                 (g) =>
                   g.subject === "repo" &&
@@ -589,12 +566,24 @@ GitHub instructions: https://docs.github.com/en/organizations/managing-peoples-a
                 </li>
               );
             })}
-          </ul>
-          {!repos.length && (
+          </ul></>}
+          {!account.repos.length && <p className="repo-help">No repositories connected. Choose repositories under Manage GitHub access.</p>}
+          </section>)}
+          {!repos.length && !!query && (
             <p className="repo-help">No repositories match “{query}”.</p>
           )}
         </>
       )}
+      {installUrl && status && status.state !== "unconfigured" && <section className="organization-add">
+        <div><h2>Add organization</h2><p>Use this LiteReview App in another GitHub organization. Choose the organization and repositories on GitHub; they appear here when you return.</p></div>
+        <a className="button" href={installUrl} target="_blank" rel="noreferrer"><Plus size={16} /> Choose organization in GitHub <ArrowUpRight size={14} /></a>
+        <button className="text-button" disabled={checking} onClick={() => setRefresh(v => v + 1)}>{checking ? "Checking…" : "Check installation"}</button>
+        <p className="meta">Organizations share this workspace’s agents, members, model connections, and spend.</p>
+        <details className="duration-help"><summary>Organization not listed?</summary>
+          <p>An organization owner may need to approve installation. If GitHub only shows the App’s owner, its owner must open the App’s General settings and change “Where can this GitHub App be installed?” to “Any account.” Then retry the installation.</p>
+          <a href={appUrl} target="_blank" rel="noreferrer">Open LiteReview on GitHub</a>
+        </details>
+      </section>}
       {!!status?.excluded?.length && (
         <details className="duration-help">
           <summary>Previously removed repositories</summary>
@@ -667,7 +656,7 @@ export function GitHubSettings({
         <button onClick={onExisting}>Edit App credentials</button>
       </div>
       <details className="settings-step"><summary>Set up a different GitHub App</summary>
-        <p>Use this when moving to a different GitHub account or organization.</p>
+        <p>This replaces the workspace’s App credentials. To add an organization with the current App, use Add organization on Repositories.</p>
         <button onClick={onCreate}>Create another App</button>
       </details>
       <div className="settings-recovery">

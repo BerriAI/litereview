@@ -2,6 +2,7 @@
 
 import ast
 import re
+from collections import defaultdict
 
 import httpx
 from fastapi import HTTPException
@@ -51,20 +52,45 @@ async def marked_comments(run, suffix):
 
 
 async def write_comments(run, body, existing, state, key):
-    ids = state.get("comment_ids", [])
-    for index, part in enumerate(comment_parts(run, body)):
+    ids = list(state.get("comment_ids", []))
+    parts = comment_parts(run, body)
+    for index, part in enumerate(parts):
         marker = part.split("\n", 1)[0]
         comment_id = ids[index] if index < len(ids) else existing.get(marker, {}).get("id")
         if comment_id:
-            await request(run, "PATCH", f"issues/comments/{comment_id}", json={"body": part})
-        else:
+            try:
+                await request(run, "PATCH", f"issues/comments/{comment_id}", json={"body": part})
+            except github.GitHubError as exc:
+                if exc.upstream_status != 404:
+                    raise
+                if index == 0:
+                    state.pop("eyes_id", None)
+                    state.pop("eyes_requested", None)
+                comment_id = existing.get(marker, {}).get("id")
+                if comment_id == (ids[index] if index < len(ids) else None):
+                    comment_id = None
+                if comment_id:
+                    await request(run, "PATCH", f"issues/comments/{comment_id}", json={"body": part})
+        if not comment_id:
             comment_id = (
                 await request(run, "POST", f"issues/{run.pr}/comments", json={"body": part})
             ).json()["id"]
         if index == len(ids):
             ids.append(comment_id)
+        else:
+            ids[index] = comment_id
         state["comment_ids"] = ids
         save_state(key, state)
+    # Retain overflow slots for later reviews, but never leave an old verdict
+    # visible beneath a shorter replacement report.
+    for index, comment_id in enumerate(ids[len(parts):], len(parts)):
+        marker = parts[0].split("\n", 1)[0].removesuffix(" -->") + f":part:{index + 1} -->"
+        body = f"{marker}\n\nThis section is no longer needed. [View the latest review](https://github.com/{run.repo}/pull/{run.pr}#issuecomment-{ids[0]})."
+        try:
+            await request(run, "PATCH", f"issues/comments/{comment_id}", json={"body": body})
+        except github.GitHubError as exc:
+            if exc.upstream_status != 404:
+                raise
     return ids[0]
 
 
@@ -133,7 +159,7 @@ def finding_body(run, job, index, finding, parent_id):
             f"#### {md(finding['severity'].capitalize())} · {md(finding['title'])}",
             md(finding["explanation"]),
             *[md(item) for item in finding.get("evidence", [])],
-            f"[Review by {md(job.config['name'])}](https://github.com/{run.repo}/pull/{run.pr}#issuecomment-{parent_id}) · Reviewed `{run.head[:12]}`",
+            f"[Latest summary by {md(job.config['name'])}](https://github.com/{run.repo}/pull/{run.pr}#issuecomment-{parent_id}) · [View this review]({settings().public_url}/runs/{run.id}) · Reviewed `{run.head[:12]}`",
         ]
     )
 
@@ -201,45 +227,131 @@ async def publish_findings(run, job, parent_id, state, key, allowed):
     return links
 
 
-async def publish_agent(run, job, jobs, existing, newer, allowed):
-    key = f"job:{job.id}"
-    state = load_state(key)
-    if state.get("complete"):
+def summary_identity(run, job):
+    return review_sessions.session_id(run.repo, run.pr, job.config["agent_id"])
+
+
+def reviewer_runs(run, job):
+    return select(Run.id).join(Job, Job.run_id == Run.id).where(
+        Run.repo == run.repo, Run.pr == run.pr,
+        Job.config["agent_id"].as_string() == job.config["agent_id"],
+        Run.snapshot["reply"].as_string().is_(None),
+        Run.snapshot["harness_check"].as_boolean().is_not(True),
+        Job.config["fusion_parent_id"].as_string().is_(None),
+        Job.config["comparison_parent_id"].as_string().is_(None),
+    )
+
+
+def adopt_summary(run, job, existing, state):
+    if state.get("comment_ids"):
         return
-    terminal = job.status in TERMINAL
-    if not state.get("ready") or (not terminal and state.get("status") != job.status):
-        # Create the parent before its inline threads so every finding links back.
-        body = render_comment(run, [job], newer, agent_comment=True, all_jobs=jobs)
-        if terminal:
-            # Keep a compact parent until its linked threads are ready.
-            marker = body.split("\n", 1)[0]
-            title = next(line for line in body.splitlines() if line.startswith("### "))
-            body = f"{marker}\n\n{title}\n\nPublishing review results…"
-        parent_id = await write_comments(run, body, existing, state, key)
-        if not terminal:
-            await add_eyes(run, parent_id, state, key)
-        state["ready"] = True
-        state["status"] = job.status
-        save_state(key, state)
-    parent_id = state["comment_ids"][0]
-    if terminal:
-        tracing.finish_job(job, run)
-        links = await publish_findings(run, job, parent_id, state, key, allowed)
-        with Session() as db:
+    with Session() as db:
+        previous = db.execute(reviewer_runs(run, job).add_columns(Job.id)).all()
+    markers = {f"<!-- litereview:{rid}:job:{jid} -->" for rid, jid in previous}
+    markers.add(f"<!-- litereview:summary:{summary_identity(run, job)} -->")
+    candidates = [existing[m] for m in markers if m in existing]
+    if candidates:
+        first = min(candidates, key=lambda c: c["id"])
+        marker = first["body"].split("\n", 1)[0]
+        ids = [first["id"]]
+        while part := existing.get(marker.removesuffix(" -->") + f":part:{len(ids) + 1} -->"):
+            ids.append(part["id"])
+        state["comment_ids"] = ids
+        for _, jid in previous:
+            checkpoint = load_state(f"job:{jid}")
+            if checkpoint.get("comment_ids", [])[:1] == ids[:1]:
+                for field in ("eyes_id", "eyes_requested"):
+                    if field in checkpoint:
+                        state[field] = checkpoint[field]
+                break
+
+
+def summary_body(run, jobs, all_jobs, newer):
+    sections = [f"<!-- litereview:summary:{summary_identity(run, jobs[0])} -->"]
+    with Session() as db:
+        for job in jobs:
             decisions = {str(f.position): {"status": f.status, **f.decision} for f in db.scalars(
                 select(ReviewFinding).where(ReviewFinding.job_id == job.id))}
-        body = render_comment(run, [job], newer, agent_comment=True, all_jobs=jobs,
-                              finding_links=links, finding_decisions=decisions)
-        await write_comments(run, body, existing, state, key)
+            body = render_comment(run, [job], newer, agent_comment=True, all_jobs=all_jobs,
+                                  finding_links=load_state(f"job:{job.id}").get("findings"),
+                                  finding_decisions=decisions)
+            section, footer = body.split("\n", 1)[1].rsplit("\n---\n", 1)
+            sections.append(section.strip())
+    return "\n\n".join(sections) + "\n\n---\n" + footer
+
+
+async def retire_legacy_progress(run, job, checkpoint, parent_id):
+    ids = checkpoint.get("comment_ids", [])
+    if not ids or ids[0] == parent_id or checkpoint.get("complete"):
+        return
+    body = (f"This reviewer’s latest result is in its [summary](https://github.com/{run.repo}/pull/{run.pr}"
+            f"#issuecomment-{parent_id}). [View this run]({settings().public_url}/runs/{run.id}).")
+    for comment_id in ids:
+        try:
+            await request(run, "PATCH", f"issues/comments/{comment_id}", json={"body": body})
+        except github.GitHubError as exc:
+            if exc.upstream_status != 404:
+                raise
+    await remove_eyes(run, ids[0], checkpoint, f"job:{job.id}")
+
+
+async def publish_reviewer(run, jobs, all_jobs, existing, newer, allowed):
+    with Session() as db:
+        latest = db.scalar(reviewer_runs(run, jobs[0]).order_by(Run.created_at.desc(), Run.id.desc()).limit(1))
+    if latest != run.id:
+        # A delayed completion or old finding reply must not replace the latest summary.
+        summary_ids = load_state(f"summary:{summary_identity(run, jobs[0])}").get("comment_ids", [])
+        for job in jobs:
+            state = load_state(f"job:{job.id}")
+            if summary_ids:
+                await retire_legacy_progress(run, job, state, summary_ids[0])
+            save_state(f"job:{job.id}", {**state, "ready": True, "status": job.status,
+                                       "complete": job.status in TERMINAL})
+            if job.status in TERMINAL:
+                tracing.finish_job(job, run)
+        return
+    key = f"summary:{summary_identity(run, jobs[0])}"
+    state = load_state(key)
+    adopt_summary(run, jobs[0], existing, state)
+    state["run_id"] = run.id
+    parent_id = await write_comments(run, summary_body(run, jobs, all_jobs, newer), existing, state, key)
+    if any(job.status not in TERMINAL for job in jobs):
+        await add_eyes(run, parent_id, state, key)
+    errors = []
+    for job in jobs:
+        job_key = f"job:{job.id}"
+        checkpoint = load_state(job_key)
+        if checkpoint.get("complete"):
+            continue
+        await retire_legacy_progress(run, job, checkpoint, parent_id)
+        checkpoint["comment_ids"] = [parent_id]
+        save_state(job_key, checkpoint)
+        try:
+            if job.status in TERMINAL:
+                tracing.finish_job(job, run)
+                await publish_findings(run, job, parent_id, checkpoint, job_key, allowed)
+            checkpoint.update(ready=True, status=job.status)
+            save_state(job_key, checkpoint)
+        except (HTTPException, httpx.HTTPError) as exc:
+            errors.append(exc)
+    await write_comments(run, summary_body(run, jobs, all_jobs, newer), existing, state, key)
+    if all(job.status in TERMINAL for job in jobs):
         await remove_eyes(run, parent_id, state, key)
-        state["complete"] = True
-        save_state(key, state)
+    if errors:
+        raise errors[0]
+    for job in jobs:
+        if job.status in TERMINAL:
+            checkpoint = load_state(f"job:{job.id}")
+            save_state(f"job:{job.id}", {**checkpoint, "complete": True})
 
 
 async def publish_run(run_id):
     # Acquire before reading checkpoints or listing comments. A marker only
     # recovers a completed POST; it cannot stop two simultaneous POSTs.
-    with publication_lock(run_id) as acquired:
+    with Session() as db:
+        run = db.get(Run, run_id)
+        pr_key = f"pr:{run.repo.lower()}:{run.pr}"
+    with publication_lock(run_id, parent_run_id=pr_key) as acquired:
         if acquired:
             await _publish_run(run_id)
 
@@ -340,9 +452,14 @@ async def _publish_run(run_id):
                     newer = info["head"]["sha"] != run.head
                 allowed = diff_lines(run.snapshot.get("diff", ""))
                 errors = []
-                for job in pending:
+                reviewers = defaultdict(list)
+                for job in jobs:
+                    reviewers[job.config["agent_id"]].append(job)
+                for reviewer_jobs in reviewers.values():
+                    if not any(job in pending for job in reviewer_jobs):
+                        continue
                     try:
-                        await publish_agent(run, job, jobs, existing, newer, allowed)
+                        await publish_reviewer(run, reviewer_jobs, jobs, existing, newer, allowed)
                     except (HTTPException, httpx.HTTPError) as exc:
                         errors.append(exc)
                 if errors:
@@ -355,6 +472,7 @@ async def _publish_run(run_id):
                     links = [
                         f"- [{md(j.config['name'])}](https://github.com/{run.repo}/pull/{run.pr}#issuecomment-{load_state(f'job:{j.id}')['comment_ids'][0]})"
                         for j in jobs
+                        if load_state(f"job:{j.id}").get("comment_ids")
                     ]
                     await request(
                         run,

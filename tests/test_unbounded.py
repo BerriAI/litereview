@@ -387,9 +387,13 @@ async def test_multicomment_publication_recovers_a_lost_response(owner, monkeypa
         run = db.get(Run, run_id)
         assert run.published == 2
         jobs = db.scalars(select(Job).where(Job.run_id == run_id)).all()
+        from app.publication import summary_identity
+        state = db.get(ReviewPublication, f"summary:{summary_identity(run, jobs[0])}").data
+        parts = [next(c["body"] for c in comments if c["id"] == cid) for cid in state["comment_ids"]]
+        combined = "".join(part.split("\n", 1)[1] for part in parts)
+        assert combined.count("full result") == 40_000
+        assert "Run 1" in combined and "Run 2" in combined
+        assert all(len(part) <= reviews.GITHUB_COMMENT_CHARACTERS for part in parts)
         for job in jobs:
-            state = db.get(ReviewPublication, f"job:{job.id}").data
-            parts = [next(c["body"] for c in comments if c["id"] == cid) for cid in state["comment_ids"]]
-            expected = reviews.render_comment(run, [job], agent_comment=True, all_jobs=jobs)
-            marker = expected.split("\n", 1)[0]
-            assert "".join(part.split("\n", 1)[1] for part in parts) == expected.removeprefix(marker)
+            checkpoint = db.get(ReviewPublication, f"job:{job.id}").data
+            assert checkpoint["complete"] and checkpoint["comment_ids"] == state["comment_ids"][:1]

@@ -19,7 +19,7 @@ from sqlalchemy.orm import with_expression
 
 from runner.catalog import HARNESS_LABELS, HARNESS_VERSIONS, validate_connection
 
-from . import fusion, github, mcp_oauth, providers, reviews, tracing
+from . import feedback, fusion, github, mcp_oauth, providers, reviews, tracing
 from .access import bind_existing_people, initialize_access, people
 from .admins import router as admins_router
 from .agent_generation import router as agent_generation_router
@@ -120,6 +120,7 @@ app.include_router(mcp_oauth.router)
 app.include_router(agent_generation_router)
 app.include_router(mcp_server_auth_router)
 app.include_router(review_rules_router)
+app.include_router(feedback.router)
 
 
 @app.middleware("http")
@@ -1159,6 +1160,7 @@ def run_detail(run_id: str, user=Depends(require_user), compact: bool = False):
                 Artifact.job_id.in_([j.id for j in all_jobs]))):
             artifacts.setdefault(artifact.job_id, []).append({"id": artifact.id, "name": artifact.name})
         jobs = reviews.ordered_jobs(run, all_jobs)
+        ratings = feedback.mine(db, [job.id for job in jobs], user)
         show_spend = is_admin(user)
         costs = spend.job_costs(db, [j.id for j in all_jobs]) if show_spend else {}
         result = run_public(run)
@@ -1181,6 +1183,8 @@ def run_detail(run_id: str, user=Depends(require_user), compact: bool = False):
                 )
             }
             data["artifacts"] = artifacts.get(job.id, [])
+            data["feedback"] = ratings.get(job.id)
+            data["feedback_eligible"] = feedback.eligible(run, job)
             children = sorted([j for j in all_jobs if j.config.get("fusion_parent_id") == job.id],
                               key=lambda j: j.config.get("fusion_index", 0))
             data["branches"] = [{
