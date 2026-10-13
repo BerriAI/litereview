@@ -137,6 +137,7 @@ def expand(groups, resources):
             data["capabilities"] = review_capabilities(data.get("capabilities", []))
             data["harness"] = "codex"
             data["harness_version"] = HARNESS_VERSIONS[data["harness"]]
+            data["supports_finish_retry"] = True
             minutes = data.get("minimum_minutes", 0)
             data.update(timing_limits(minutes, data.get("maximum_minutes"), data.get("max_model_calls")))
             conn = resources.get(data["connection_id"])

@@ -1510,9 +1510,10 @@ async def finish(job_id: str, request: Request):
         if run.snapshot.get("reply") and result["status"] == "completed" and not result.get("rebuttal"):
             raise HTTPException(422, "A thread follow-up must submit its rebuttal verdict, reason and evidence.")
         from .previews import validate as validate_preview
-        from .review_rules import enforce_checks
+        from .review_rules import enforce_checks, validate_checks
         from .verdict import enforce_history
         validate_preview(db, job, result)
+        validate_checks(job.config, result)
         enforce_checks(job.config, result)
         enforce_history(job, result)
         minimum = job.config.get("minimum_review_seconds", 0)

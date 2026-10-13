@@ -62,6 +62,20 @@ def delete_rule(agent_id: str, rule_id: str):
     return change_rule(agent_id, rule_id, None)
 
 
+def validate_checks(config, result):
+    if not config.get("supports_finish_retry") or config.get("task") == "reply" or result["status"] != "completed":
+        return
+    reported = {check.get("rule_id") for check in result["checks"]}
+    missing = [rule["id"] for rule in config.get("rules", [])
+               if rule.get("enabled", True) and rule.get("required", True) and rule["id"] not in reported]
+    if missing:
+        raise HTTPException(422,
+            "Missing structured checks for required rules: " + ", ".join(missing) + ". "
+            "Add a checks entry with each exact rule_id, status and evidence in details, then submit again. "
+            "A rule mentioned in summary or check name does not supply rule_id. "
+            "If you could not verify a rule, use status=not_run and explain the actual gap; do not invent a pass.")
+
+
 def enforce_checks(config, result):
     if config.get("task") == "reply":
         return  # A finding reply assesses one finding, not every PR-wide rule.
