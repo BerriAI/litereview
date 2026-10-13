@@ -11,7 +11,15 @@ from sqlalchemy import select
 from . import github, review_sessions, tracing
 from .db import Job, ReviewFinding, ReviewPublication, Run, Session
 from .publication_lock import publication_lock
-from .reviews import GITHUB_COMMENT_CHARACTERS, TERMINAL, comment_parts, md, ordered_jobs, render_comment
+from .reviews import (
+    GITHUB_COMMENT_CHARACTERS,
+    TERMINAL,
+    comment_parts,
+    evidence_details,
+    md,
+    ordered_jobs,
+    render_comment,
+)
 from .settings import settings
 
 
@@ -158,7 +166,7 @@ def finding_body(run, job, index, finding, parent_id):
             f"<!-- litereview:{run.id}:job:{job.id}:finding:{index} -->",
             f"#### {md(finding['severity'].capitalize())} · {md(finding['title'])}",
             md(finding["explanation"]),
-            *[md(item) for item in finding.get("evidence", [])],
+            *([evidence_details(finding["evidence"])] if finding.get("evidence") else []),
             f"[Latest summary by {md(job.config['name'])}](https://github.com/{run.repo}/pull/{run.pr}#issuecomment-{parent_id}) · [View this review]({settings().public_url}/runs/{run.id}) · Reviewed `{run.head[:12]}`",
         ]
     )

@@ -118,6 +118,9 @@ async def test_agents_finish_independently_and_eyes_are_removed(publication):
     assert f"#discussion_r{fake.threads[0]['id']}" in completed["body"]
     assert "stale entry" not in completed["body"]
     assert "stale entry" in fake.threads[0]["body"] and "Reproduced" in fake.threads[0]["body"]
+    body = fake.threads[0]["body"]
+    assert body.index("stale entry") < body.index("<details>") < body.index("Reproduced") < body.index("</details>")
+    assert "<summary>Evidence</summary>" in body and "<details open" not in body
     assert f"#issuecomment-{completed['id']}" in fake.threads[0]["body"]
     assert {k: fake.threads[0][k] for k in ("commit_id", "path", "line", "side")} == {
         "commit_id": "a" * 40,
@@ -189,6 +192,7 @@ async def test_unanchored_and_oversized_findings_are_preserved(publication, find
     assert not fake.threads
     body = "".join(c["body"].split("\n", 1)[1] for c in fake.comments)
     assert finding["explanation"] in body and FINDING["evidence"][0] in body
+    assert "<summary>Evidence</summary>" in body
     assert all(len(c["body"]) <= reviews.GITHUB_COMMENT_CHARACTERS for c in fake.comments)
 
 

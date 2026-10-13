@@ -370,6 +370,13 @@ def md(value):
     return "".join(lines)
 
 
+def evidence_details(items):
+    if not items:
+        return ""
+    return "\n\n".join(["<details>\n<summary>Evidence</summary>",
+                         *[md(item) for item in items], "</details>"])
+
+
 def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None, finding_links=None,
                    finding_decisions=None):
     if run.status == "rejected":
@@ -446,8 +453,8 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
                 md(finding["explanation"]),
                 "",
             ]
-            for evidence in finding.get("evidence", []):
-                visible += [md(evidence), ""]
+            if evidence := evidence_details(finding.get("evidence", [])):
+                visible += [evidence, ""]
         if result.get("limitations"):
             visible += ["**Couldn’t complete**", ""]
             visible += [f"- {md(limit)}" for limit in result["limitations"]]
