@@ -17,6 +17,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
+from .diagnostics import ReviewError
 from .tools import definitions
 
 
@@ -38,6 +39,7 @@ class Bridge:
         self.finished = asyncio.Event()
         self.result = None
         self.model_error = None
+        self.submission_error = None
         # Native command execution is supplied by the harness; never offer two terminals.
         self.definitions = {
             "lr_" + item["function"]["name"]: item["function"]
@@ -61,7 +63,12 @@ class Bridge:
                 if self.cfg.get("minimum_review_seconds"):
                     self.tools.clock.require_elapsed()
                 self.result = {**arguments, "status": "completed"}
-                await self.relay("finish", self.result)
+                try:
+                    await self.relay("finish", self.result)
+                except Exception as exc:
+                    self.submission_error = exc
+                    raise
+                self.submission_error = None
                 self.finished.set()
                 return content_blocks({"submitted": True})
             return content_blocks(await self.tools.execute(name.removeprefix("lr_"), arguments))
@@ -100,20 +107,14 @@ class Bridge:
                 ),
                 stream=True,
             )
-        except httpx.HTTPError:
-            self.model_error = "The harness could not reach the model relay."
+        except httpx.HTTPError as exc:
+            self.model_error = ReviewError(
+                f"The harness could not reach the model relay ({type(exc).__name__}).", stage="model request")
             return JSONResponse({"error": {"message": "Model relay unavailable."}}, status_code=502)
         if not upstream.is_success:
-            self.model_error = (
-                "The model endpoint rejected the request (HTTP "
-                + str(upstream.status_code)
-                + "). "
-                + (
-                    "Check provider credits and rate limits."
-                    if upstream.status_code == 429
-                    else "Check the selected model, credentials, and harness compatibility."
-                )
-            )
+            self.model_error = ReviewError(
+                f"The model request failed (HTTP {upstream.status_code}).",
+                stage="model request", http_status=upstream.status_code)
         else:
             self.model_error = None
 
@@ -121,6 +122,10 @@ class Bridge:
             try:
                 async for chunk in upstream.aiter_bytes():
                     yield chunk
+            except httpx.HTTPError as exc:
+                self.model_error = ReviewError(
+                    f"The model response stream was interrupted ({type(exc).__name__}).", stage="model response")
+                raise
             finally:
                 await upstream.aclose()
 

@@ -8,6 +8,7 @@ import modal
 from sqlalchemy import update
 
 from runner.catalog import HARNESS_VERSIONS, NPM_PACKAGES, validate_connection
+from runner.diagnostics import parse
 
 from .db import Job, Session
 from .limits import SANDBOX_MAX_SECONDS, job_timeout
@@ -173,22 +174,65 @@ async def launch(job_id, token):
             await terminate(sandbox.object_id)
 
 
+async def sandbox_failure(sandbox):
+    """Read retained entrypoint logs, including when the worker's callback failed."""
+    records = []
+    submission_failed = False
+    log_error = None
+    try:
+        # stdout.read() can wait forever for EOF on an exited sandbox. Retained
+        # logs have a finite query, with a deadline if Modal itself is unavailable.
+        async with asyncio.timeout(10):
+            async for entry in sandbox.logs.tail.aio(30, source="stdout"):
+                for line in entry.message.splitlines():
+                    if record := parse(line):
+                        records.append(record)
+                    elif line == "Unable to submit result; the service will mark this job incomplete.":
+                        submission_failed = True  # Workers started before structured diagnostics.
+    except Exception as exc:
+        log_error = f"Sandbox diagnostics could not be read ({type(exc).__name__})."
+    code = getattr(sandbox, "returncode", None)
+    exit_message = f"Sandbox exit code: {code}." if code is not None else "Sandbox exit code was not available."
+    if records:
+        failed = next((r for r in reversed(records) if r["kind"] == "failure"), records[-1])
+        summary = ("The worker could not submit its review result." if failed["stage"] == "result submission"
+                   else f"The review stopped during {failed['stage']}.")
+        limitations = [r["message"] for r in records]
+        limitations.extend(f"Review harness exit code: {r['exit_code']}." for r in records
+                           if isinstance(r.get("exit_code"), int))
+        if any(r["kind"] == "submission_failed" for r in records):
+            limitations.append("Saving the failure report also failed; these details were recovered from Modal.")
+        status = "timed_out" if failed["error_type"] == "TimeoutError" else "failed"
+    else:
+        summary = ("The worker could not submit its result." if submission_failed
+                   else "The sandbox exited without a saved review result.")
+        limitations = ["The worker did not record the underlying error."]
+        status = "failed"
+    limitations.append(exit_message)
+    if log_error:
+        limitations.append(log_error)
+    return {"status": status, "summary": summary, "findings": [],
+            "limitations": list(dict.fromkeys(limitations))}
+
+
 async def watch(job_id, sandbox):
     """Observe actual sandbox exit, including after the API restarts."""
     try:
         await sandbox.wait.aio()
         with Session() as db:
             job = db.get(Job, job_id)
-            if job.status not in ("completed", "failed", "timed_out", "cancelling", "superseded"):
-                job.status = "failed"
+            if not job or job.status not in ("starting", "running"):
+                return
+        result = await sandbox_failure(sandbox)
+        with Session.begin() as db:
+            # A delayed finish callback or cancellation can arrive while logs load.
+            job = db.get(Job, job_id, with_for_update=True)
+            if job and job.status in ("starting", "running"):
+                job.status = result["status"]
                 job.finished_at = time.time()
-                job.result = {
-                    "status": "failed",
-                    "summary": "The sandbox exited before submitting its review.",
-                    "findings": [],
-                    "limitations": ["Check PUBLIC_URL connectivity and the Modal sandbox logs."],
-                }
-                db.commit()
+                job.result = result
+                job.logs = job.logs + [{"time": job.finished_at, "message": message}
+                                       for message in [result["summary"], *result["limitations"]]]
     except modal.exception.SandboxTerminatedError:
         with Session.begin() as db:
             job = db.get(Job, job_id)

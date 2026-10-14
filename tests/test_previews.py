@@ -50,6 +50,28 @@ def test_preview_requires_auth_and_reports_current_head_and_history(owner, monke
     assert owner.get(f"/api/previews/{SID}").status_code == 401
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+def test_regular_review_cannot_publish_a_hosted_preview(owner, explicit):
+    from app.previews import url
+    from app.schemas import Agent
+
+    assert Agent(name="reviewer", connection_id="c", model="m", instructions="Review").output_type == "review"
+    seed(output_type="review")
+    with Session.begin() as db:
+        job = db.get(Job, "preview-job")
+        if not explicit:
+            job.config = {key: value for key, value in job.config.items() if key != "output_type"}
+        assert url(job) is None
+        finish_tool = next(t["function"] for t in definitions(job.config)
+                           if t["function"]["name"] == "finish_review")
+        assert "preview" not in finish_tool["parameters"]["properties"]
+    result = {"status": "completed", "summary": "Normal code review", "findings": [], "preview": DOC}
+    assert owner.post("/api/internal/jobs/preview-job/finish", headers=AUTH, json=result).status_code == 200
+    with Session() as db:
+        assert "preview" not in db.get(Job, "preview-job").result
+    assert owner.get(f"/api/previews/{SID}").status_code == 404
+
+
 def test_finished_preview_accepts_only_own_or_branch_media_and_can_retry(owner):
     seed()
     with Session.begin() as db:

@@ -10,6 +10,7 @@ from tempfile import TemporaryFile
 
 from .bridge import Bridge
 from .catalog import HARNESS_LABELS, HARNESS_VERSIONS
+from .diagnostics import ReviewError
 
 ROOT = Path("/opt/litereview")
 STATE = Path("/workspace/litereview-run")
@@ -170,14 +171,15 @@ async def run_external(tools, relay, data, system, prompt):
                         )
                         await relay.event("Continuing review in the same harness session")
                         continue
-                    print(
-                        "Harness diagnostic:\n" + (STATE / "harness.log").read_text(errors="replace"),
-                        flush=True,
-                    )
-                    raise RuntimeError(
-                        bridge.model_error
-                        or f"{HARNESS_LABELS[harness]} exited without submitting a review (exit {process.returncode}). Check the harness/model combination and run logs."
-                    )
+                    # Full transcripts can bury the actual error in Modal's log
+                    # truncation and expose PR contents. The worker logs a small
+                    # structured failure instead; the transcript stays on disk.
+                    error = bridge.model_error or bridge.submission_error or ReviewError(
+                        f"{HARNESS_LABELS[harness]} exited without submitting a review (exit {process.returncode}).",
+                        stage="review harness", exit_code=process.returncode)
+                    if isinstance(error, ReviewError):
+                        error.exit_code = process.returncode
+                    raise error
             finally:
                 if process.returncode is None:
                     with suppress(ProcessLookupError):
