@@ -105,15 +105,19 @@ def publication(owner, monkeypatch):
 
 async def test_agents_finish_independently_and_eyes_are_removed(publication):
     fake = publication
+    with Session.begin() as db:
+        jobs = db.scalars(select(Job).where(Job.run_id == fake.run_id).order_by(Job.id)).all()
+        jobs[1].config = {**jobs[1].config, "agent_id": "other-reviewer", "name": "other-reviewer"}
+        second_id = jobs[1].id
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 1 and len(fake.reactions) == 2
-    assert all("### 👀 reviewer" in c["body"] for c in fake.comments)
+    assert not fake.comments and len(fake.reactions) == 1
+    assert list(fake.reactions) == ["issues/comments/12345/reactions"]
     calls = len(fake.calls)
     await reviews.publish(fake.run_id)
     assert len(fake.calls) == calls  # Polls without transitions do not call GitHub.
     finish(fake.run_id, one=True, findings=[FINDING])
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 1 and len(fake.threads) == 1 and len(fake.reactions) == 2
+    assert len(fake.comments) == 1 and len(fake.threads) == 1 and len(fake.reactions) == 1
     completed = next(c for c in fake.comments if "### ✅" in c["body"])
     assert f"#discussion_r{fake.threads[0]['id']}" in completed["body"]
     assert "stale entry" not in completed["body"]
@@ -130,10 +134,13 @@ async def test_agents_finish_independently_and_eyes_are_removed(publication):
     }
     with Session() as db:
         assert db.get(Run, fake.run_id).status == "running"
-    finish(fake.run_id, "failed")
+    with Session.begin() as db:
+        job = db.get(Job, second_id)
+        job.status = "failed"
+        job.result = {"summary": "Could not finish.", "findings": [], "limitations": []}
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 1 and not fake.reactions
-    assert any("### ⚠️ reviewer" in c["body"] for c in fake.comments)
+    assert len(fake.comments) == 2 and not fake.reactions
+    assert any("### ⚠️ other-reviewer" in c["body"] for c in fake.comments)
     assert any("Review incomplete." in c["body"] for c in fake.comments)
     calls = len(fake.calls)
     await reviews.publish(fake.run_id)
@@ -148,8 +155,8 @@ async def test_lost_responses_recover_without_duplicates(publication, monkeypatc
     fake = publication
     if effect == "remove_eyes":
         await reviews.publish(fake.run_id)
-    if effect in ("thread", "remove_eyes"):
-        finish(fake.run_id, findings=[FINDING])
+    if effect != "eyes":
+        finish(fake.run_id, findings=[FINDING] if effect != "parent" else [])
     lost = False
 
     async def request(*args, **kwargs):
@@ -171,9 +178,9 @@ async def test_lost_responses_recover_without_duplicates(publication, monkeypatc
     with pytest.raises(httpx.ReadTimeout):
         await reviews.publish(fake.run_id)
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 1
+    assert len(fake.comments) == (0 if effect == "eyes" else 1)
     assert len(fake.threads) == (2 if effect in ("thread", "remove_eyes") else 0)
-    assert len(fake.reactions) == (0 if effect in ("thread", "remove_eyes") else 2)
+    assert len(fake.reactions) == (1 if effect == "eyes" else 0)
 
 
 @pytest.mark.parametrize(
@@ -333,8 +340,7 @@ def test_findings_and_incomplete_coverage_stay_visible():
     assert "@all" not in body and "<script>" not in body
 
 
-@pytest.mark.parametrize("target", ["trigger", "agent"])
-async def test_completion_between_lost_eyes_response_and_retry(publication, monkeypatch, target):
+async def test_completion_between_lost_eyes_response_and_retry(publication, monkeypatch):
     fake = publication
     lost = False
 
@@ -342,8 +348,7 @@ async def test_completion_between_lost_eyes_response_and_retry(publication, monk
         nonlocal lost
         response = await fake.request(*args, **kwargs)
         suffix = args[3]
-        is_target = (suffix == "issues/comments/12345/reactions") == (target == "trigger")
-        if not lost and args[2] == "POST" and suffix.endswith("/reactions") and is_target:
+        if not lost and args[2] == "POST" and suffix == "issues/comments/12345/reactions":
             lost = True
             raise httpx.ReadTimeout("Lost reaction response")
         return response
@@ -358,7 +363,7 @@ async def test_completion_between_lost_eyes_response_and_retry(publication, monk
 
 async def test_retry_scans_all_pages_and_ignores_user_markers(publication):
     fake = publication
-    first_id = finish(fake.run_id, one=True, findings=[FINDING])
+    first_id = finish(fake.run_id, findings=[FINDING])
     marker = f"<!-- litereview:{fake.run_id}:job:{first_id} -->"
     fake.comments = [{"id": i, "body": marker, "user": {"type": "User"}} for i in range(100)]
     fake.comments.append({"id": 999, "body": marker, "user": {"type": "Bot"}})
@@ -393,9 +398,7 @@ async def test_overlapping_publishers_do_not_duplicate_comments_or_threads(
     publication, monkeypatch, terminal
 ):
     fake = publication
-    if terminal:
-        await reviews.publish(fake.run_id)
-        finish(fake.run_id, findings=[FINDING])
+    finish(fake.run_id, findings=[FINDING] if terminal else [])
     entered, release = asyncio.Event(), asyncio.Event()
     first_post = True
 
@@ -424,6 +427,7 @@ async def test_overlapping_publishers_do_not_duplicate_comments_or_threads(
 
 async def test_cancelled_publisher_releases_lock_and_recovers_post(publication, monkeypatch):
     fake = publication
+    finish(fake.run_id)
     posted = asyncio.Event()
 
     async def request(*args, **kwargs):
@@ -482,27 +486,26 @@ def test_publication_lock_excludes_another_process_and_releases_on_exit(client):
         time.sleep(0.02)
 
 
-async def test_waiting_comment_updates_when_sandbox_starts(publication):
+async def test_active_reviews_only_react_to_the_request(publication):
     fake = publication
     with Session.begin() as db:
         jobs = db.scalars(select(Job).where(Job.run_id == fake.run_id)).all()
         for job in jobs:
             job.status = 'blocked'
     await reviews.publish(fake.run_id)
-    assert all('Waiting for this agent' in c['body'] for c in fake.comments)
+    assert not fake.comments and not fake.threads
+    assert len(fake.reactions) == 1
+    calls = list(fake.calls)
     with Session() as db:
         assert db.get(Run, fake.run_id).status == 'queued'
-    for status, message in [('queued', 'Waiting to start.'), ('starting', 'Preparing the review sandbox.'),
-                            ('running', 'Review in progress.')]:
+    for status in ['queued', 'starting', 'running', 'waiting', 'cancelling', 'running']:
         with Session.begin() as db:
             for job in db.scalars(select(Job).where(Job.run_id == fake.run_id)):
                 job.status = status
         await reviews.publish(fake.run_id)
-        assert len(fake.comments) == 1
-        assert all(message in c['body'] for c in fake.comments)
-        calls = len(fake.calls)
+        assert not fake.comments and not fake.threads
         await reviews.publish(fake.run_id)
-        assert len(fake.calls) == calls
+        assert fake.calls == calls
     with Session() as db:
         assert db.get(Run, fake.run_id).status == 'running'
 
@@ -512,13 +515,15 @@ async def test_reruns_reuse_first_summary_and_keep_inline_findings(publication):
     finish(fake.run_id, findings=[FINDING])
     await reviews.publish(fake.run_id)
     original_id = fake.comments[0]["id"]
+    original_body = fake.comments[0]["body"]
     threads = [dict(c) for c in fake.threads]
     fake.head = "c" * 40
     newer = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "new-review")
     await reviews.publish(newer)
     assert len(fake.comments) == 1 and fake.comments[0]["id"] == original_id
     body = fake.comments[0]["body"]
-    assert newer in body and "Updating for" in body and "Last completed review" in body
+    assert body == original_body
+    assert newer not in body
     assert FINDING["title"] in body and "Checked the changed paths." in body
     assert "Review in progress" not in body and "### 👀" not in body
     finish(newer, findings=[{**FINDING, "title": "New finding"}])
@@ -529,7 +534,7 @@ async def test_reruns_reuse_first_summary_and_keep_inline_findings(publication):
     assert not fake.reactions
 
 
-async def test_fusion_progress_refreshes_summary_when_a_branch_finishes(publication):
+async def test_fusion_only_publishes_the_finished_review(publication):
     fake = publication
     with Session.begin() as db:
         parent = db.scalar(select(Job).where(Job.run_id == fake.run_id))
@@ -541,24 +546,38 @@ async def test_fusion_progress_refreshes_summary_when_a_branch_finishes(publicat
                 **parent.config, "fusion_parent_id": pid, "fusion_index": index,
                 "fusion_stage": "branch", "fusion_role": role}))
     await reviews.publish(fake.run_id)
-    comment_id = fake.comments[0]["id"]
-    assert "Correctness: reviewing" in fake.comments[0]["body"]
+    assert not fake.comments
+    calls = list(fake.calls)
     with Session.begin() as db:
         db.get(Job, "progress-0").status = "completed"
     await reviews.publish(fake.run_id)
-    assert fake.comments[0]["id"] == comment_id
-    assert "1 of 2 specialists completed" in fake.comments[0]["body"]
-    assert "UI drift: reviewing" in fake.comments[0]["body"]
-    calls = len(fake.calls)
+    assert not fake.comments
     await reviews.publish(fake.run_id)
-    assert len(fake.calls) == calls
+    assert fake.calls == calls
     with Session.begin() as db:
         db.get(Job, "progress-1").status = "completed"
         db.get(Job, "progress-1").result = {"skipped": True}
         db.get(Job, pid).status = "running"
     await reviews.publish(fake.run_id)
-    assert "1 skipped" in fake.comments[0]["body"]
-    assert "Final reviewer is checking" in fake.comments[0]["body"]
+    assert not fake.comments and fake.calls == calls
+    finish(fake.run_id)
+    await reviews.publish(fake.run_id)
+    assert len(fake.comments) == 1 and "### ✅ reviewer" in fake.comments[0]["body"]
+    assert "specialists completed" not in fake.comments[0]["body"]
+    assert not fake.reactions
+
+
+async def test_repeated_instances_wait_for_the_whole_reviewer(publication):
+    fake = publication
+    await reviews.publish(fake.run_id)
+    calls = list(fake.calls)
+    finish(fake.run_id, one=True, findings=[FINDING])
+    await reviews.publish(fake.run_id)
+    assert not fake.comments and not fake.threads and fake.calls == calls
+    finish(fake.run_id, findings=[FINDING])
+    await reviews.publish(fake.run_id)
+    assert len(fake.comments) == 1 and len(fake.threads) == 2
+    assert not fake.reactions
 
 
 async def test_adopts_legacy_progress_and_retires_other_instance_comments(publication):
@@ -590,6 +609,7 @@ async def test_older_completion_or_reply_cannot_replace_newer_summary(publicatio
     from app.db import ReviewPublication
 
     fake = publication
+    finish(fake.run_id)
     await reviews.publish(fake.run_id)
     fake.head = "c" * 40
     newer = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "new-head")
@@ -614,6 +634,7 @@ async def test_deleted_summary_is_recreated_once(publication, monkeypatch, lost_
     await reviews.publish(fake.run_id)
     removed = fake.comments.pop()["id"]
     newer = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "rerun")
+    finish(newer)
     lost = False
 
     async def request(*args, **kwargs):
@@ -652,6 +673,7 @@ async def test_shorter_rerun_clears_outdated_overflow(publication):
 
 async def test_different_run_publishers_share_the_pr_lock(publication, monkeypatch):
     fake = publication
+    finish(fake.run_id)
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def request(*args, **kwargs):
@@ -664,8 +686,8 @@ async def test_different_run_publishers_share_the_pr_lock(publication, monkeypat
     first = asyncio.create_task(reviews.publish(fake.run_id))
     try:
         await asyncio.wait_for(entered.wait(), 2)
-        finish(fake.run_id)
         newer = await reviews.accept(payload(body="@litereview reviewer", comment_id=2), "concurrent-rerun")
+        finish(newer)
         await asyncio.wait_for(reviews.publish(newer), 2)
         assert not fake.comments
     finally:

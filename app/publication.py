@@ -1,4 +1,4 @@
-"""Incremental GitHub publication, checkpointed after each external side effect."""
+"""Publish finished reviews to GitHub, checkpointing each external side effect."""
 
 import ast
 import re
@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import case, select
 from sqlalchemy.orm import defer, with_expression
 
-from . import fusion, github, review_sessions, tracing
+from . import github, review_sessions, tracing
 from .db import Job, ReviewFinding, ReviewPublication, Run, Session, job_metadata, run_metadata
 from .publication_lock import publication_lock
 from .reviews import (
@@ -279,29 +279,13 @@ def summary_body(run, jobs, all_jobs, newer):
     sections = [f"<!-- litereview:summary:{summary_identity(run, jobs[0])} -->"]
     with Session() as db:
         for job in jobs:
-            displayed_run, displayed_job = run, job
-            if job.status not in TERMINAL:
-                previous = db.execute(select(Run, Job).join(Job, Job.run_id == Run.id).where(
-                    Run.id.in_(reviewer_runs(run, job)), Run.created_at < run.created_at,
-                    job_metadata["agent_id"].as_string() == job.config["agent_id"],
-                    job_metadata["instance"].as_integer() == job.config.get("instance", 1),
-                    job_metadata["fusion_parent_id"].as_string().is_(None),
-                    job_metadata["comparison_parent_id"].as_string().is_(None), Job.status == "completed",
-                ).order_by(Run.created_at.desc()).limit(1)).first()
-                if previous:
-                    displayed_run, displayed_job = previous
             decisions = {str(f.position): {"status": f.status, **f.decision} for f in db.scalars(
-                select(ReviewFinding).where(ReviewFinding.job_id == displayed_job.id))}
-            body = render_comment(displayed_run, [displayed_job], newer and displayed_run.id == run.id,
-                                  agent_comment=True, all_jobs=all_jobs if displayed_run.id == run.id else None,
-                                  finding_links=load_state(f"job:{displayed_job.id}").get("findings"),
+                select(ReviewFinding).where(ReviewFinding.job_id == job.id))}
+            body = render_comment(run, [job], newer,
+                                  agent_comment=True, all_jobs=all_jobs,
+                                  finding_links=load_state(f"job:{job.id}").get("findings"),
                                   finding_decisions=decisions)
             section, footer = body.split("\n", 1)[1].rsplit("\n---\n", 1)
-            if displayed_run.id != run.id:
-                note = fusion.progress(job, all_jobs) or {"blocked": "Waiting for this agent's current work.",
-                    "queued": "Queued.", "starting": "Starting.", "cancelling": "Stopping for a newer commit."}.get(job.status, "Checking the changes.")
-                section = (f"> Updating for `{run.head[:12]}` · [View current run]({settings().public_url}/runs/{run.id}). {md(note)}\n\n"
-                           f"Last completed review · `{displayed_run.head[:12]}`\n\n" + section.strip())
             sections.append(section.strip())
     return "\n\n".join(sections) + "\n\n---\n" + footer
 
@@ -322,6 +306,8 @@ async def retire_legacy_progress(run, job, checkpoint, parent_id):
 
 
 async def publish_reviewer(run, jobs, all_jobs, existing, newer, allowed):
+    if not jobs or any(job.status not in TERMINAL for job in jobs):
+        return
     with Session() as db:
         latest = db.scalar(reviewer_runs(run, jobs[0]).order_by(Run.created_at.desc(), Run.id.desc()).limit(1))
     if latest != run.id:
@@ -341,8 +327,6 @@ async def publish_reviewer(run, jobs, all_jobs, existing, newer, allowed):
     adopt_summary(run, jobs[0], existing, state)
     state["run_id"] = run.id
     parent_id = await write_comments(run, summary_body(run, jobs, all_jobs, newer), existing, state, key)
-    if any(job.status not in TERMINAL for job in jobs):
-        await add_eyes(run, parent_id, state, key)
     errors = []
     for job in jobs:
         job_key = f"job:{job.id}"
@@ -353,22 +337,19 @@ async def publish_reviewer(run, jobs, all_jobs, existing, newer, allowed):
         checkpoint["comment_ids"] = [parent_id]
         save_state(job_key, checkpoint)
         try:
-            if job.status in TERMINAL:
-                tracing.finish_job(job, run)
-                await publish_findings(run, job, parent_id, checkpoint, job_key, allowed)
-            checkpoint.update(ready=True, status=job.status, progress=fusion.progress(job, all_jobs))
+            tracing.finish_job(job, run)
+            await publish_findings(run, job, parent_id, checkpoint, job_key, allowed)
+            checkpoint.update(ready=True, status=job.status)
             save_state(job_key, checkpoint)
         except (HTTPException, httpx.HTTPError) as exc:
             errors.append(exc)
     await write_comments(run, summary_body(run, jobs, all_jobs, newer), existing, state, key)
-    if all(job.status in TERMINAL for job in jobs):
-        await remove_eyes(run, parent_id, state, key)
+    await remove_eyes(run, parent_id, state, key)
     if errors:
         raise errors[0]
     for job in jobs:
-        if job.status in TERMINAL:
-            checkpoint = load_state(f"job:{job.id}")
-            save_state(f"job:{job.id}", {**checkpoint, "complete": True})
+        checkpoint = load_state(f"job:{job.id}")
+        save_state(f"job:{job.id}", {**checkpoint, "complete": True})
 
 
 async def publish_run(run_id):
@@ -474,28 +455,21 @@ async def _publish_run(run_id):
                             raise
                 state["acknowledged"] = True
                 save_state(key, state)
-            pending = [
-                j
-                for j in jobs
-                if not load_state(f"job:{j.id}").get("complete")
-                and (j.status in TERMINAL or not load_state(f"job:{j.id}").get("ready")
-                     or load_state(f"job:{j.id}").get("status") != j.status
-                     or load_state(f"job:{j.id}").get("progress") != fusion.progress(j, all_jobs))
-            ]
+            reviewers = defaultdict(list)
+            for job in jobs:
+                reviewers[job.config["agent_id"]].append(job)
+            # Keep the last finished summary untouched until this reviewer is
+            # done. Fusion branches and repeated instances do not post progress.
+            pending = [reviewer_jobs for reviewer_jobs in reviewers.values()
+                       if all(j.status in TERMINAL for j in reviewer_jobs)
+                       and any(not load_state(f"job:{j.id}").get("complete") for j in reviewer_jobs)]
             if pending:
                 existing = await marked_comments(run, f"issues/{run.pr}/comments")
-                newer = False
-                if any(j.status in TERMINAL for j in pending):
-                    info = (await request(run, "GET", f"pulls/{run.pr}")).json()
-                    newer = info["head"]["sha"] != run.head
+                info = (await request(run, "GET", f"pulls/{run.pr}")).json()
+                newer = info["head"]["sha"] != run.head
                 allowed = diff_lines(run.snapshot.get("diff", ""))
                 errors = []
-                reviewers = defaultdict(list)
-                for job in jobs:
-                    reviewers[job.config["agent_id"]].append(job)
-                for reviewer_jobs in reviewers.values():
-                    if not any(job in pending for job in reviewer_jobs):
-                        continue
+                for reviewer_jobs in pending:
                     try:
                         await publish_reviewer(run, reviewer_jobs, all_jobs, existing, newer, allowed)
                     except (HTTPException, httpx.HTTPError) as exc:
