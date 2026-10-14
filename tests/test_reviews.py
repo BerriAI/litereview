@@ -372,7 +372,7 @@ def test_duplicate_comment_publication_recovers_existing_comment(owner, monkeypa
     calls = []
 
     async def request(repo, installation, method, suffix, **kwargs):
-        calls.append(method)
+        calls.append((method, suffix))
         if suffix.startswith("pulls/"):
             return httpx.Response(200, json={"head": {"sha": "a" * 40}})
         if method == "GET":
@@ -384,8 +384,9 @@ def test_duplicate_comment_publication_recovers_existing_comment(owner, monkeypa
 
     monkeypatch.setattr(github, "repo_request", request)
     asyncio.run(reviews.publish(run_id))
-    assert "POST" not in calls
-    assert calls.count("PATCH") == 2  # Both instances update their reviewer's shared summary.
+    assert ("POST", "issues/1/comments") not in calls
+    assert sum(method == "PATCH" for method, _ in calls) == 3  # Update summary; retire duplicate.
+    assert ("POST", "issues/comments/12345/reactions") in calls
 
 
 def test_model_connection_snapshot_is_immutable(owner, monkeypatch):

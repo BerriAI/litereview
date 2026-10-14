@@ -133,6 +133,19 @@ async def remove_eyes(run, comment_id, state, key):
     save_state(key, state)
 
 
+async def add_thumbs_up(run, comment_id, state, key):
+    if state.get("completed_reaction"):
+        return
+    try:
+        # GitHub returns the existing reaction if the response was lost.
+        await request(run, "POST", f"issues/comments/{comment_id}/reactions", json={"content": "+1"})
+    except github.GitHubError as exc:
+        if exc.upstream_status != 404:  # The author may have deleted their request.
+            raise
+    state["completed_reaction"] = True
+    save_state(key, state)
+
+
 def diff_lines(diff):
     """Return right-side lines in the captured diff, including context lines."""
     allowed, path, number, remaining = {}, None, 0, 0
@@ -305,6 +318,26 @@ async def retire_legacy_progress(run, job, checkpoint, parent_id):
     await remove_eyes(run, ids[0], checkpoint, f"job:{job.id}")
 
 
+async def retire_legacy_summaries(run, job, existing, parent_ids):
+    """Point old per-run reports at the single current reviewer summary."""
+    with Session() as db:
+        previous = db.execute(reviewer_runs(run, job).add_columns(Job.id)).all()
+    for run_id, job_id in previous:
+        prefix = f"<!-- litereview:{run_id}:job:{job_id}"
+        for marker, comment in existing.items():
+            if comment["id"] in parent_ids or not (marker == prefix + " -->" or marker.startswith(prefix + ":part:")):
+                continue
+            body = (f"{marker}\n\n[View the latest {md(job.config['name'])} review]"
+                    f"(https://github.com/{run.repo}/pull/{run.pr}#issuecomment-{parent_ids[0]}). "
+                    f"[Earlier run]({settings().public_url}/runs/{run_id}).")
+            if comment["body"] != body:
+                try:
+                    await request(run, "PATCH", f"issues/comments/{comment['id']}", json={"body": body})
+                except github.GitHubError as exc:
+                    if exc.upstream_status != 404:
+                        raise
+
+
 async def publish_reviewer(run, jobs, all_jobs, existing, newer, allowed):
     if not jobs or any(job.status not in TERMINAL for job in jobs):
         return
@@ -347,6 +380,7 @@ async def publish_reviewer(run, jobs, all_jobs, existing, newer, allowed):
     await remove_eyes(run, parent_id, state, key)
     if errors:
         raise errors[0]
+    await retire_legacy_summaries(run, jobs[0], existing, state["comment_ids"])
     for job in jobs:
         checkpoint = load_state(f"job:{job.id}")
         save_state(f"job:{job.id}", {**checkpoint, "complete": True})
@@ -492,6 +526,8 @@ async def _publish_run(run_id):
                         f"issues/comments/{run.comment_id}",
                         json={"body": "### ✅ Reviews finished\n\n" + "\n".join(links)},
                     )
+                if trigger and status == "completed":
+                    await add_thumbs_up(run, trigger, state, key)
     with Session.begin() as db:
         saved = db.get(Run, run_id)
         saved.comment_id = run.comment_id

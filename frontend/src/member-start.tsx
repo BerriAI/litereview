@@ -18,6 +18,7 @@ export function MemberStart({
   githubConfigured,
   navigate,
   onLogout,
+  onDisconnectGithub,
 }: {
   user: any;
   account: boolean;
@@ -27,6 +28,7 @@ export function MemberStart({
   githubConfigured: boolean;
   navigate: (path: string) => void;
   onLogout: () => void;
+  onDisconnectGithub: () => Promise<void>;
 }) {
   const [data, setData] = useState<Availability | null>(null);
   const [error, setError] = useState("");
@@ -34,6 +36,28 @@ export function MemberStart({
   const [notice, setNotice] = useState("");
   const [repoName, setRepoName] = useState("");
   const [reviewerName, setReviewerName] = useState("");
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const disconnectGithub = async () => {
+    setDisconnecting(true);
+    setError("");
+    setNotice("");
+    try {
+      await onDisconnectGithub();
+      setConfirmDisconnect(false);
+      setNotice("GitHub disconnected. You can reconnect below.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+  useEffect(() => {
+    if (account && user.github_login && new URLSearchParams(window.location.search).get("github") === "connected") {
+      setNotice(`GitHub connected as @${user.github_login}.`);
+      window.history.replaceState(null, "", "/account");
+    }
+  }, [account, user.github_login]);
   const refresh = async () => {
     setLoading(true);
     setError("");
@@ -115,15 +139,35 @@ export function MemberStart({
                 {user.github_login ? `@${user.github_login}` : "Not connected"}
               </span>
             </div>
-            {githubLogin && (
-              <a
-                className="button primary full"
-                href="/api/auth/github?next=/account"
-              >
-                <ProviderMark type="github" />
-                {user.github_login ? "Change GitHub account" : "Connect GitHub"}
-              </a>
+            {error && <p className="error" role="alert">{error}</p>}
+            {notice && <p className="member-note" role="status">{notice}</p>}
+            <div className="actions">
+              {githubLogin && !disconnecting && (
+                <a className={user.github_login ? "button" : "button primary"}
+                  href="/api/auth/github?next=/account">
+                  <ProviderMark type="github" />
+                  {user.github_login ? "Reconnect GitHub" : "Connect GitHub"}
+                </a>
+              )}
+              {user.github_login && !confirmDisconnect && (
+                <button className="text-button" onClick={() => { setConfirmDisconnect(true); setNotice(""); }}>
+                  Disconnect GitHub
+                </button>
+              )}
+            </div>
+            {confirmDisconnect && (
+              <div role="group" aria-label="Confirm GitHub disconnect">
+                <p>Disconnect @{user.github_login} from LiteReview?</p>
+                <p className="member-note">Your Google sign-in and shared repository access stay connected.</p>
+                <div className="actions">
+                  <button onClick={disconnectGithub} disabled={disconnecting}>
+                    {disconnecting ? <><Loader2 size={15} className="spin" /> Disconnecting…</> : "Disconnect"}
+                  </button>
+                  <button className="text-button" onClick={() => setConfirmDisconnect(false)} disabled={disconnecting}>Cancel</button>
+                </div>
+              </div>
             )}
+            {user.github_login && <p className="member-note">Reconnect to verify your account again or choose another GitHub account.</p>}
             {!githubLogin && (
               <p className="member-note">
                 Connect the workspace’s GitHub repositories below first. Then
@@ -149,7 +193,7 @@ export function MemberStart({
                 Repository access lets the workspace read and review code.
               </p>
               <button
-                className="primary full"
+                className="button"
                 onClick={() => navigate("/repositories")}
               >
                 {githubConfigured && repositoryCount

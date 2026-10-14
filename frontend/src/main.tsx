@@ -772,6 +772,10 @@ function App() {
         repositoryCount={store.repos.length}
         githubConfigured={!!setup.github && !setup.github_reset}
         navigate={navigate}
+        onDisconnectGithub={async () => {
+          const result = await api("/auth/github/link", { ...send("DELETE"), label: "Disconnecting GitHub…" });
+          setSession((current: any) => ({ ...current, user: result.user }));
+        }}
         onLogout={() =>
           mutate(async () => {
             await api("/logout", send("POST"));
