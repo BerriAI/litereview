@@ -2009,6 +2009,9 @@ summary:hover {
 .spend-note { line-height: 1.6; margin-bottom: 28px; max-width: 850px; }
 .spend-page .tabs { margin-bottom: 18px; }
 .spend-user-filter { width: min(320px, 100%); margin-bottom: 18px; }
+.spend-sort { border: 0; border-radius: 3px; padding: 4px 0; min-height: 28px; background: transparent; color: inherit; font: inherit; display: inline-flex; align-items: center; gap: 6px; }
+.spend-sort:hover, th[aria-sort="ascending"] .spend-sort, th[aria-sort="descending"] .spend-sort { color: var(--ink); }
+.spend-sort svg { flex-shrink: 0; }
 .job-cost { margin-left: auto; white-space: nowrap; }
 @media (max-width: 700px) { .spend-summary { grid-template-columns: 1fr; gap: 12px; } }
 

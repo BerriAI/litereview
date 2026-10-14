@@ -156,6 +156,71 @@ def test_open_agent_accepts_external_caller_without_workspace_or_repo_membership
     assert owner.get("/api/resources/agents").status_code == (401 if sso else 200)
 
 
+@pytest.mark.parametrize("permission", ["none", "read"])
+def test_unlinked_caller_gets_sign_in_and_public_review_guidance(owner, monkeypatch, permission):
+    from test_sso import enable
+
+    from app import github, reviews
+
+    _, _, agent, _, _ = setup(owner)
+    create(owner, "agents", **{**agent, "name": "oss-review", "trigger_access": "anyone"})
+    enable(monkeypatch)
+    mock_github(monkeypatch, permission)
+    response = webhook(owner, payload(actor="outsider", body="@litereview reviewer"))
+    assert response.status_code == 200
+    github.permission.assert_not_awaited()
+    with Session() as db:
+        run = db.get(Run, response.json()["run_id"])
+        assert run.status == "rejected"
+        assert run.snapshot["rejection"] == (
+            "LiteLLM team members: [sign in to LiteReview](http://testserver/start) "
+            "with your work Google account and connect GitHub, then post your review request again."
+            "\n\nEveryone else: comment `@litereview oss-review`. No sign-in needed."
+        )
+        rendered = reviews.render_comment(run, [])
+        assert "`@litereview oss-review`" in rendered
+        assert "[sign in to LiteReview](http://testserver/start)" in rendered
+        assert not db.scalar(select(Job))
+
+
+@pytest.mark.parametrize("restriction", ["missing", "workspace", "repo"])
+def test_sign_in_reply_only_recommends_available_public_agent(owner, monkeypatch, restriction):
+    from test_sso import enable
+
+    _, _, agent, repo, _ = setup(owner)
+    if restriction != "missing":
+        create(owner, "agents", **{
+            **agent, "name": "oss-review",
+            "trigger_access": "workspace" if restriction == "workspace" else "anyone",
+        })
+    if restriction == "repo":
+        grant(owner, "repo", repo["name"], "selected", [agent["id"]])
+    enable(monkeypatch)
+    mock_github(monkeypatch, "none")
+    response = webhook(owner, payload(actor="outsider", body="@litereview reviewer"))
+    with Session() as db:
+        run = db.get(Run, response.json()["run_id"])
+        assert run.status == "rejected"
+        assert "sign in to LiteReview" in run.snapshot["rejection"]
+        assert "oss-review" not in run.snapshot["rejection"]
+        assert not db.scalar(select(Job))
+
+
+def test_linked_caller_still_requires_repository_permission(owner, monkeypatch):
+    from test_sso import enable, identity
+
+    setup(owner)
+    enable(monkeypatch)
+    identity()
+    mock_github(monkeypatch, "none")
+    data = payload(body="@litereview reviewer")
+    data["comment"]["user"]["id"] = 42
+    assert webhook(owner, data).json()["ignored"]
+    with Session() as db:
+        assert not db.scalar(select(Job))
+        assert not db.scalar(select(Run))
+
+
 @pytest.mark.parametrize("restriction", ["repo", "installation", "group", "mixed", "bot", "revoked"])
 def test_open_agent_does_not_bypass_other_boundaries(owner, monkeypatch, restriction):
     _, _, agent, repo, _ = setup(owner)
