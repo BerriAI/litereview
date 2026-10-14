@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { api, ApiError } from "./api";
 import { LoadingState } from "./request-state";
 import { SearchPicker } from "./ui";
+import { sortSpendRows, type SpendSort, type SpendSortKey } from "./spend-sort";
 
 type Cost = { cost_usd: number | null; complete: boolean; estimated: boolean };
 type Summary = { runs: number; cost_usd: number | null; average_cost_usd: number | null; priced_runs: number; unpriced_runs: number; estimated: boolean };
@@ -24,6 +26,7 @@ export function SpendPage() {
   const [group, setGroup] = useState<"users" | "repositories" | "agents" | "pull_requests">("agents");
   const [revision, setRevision] = useState(0);
   const [prUser, setPrUser] = useState("");
+  const [sort, setSort] = useState<SpendSort>({ key: "cost_usd", direction: "descending" });
   const retry = () => { setError(""); setRevision(v => v + 1); };
   useEffect(() => {
     let active = true, inFlight = false, loaded = false;
@@ -53,7 +56,16 @@ export function SpendPage() {
   if (!data) return <LoadingState label="Loading spend…" error={error} retry={retry} />;
   const total = data.total;
   const label = { users: "User", repositories: "Repository", agents: "Agent", pull_requests: "Pull request" }[group];
-  const rows = group === "pull_requests" && prUser ? data.user_pull_requests.filter(row => row.actor === prUser) : data[group];
+  const columns: { key: SpendSortKey; label: string }[] = [
+    { key: "name", label },
+    ...(group === "users" ? [{ key: "pull_requests" as const, label: "PRs" }] : []),
+    { key: "runs", label: "Runs" },
+    ...(group === "users" ? [{ key: "average_runs_per_pr" as const, label: "Runs per PR" }] : []),
+    { key: "cost_usd", label: "Total cost" },
+    { key: group === "users" ? "average_pr_cost_usd" : "average_cost_usd", label: group === "users" ? "Cost per PR" : "Cost per run" },
+  ];
+  const activeSort: SpendSort = columns.some(column => column.key === sort.key) ? sort : { key: "cost_usd", direction: "descending" };
+  const rows = sortSpendRows(group === "pull_requests" && prUser ? data.user_pull_requests.filter(row => row.actor === prUser) : data[group], activeSort);
   return <div className="spend-page">
     {error && <div className="error" role="alert">{error} <button onClick={retry}>Retry</button></div>}
     <dl className="spend-summary">
@@ -75,7 +87,15 @@ export function SpendPage() {
     {group === "pull_requests" && <div className="spend-user-filter"><SearchPicker label="Requested by" value={prUser} onChange={setPrUser}
       options={[{value: "", label: "All users"}, ...data.users.map(user => ({value: user.name, label: user.name}))]} /></div>}
     {rows.length ? <div className="table-wrap" tabIndex={0} role="region" aria-label={`Spend by ${label.toLowerCase()}`}>
-      <table><thead><tr><th>{label}</th>{group === "users" && <th>PRs</th>}<th>Runs</th>{group === "users" && <th>Runs per PR</th>}<th>Total cost</th><th>{group === "users" ? "Cost per PR" : "Cost per run"}</th></tr></thead>
+      <table><thead><tr>{columns.map(column => {
+        const active = activeSort.key === column.key;
+        const direction = active && activeSort.direction === "descending" ? "ascending" : active ? "descending" : column.key === "name" ? "ascending" : "descending";
+        const Icon = active ? activeSort.direction === "ascending" ? ArrowUp : ArrowDown : ArrowUpDown;
+        return <th key={column.key} aria-sort={active ? activeSort.direction : "none"}>
+          <button className="spend-sort" onClick={() => setSort({ key: column.key, direction })}
+            aria-label={`Sort by ${column.label.toLowerCase()}, ${direction}`}>{column.label}<Icon size={13} aria-hidden="true" /></button>
+        </th>;
+      })}</tr></thead>
         <tbody>{rows.map(row => <tr key={row.id || row.name}>
           <td>{row.repo ? <a href={`https://github.com/${row.repo}/pull/${row.pr}`} target="_blank" rel="noreferrer">{row.name}</a> : group === "users" ? <button className="text-button" onClick={() => { setPrUser(row.name); setGroup("pull_requests"); }}>{row.name} · View PRs</button> : row.name}{row.deleted && <small>Deleted agent</small>}{row.unpriced_runs > 0 && <small>{row.unpriced_runs} {row.unpriced_runs === 1 ? "run has" : "runs have"} incomplete cost data</small>}</td>
           {group === "users" && <td>{row.pull_requests}</td>}

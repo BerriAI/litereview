@@ -225,29 +225,29 @@ async def accept(payload, delivery):
     requested_targets = [review_defaults.selected(resources) if not r["name"] else targets.get(r["name"])
                          for r in requests]
     restricted = any(not allows_anyone(target) for target in requested_targets)
-    if restricted:
-        perm = await github.permission(repo, installation, actor)
-        if perm not in ("read", "triage", "write", "maintain", "admin"):
-            return None
+    grants = {(r.data["subject"], r.data["name"]): r for r in resources.values() if r.kind == "access"}
+    repo_access = grants.get(("repo", repo.lower()))
     identity = None
     if restricted and settings().sso_required:
         from .sso import caller_identity
 
         identity = caller_identity(comment_data.get("user", {}))
         if not identity:
-            return reject_command(
-                delivery,
-                repo,
-                pr,
-                actor,
-                installation,
-                "Sign in to LiteReview with your workspace Google account and link your GitHub account "
-                "once before requesting a review. Your linked GitHub account can then request reviews "
-                "without signing in again.",
+            reason = (
+                f"LiteLLM team members: [sign in to LiteReview]({settings().public_url.rstrip('/')}/start) "
+                "with your work Google account and connect GitHub, then post your review request again."
             )
-    grants = {(r.data["subject"], r.data["name"]): r for r in resources.values() if r.kind == "access"}
+            oss = targets.get("oss-review")
+            if allows_anyone(oss) and permits(repo_access, oss.id):
+                reason += "\n\nEveryone else: comment `@litereview oss-review`. No sign-in needed."
+            return reject_command(
+                delivery, repo, pr, actor, installation, reason,
+            )
+    if restricted:
+        perm = await github.permission(repo, installation, actor)
+        if perm not in ("read", "triage", "write", "maintain", "admin"):
+            return None
     caller_access = caller_grant(resources.values(), actor, identity.sub if identity else None)
-    repo_access = grants.get(("repo", repo.lower()))
     selected, selected_ids = [], set()
     for target in requested_targets:
         if not target:
@@ -385,7 +385,8 @@ def evidence_details(items):
 def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None, finding_links=None,
                    finding_decisions=None):
     if run.status == "rejected":
-        return f"<!-- litereview:{run.id} -->\n### Review not started\n\n{md(run.snapshot['rejection'])}"
+        # These messages come from the application, not a model. Keep suggested commands copyable.
+        return f"<!-- litereview:{run.id} -->\n### Review not started\n\n{run.snapshot['rejection']}"
     marker = (
         f"<!-- litereview:{run.id}:job:{jobs[0].id} -->" if agent_comment else f"<!-- litereview:{run.id} -->"
     )
