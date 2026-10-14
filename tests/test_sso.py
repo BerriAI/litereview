@@ -1,3 +1,4 @@
+import asyncio
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -405,6 +406,58 @@ def test_github_link_requires_both_proven_identities(client, monkeypatch):
     assert not sso.eligible_caller({"id": 42, "login": "trusted"})
     with Session() as db:
         assert db.get(Resource, "pending-person").data["identity_sub"] == "google-sub"
+
+
+def test_disconnect_is_personal_keeps_sso_and_invalidates_pending_reconnect(client, monkeypatch):
+    from app.db import Resource
+
+    enable(monkeypatch)
+    identity(client)
+    identity(sub="other-sub", github_id="99", github_login="other")
+    with Session.begin() as db:
+        db.add(Resource(id="shared-repo", kind="repos", data={"name": "org/repo", "installation_id": 123}))
+    monkeypatch.setattr(github, "config", lambda: {"client_id": "github-client"})
+    pending = client.get("/api/auth/github?next=/account", follow_redirects=False)
+    state = parse_qs(urlparse(pending.headers["location"]).query)["state"][0]
+    for _ in range(2):
+        response = client.delete("/api/auth/github/link")
+        assert response.status_code == 200
+        assert response.json()["user"]["github_login"] == ""
+        assert response.json()["user"]["email"] == "member@berri.ai"
+    assert client.get("/api/session").json()["user"]["github_login"] == ""
+    assert not sso.eligible_caller({"id": 42, "login": "trusted"})
+    assert sso.eligible_caller({"id": 99, "login": "other"})
+    assert client.get(f"/api/auth/github/callback?state={state}&code=old", follow_redirects=False).status_code == 403
+    with Session() as db:
+        assert db.get(Resource, "shared-repo").data["installation_id"] == 123
+    client.cookies.clear()
+    assert client.delete("/api/auth/github/link").status_code == 401
+
+
+@pytest.mark.parametrize("disconnect_during_callback", [False, True])
+def test_reconnect_returns_to_account_and_cannot_undo_a_disconnect(client, monkeypatch, disconnect_during_callback):
+    enable(monkeypatch)
+    identity(client)
+    monkeypatch.setattr(github, "config", lambda: {"client_id": "client", "client_secret": "secret"})
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(sso.httpx, "AsyncClient", lambda **kw: real_client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"access_token": "temporary"}))))
+
+    async def account(*args):
+        if disconnect_during_callback:
+            assert (await asyncio.to_thread(client.delete, "/api/auth/github/link")).status_code == 200
+        return httpx.Response(200, json={"id": 42, "login": "renamed"})
+
+    monkeypatch.setattr(github, "request", account)
+    response = client.get("/api/auth/github?next=%2Faccount%3Fgithub%3Dconnected", follow_redirects=False)
+    state = parse_qs(urlparse(response.headers["location"]).query)["state"][0]
+    response = client.get(f"/api/auth/github/callback?state={state}&code=new", follow_redirects=False)
+    assert response.status_code == (409 if disconnect_during_callback else 303)
+    if disconnect_during_callback:
+        assert client.get("/api/session").json()["user"]["github_login"] == ""
+    else:
+        assert response.headers["location"] == "/account?github=connected"
+        assert client.get("/api/session").json()["user"]["github_login"] == "renamed"
 
 
 def test_sso_members_can_review_without_manual_people_entry(owner, monkeypatch):

@@ -321,7 +321,8 @@ def github_start(request):
     if not conf.get("client_id"):
         raise HTTPException(409, "Connect the GitHub App in Repositories before linking your account.")
     state, browser = start_state(
-        "github-link", {"sub": user["sub"], "next": return_path(request.query_params.get("next", "/start"))}
+        "github-link", {"sub": user["sub"], "next": return_path(request.query_params.get("next", "/start")),
+                        "previous_link": [user["github_id"], user["github_login"]]}
     )
     return redirect(
         "https://github.com/login/oauth/authorize?"
@@ -364,7 +365,9 @@ async def github_callback(request, code, state):
     except (httpx.HTTPError, ValueError, KeyError):
         raise HTTPException(400, "GitHub linking failed. Try again.") from None
     with Session() as db:
-        identity = db.get(SSOIdentity, user["sub"])
+        identity = db.get(SSOIdentity, user["sub"], with_for_update=True)
+        if "previous_link" in data and data["previous_link"] != [identity.github_id, identity.github_login]:
+            raise HTTPException(409, "Your GitHub link changed. Return to your account and reconnect.")
         identity.github_id, identity.github_login = str(account["id"]), account["login"]
         try:
             bind_linked_person(db, identity)
@@ -374,7 +377,10 @@ async def github_callback(request, code, state):
             raise HTTPException(
                 409, "This GitHub account is already linked to another Google identity."
             ) from None
-    response = RedirectResponse(return_path(data.get("next", "/start")), status_code=303)
+    destination = return_path(data.get("next", "/start"))
+    if destination == "/account":
+        destination += "?github=connected"
+    response = RedirectResponse(destination, status_code=303)
     response.delete_cookie("lr_sso_state", path="/api/auth")
     return response
 
@@ -383,8 +389,12 @@ async def github_callback(request, code, state):
 def unlink_github(request: Request):
     user = current_user(request)
     with Session() as db:
-        identity = db.get(SSOIdentity, user["sub"])
+        identity = db.get(SSOIdentity, user["sub"], with_for_update=True)
         bind_linked_person(db, identity)
         identity.github_id, identity.github_login = None, ""
+        db.execute(delete(LoginState).where(
+            LoginState.data["purpose"].as_string() == "github-link",
+            LoginState.data["sub"].as_string() == user["sub"],
+        ))
         db.commit()
-    return {"ok": True}
+    return {"ok": True, "user": current_user(request)}

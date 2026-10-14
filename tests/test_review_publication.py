@@ -65,13 +65,14 @@ class GitHubFixture:
             return httpx.Response(200, json=source[(page - 1) * 100 : page * 100])
         if "/reactions" in suffix:
             if method == "DELETE":
-                parent = suffix.rsplit("/", 1)[0]
-                self.reactions.pop(parent, None)
+                self.reactions = {key: value for key, value in self.reactions.items()
+                                  if value != int(suffix.rsplit("/", 1)[1])}
                 return httpx.Response(204)
-            if suffix not in self.reactions:
+            key = (suffix, body["content"])
+            if key not in self.reactions:
                 self.sequence += 1
-                self.reactions[suffix] = self.sequence
-            return httpx.Response(200, json={"id": self.reactions[suffix]})
+                self.reactions[key] = self.sequence
+            return httpx.Response(200, json={"id": self.reactions[key]})
         if method == "PATCH":
             comment = next((c for c in self.comments + self.threads if c["id"] == int(suffix.split("/")[-1])), None)
             if not comment:
@@ -111,7 +112,7 @@ async def test_agents_finish_independently_and_eyes_are_removed(publication):
         second_id = jobs[1].id
     await reviews.publish(fake.run_id)
     assert not fake.comments and len(fake.reactions) == 1
-    assert list(fake.reactions) == ["issues/comments/12345/reactions"]
+    assert list(fake.reactions) == [("issues/comments/12345/reactions", "eyes")]
     calls = len(fake.calls)
     await reviews.publish(fake.run_id)
     assert len(fake.calls) == calls  # Polls without transitions do not call GitHub.
@@ -180,7 +181,8 @@ async def test_lost_responses_recover_without_duplicates(publication, monkeypatc
     await reviews.publish(fake.run_id)
     assert len(fake.comments) == (0 if effect == "eyes" else 1)
     assert len(fake.threads) == (2 if effect in ("thread", "remove_eyes") else 0)
-    assert len(fake.reactions) == (1 if effect == "eyes" else 0)
+    assert len(fake.reactions) == 1
+    assert {key[1] for key in fake.reactions} == ({"eyes"} if effect == "eyes" else {"+1"})
 
 
 @pytest.mark.parametrize(
@@ -261,7 +263,7 @@ async def test_new_head_and_legacy_progress_comment(publication):
     assert "✅ Reviews finished" in fake.comments[0]["body"]
     assert all("New commits were pushed" in c["body"] for c in fake.comments[1:])
     assert all(c["commit_id"] == "a" * 40 for c in fake.threads)
-    assert not fake.reactions
+    assert {key[1] for key in fake.reactions} == {"+1"}
 
 
 def test_diff_lines_include_context_and_ignore_deleted_and_binary_files():
@@ -358,7 +360,8 @@ async def test_completion_between_lost_eyes_response_and_retry(publication, monk
         await reviews.publish(fake.run_id)
     finish(fake.run_id)
     await reviews.publish(fake.run_id)
-    assert len(fake.comments) == 1 and not fake.reactions
+    assert len(fake.comments) == 1
+    assert {key[1] for key in fake.reactions} == {"+1"}
 
 
 async def test_retry_scans_all_pages_and_ignores_user_markers(publication):
@@ -531,7 +534,7 @@ async def test_reruns_reuse_first_summary_and_keep_inline_findings(publication):
     assert len(fake.comments) == 1 and "New finding" in fake.comments[0]["body"]
     assert fake.threads[:2] == threads and len(fake.threads) == 3
     assert all(f"#issuecomment-{original_id}" in t["body"] for t in fake.threads)
-    assert not fake.reactions
+    assert {key[1] for key in fake.reactions} == {"+1"}
 
 
 async def test_fusion_only_publishes_the_finished_review(publication):
@@ -564,7 +567,7 @@ async def test_fusion_only_publishes_the_finished_review(publication):
     await reviews.publish(fake.run_id)
     assert len(fake.comments) == 1 and "### ✅ reviewer" in fake.comments[0]["body"]
     assert "specialists completed" not in fake.comments[0]["body"]
-    assert not fake.reactions
+    assert {key[1] for key in fake.reactions} == {"+1"}
 
 
 async def test_repeated_instances_wait_for_the_whole_reviewer(publication):
@@ -577,7 +580,7 @@ async def test_repeated_instances_wait_for_the_whole_reviewer(publication):
     finish(fake.run_id, findings=[FINDING])
     await reviews.publish(fake.run_id)
     assert len(fake.comments) == 1 and len(fake.threads) == 2
-    assert not fake.reactions
+    assert {key[1] for key in fake.reactions} == {"+1"}
 
 
 async def test_adopts_legacy_progress_and_retires_other_instance_comments(publication):
@@ -601,7 +604,7 @@ async def test_adopts_legacy_progress_and_retires_other_instance_comments(public
     assert "### ✅ reviewer" in fake.comments[0]["body"]
     assert "Reviewing…" not in str(fake.comments)
     assert f"#issuecomment-{original[0]}" in fake.comments[1]["body"]
-    assert not fake.reactions
+    assert {key[1] for key in fake.reactions} == {"+1"}
     assert all(load_state(f"job:{j.id}")["complete"] for j in jobs)
 
 
@@ -715,4 +718,63 @@ async def test_mcp_requests_leave_one_visible_attributed_command(publication):
     finish(fake.run_id)
     await reviews.publish(fake.run_id)
     assert len([c for c in fake.comments if "litereview:request:" in c["body"]]) == 1
-    assert not fake.reactions
+    assert {key[1] for key in fake.reactions} == {"+1"}
+
+
+@pytest.mark.parametrize('lost_response', [False, True])
+async def test_thumbs_up_only_after_successful_publication(publication, monkeypatch, lost_response):
+    fake = publication
+    await reviews.publish(fake.run_id)
+    finish(fake.run_id, findings=[FINDING])
+    fail = True
+    lost = False
+
+    async def request(*args, **kwargs):
+        nonlocal lost
+        if fail and args[2:4] == ('PATCH', f'issues/comments/{fake.comments[0]["id"]}' if fake.comments else ''):
+            raise httpx.ReadTimeout('Summary could not be updated')
+        response = await fake.request(*args, **kwargs)
+        if lost_response and not lost and kwargs.get('json') == {'content': '+1'}:
+            lost = True
+            raise httpx.ReadTimeout('Lost thumbs-up response')
+        return response
+
+    monkeypatch.setattr(github, 'repo_request', request)
+    with pytest.raises(httpx.ReadTimeout):
+        await reviews.publish(fake.run_id)
+    assert {key[1] for key in fake.reactions} == {'eyes'}
+    fail = False
+    if lost_response:
+        with pytest.raises(httpx.ReadTimeout):
+            await reviews.publish(fake.run_id)
+    await reviews.publish(fake.run_id)
+    assert len(fake.reactions) == 1
+    assert {key[1] for key in fake.reactions} == {'+1'}
+    calls = list(fake.calls)
+    await reviews.publish(fake.run_id)
+    assert fake.calls == calls
+
+
+async def test_finished_legacy_reports_redirect_to_latest_summary(publication):
+    from app.publication import save_state
+
+    fake = publication
+    finish(fake.run_id)
+    with Session() as db:
+        jobs = db.scalars(select(Job).where(Job.run_id == fake.run_id).order_by(Job.id)).all()
+    for index, job in enumerate(jobs):
+        marker = f'<!-- litereview:{fake.run_id}:job:{job.id} -->'
+        fake.comments.append({'id': 900 + index, 'body': marker + '\n\nOld completed result', 'user': {'type': 'Bot'}})
+        save_state(f'job:{job.id}', {'complete': True, 'comment_ids': [900 + index]})
+    unrelated = {'id': 902, 'body': '<!-- litereview:unrelated:job:unrelated -->\n\nKeep this other reviewer', 'user': {'type': 'Bot'}}
+    fake.comments.append(dict(unrelated))
+    newer = await reviews.accept(payload(body='@litereview reviewer', comment_id=2), 'newer-completed')
+    finish(newer)
+    await reviews.publish(newer)
+    assert newer in fake.comments[0]['body']
+    assert 'View the latest reviewer review' in fake.comments[1]['body']
+    assert '#issuecomment-900' in fake.comments[1]['body']
+    assert f'/runs/{fake.run_id}' in fake.comments[1]['body']
+    assert 'Old completed result' not in str(fake.comments)
+    assert fake.comments[2] == unrelated
+    assert len(fake.comments) == 3

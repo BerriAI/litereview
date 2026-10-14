@@ -7,6 +7,7 @@ import io
 import json
 import os
 import shutil
+import sys
 import tarfile
 import time
 from pathlib import Path, PurePosixPath
@@ -15,6 +16,7 @@ from tempfile import TemporaryFile
 import httpx
 
 from .catalog import review_capabilities
+from .diagnostics import ReviewError, emit, failure_record
 from .instructions import agent_instructions
 from .tools import REPO, SKILLS, Toolset
 
@@ -22,13 +24,14 @@ from .tools import REPO, SKILLS, Toolset
 RECOVERY_SECONDS = 300
 
 
-def response_error(response):
+def response_error(response, stage="review"):
     try:
         detail = response.json().get("detail")
     except (ValueError, AttributeError):
         detail = None
-    return RuntimeError(detail if isinstance(detail, str) and detail else
-                        f"The review service returned HTTP {response.status_code}.")
+    message = f"The review service returned HTTP {response.status_code} during {stage}."
+    return ReviewError(detail if isinstance(detail, str) and detail else message,
+                       stage=stage, safe_message=message, http_status=response.status_code)
 
 
 async def recovery_pause(attempt, deadline):
@@ -51,6 +54,8 @@ class Relay:
         )
 
     async def __call__(self, endpoint, data=None):
+        stage = {"finish": "result submission", "bootstrap": "setup", "start-review": "setup"}.get(
+            endpoint, "review")
         recoverable = endpoint in {"bootstrap", "start-review", "finish"}
         deadline = time.monotonic() + RECOVERY_SECONDS
         attempt = 0
@@ -65,11 +70,13 @@ class Relay:
                 )
                 if response.is_success:
                     return response.json()
-                error = response_error(response)
+                error = response_error(response, stage)
                 if response.status_code < 500:
                     raise error
-            except httpx.TransportError:
-                error = RuntimeError("The review service could not be reached.")
+            except httpx.TransportError as exc:
+                error = ReviewError(
+                    f"The review service could not be reached during {stage} ({type(exc).__name__}).",
+                    stage=stage)
             if (not recoverable and attempt >= 2) or not await recovery_pause(attempt, deadline):
                 raise error from None
             attempt += 1
@@ -131,7 +138,7 @@ async def prepare_repository(relay):
                 async with relay.client.stream("GET", "archive") as response:
                     if not response.is_success:
                         await response.aread()
-                        error = RuntimeError(f"Repository download failed: {response_error(response)}")
+                        error = response_error(response, "repository download")
                         if response.status_code < 500:
                             raise error
                     else:
@@ -139,7 +146,7 @@ async def prepare_repository(relay):
                             archive.write(chunk)
                         break
             except httpx.TransportError:
-                error = RuntimeError("Repository download was interrupted. Retry the review.")
+                error = ReviewError("Repository download was interrupted.", stage="repository download")
             if not await recovery_pause(attempt, deadline):
                 raise error from None
             attempt += 1
@@ -216,16 +223,21 @@ async def run(relay, data):
 
 async def main():
     relay = Relay()
+    stage = "setup"
     try:
         data = await relay("bootstrap")
+        stage = "review"
         async with asyncio.timeout(data.get("timeout")):
             await run(relay, data)
     except Exception as exc:
         while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
             exc = exc.exceptions[0]
         status = "timed_out" if isinstance(exc, TimeoutError) else "failed"
-        # Do not print headers, credentials, or provider request bodies.
-        message = "Execution time limit reached." if status == "timed_out" else str(exc)
+        record = failure_record(exc, stage)
+        emit(record)
+        limitations = [record["message"]]
+        if record.get("exit_code") is not None:
+            limitations.append(f"Review harness exit code: {record['exit_code']}.")
         try:
             await relay(
                 "finish",
@@ -233,14 +245,15 @@ async def main():
                     "status": status,
                     "summary": "The review could not complete.",
                     "findings": [],
-                    "limitations": [message],
+                    "limitations": limitations,
                 },
             )
-        except Exception:
-            print("Unable to submit result; the service will mark this job incomplete.", flush=True)
+        except Exception as submission_error:
+            emit(failure_record(submission_error, "result submission", kind="submission_failed"))
+        return 1
     finally:
         await relay.client.aclose()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))

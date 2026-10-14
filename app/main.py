@@ -1550,10 +1550,14 @@ async def finish(job_id: str, request: Request):
                 ):
                     missing.append(f"The agent did not exercise its {cap} tool.")
             result["limitations"] += missing
+        failure_logs = {}
+        if result["status"] in ("failed", "timed_out"):
+            failure_logs["logs"] = job.logs + [{"time": time.time(), "message": message}
+                                              for message in [result["summary"], *result["limitations"]]]
         db.execute(
             update(Job)
             .where(Job.id == job_id, Job.status.in_(["starting", "running"]))
-            .values(status=result["status"], result=result, finished_at=time.time())
+            .values(status=result["status"], result=result, finished_at=time.time(), **failure_logs)
         )
         db.commit()
     return {"ok": True}
