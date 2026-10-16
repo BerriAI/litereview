@@ -18,6 +18,7 @@ import httpx
 from .catalog import review_capabilities
 from .diagnostics import ReviewError, emit, failure_record
 from .instructions import agent_instructions
+from .repository_guidance import guidance_index
 from .tools import REPO, SKILLS, Toolset
 
 # Allow safe setup/completion requests to survive a rolling API restart.
@@ -209,6 +210,7 @@ async def run(relay, data):
         prompt = json.dumps(
             {
                 "review": data["pr"],
+                "repository_guidance": guidance_index(REPO),
                 "environment": {
                     "repo": str(REPO),
                     "checkout": "GitHub source archive of the supplied immutable head SHA; .git history is not included. Use the supplied SHA and source files to identify the checkout; do not fabricate a local commit.",

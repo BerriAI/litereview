@@ -1,0 +1,37 @@
+{
+  "pr": 46839,
+  "head": "3e8d052c6f886e28897788094d4f759122dfb5b7",
+  "run_id": "1d98ad1135804ed989279e61c307dcf7",
+  "job_id": "d99026bc2fcb48ea91ae63a8e9aca47a",
+  "result": {
+    "status": "completed",
+    "summary": "I found no correctness defects in this change.\n\n**Breaking-change marker:** the PR title needs one, e.g. `fix(proxy)!:`. Before this PR, a request to `/utils/token_counter?call_endpoint=true` that sent both `prompt` and a non-empty `messages` or `contents` got a 200 counting only the conversation. Now it gets a 400 unless `drop_params` is set. The PR description explains the impact and the migration (set `drop_params`), so the title marker is the only missing piece.",
+    "findings": [],
+    "limitations": [],
+    "checks": [
+      {
+        "rule_id": "real-testing-evidence",
+        "name": "Real testing evidence",
+        "status": "passed",
+        "required": true,
+        "details": "Not applicable: no LLM translation changes in the scoped paths. The diff changes only `litellm/proxy/proxy_server.py` and two test files under `tests/unit/proxy/`. It touches nothing under `litellm/llms/**` or `litellm/litellm_core_utils/prompt_templates/**`."
+      },
+      {
+        "rule_id": null,
+        "name": "Changed unit tests",
+        "status": "passed",
+        "required": false,
+        "details": "I ran `.venv/bin/python -m pytest -q tests/unit/proxy/test_proxy_token_counter.py tests/unit/proxy/proxy_server/test_routes_utils.py` on the head checkout: 58 passed."
+      },
+      {
+        "rule_id": null,
+        "name": "Caller trace",
+        "status": "passed",
+        "required": false,
+        "details": "Besides `/utils/token_counter`, two internal callers build a `TokenCountRequest`: `anthropic_endpoints/endpoints.py:350` and `google_endpoints/endpoints.py:88`. Neither sets `prompt`, so the new 400 guard and the prompt-to-message conversion cannot fire for them."
+      }
+    ],
+    "rebuttal": null,
+    "finding_assessments": []
+  }
+}
