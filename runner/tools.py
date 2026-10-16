@@ -87,6 +87,17 @@ def definitions(cfg):
             ["summary", "findings", "limitations"],
         ),
     ]
+    required_rules = [r for r in cfg.get("rules", [])
+                      if r.get("enabled", True) and r.get("required", True)]
+    if required_rules and cfg.get("task") != "reply":
+        schema = tools[-1]["function"]["parameters"]
+        schema["required"].append("checks")
+        schema["properties"]["checks"]["allOf"] = [
+            {"contains": {"type": "object", "properties": {
+                "rule_id": {"const": rule["id"]}, "details": {"type": "string", "pattern": r"\S"},
+            }, "required": ["rule_id", "details"]}}
+            for rule in required_rules
+        ]
     if cfg.get("show_score") and cfg.get("fusion_stage") != "branch" and cfg.get("task") != "reply" and cfg.get("output_type") != "preview":
         schema = tools[-1]["function"]["parameters"]
         schema["properties"]["finding_assessments"] = {

@@ -74,6 +74,14 @@ def validate_checks(config, result):
             "Add a checks entry with each exact rule_id, status and evidence in details, then submit again. "
             "A rule mentioned in summary or check name does not supply rule_id. "
             "If you could not verify a rule, use status=not_run and explain the actual gap; do not invent a pass.")
+    required = {rule["id"] for rule in config.get("rules", [])
+                if rule.get("enabled", True) and rule.get("required", True)}
+    empty = [check["rule_id"] for check in result["checks"]
+             if check.get("rule_id") in required and not check.get("details", "").strip()]
+    if empty:
+        raise HTTPException(422,
+            "Required checks need evidence or a specific verification gap in details: "
+            + ", ".join(dict.fromkeys(empty)) + ". Correct these checks and submit again; do not invent a pass.")
 
 
 def enforce_checks(config, result):
@@ -89,6 +97,15 @@ def enforce_checks(config, result):
             result["checks"].extend(checks)
         for check in checks:
             check["required"] = rule.get("required", True)
+            if check["required"] and not check.get("details", "").strip():
+                # Older workers cannot retry submission. Preserve an observed failure,
+                # but never treat an unsupported pass as verified coverage.
+                if check["status"] == "passed":
+                    check["status"] = "not_run"
+                check["details"] = "The reviewer provided no evidence or verification explanation for this saved rule."
+                limitation = f"{rule['name']}: {check['details']}"
+                if limitation not in result["limitations"]:
+                    result["limitations"].append(limitation)
             if check["required"] and check["status"] == "not_run":
                 limitation = f"{rule['name']}: {check['details']}"
                 if limitation not in result["limitations"]:

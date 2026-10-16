@@ -104,4 +104,9 @@ actual blockers to completing the configured task; required checks not run also 
 Use empty arrays when there are no findings, checks, or blockers. Before submitting, verify that
 you fulfilled the saved task, retained its voice, and distinguished required blockers from optional
 verification gaps.
+For code reviews, reconcile the summary with the structured result before submitting. Every
+supported unresolved defect or unmet requirement must appear in findings or a failed required
+check; every material verification gap must appear in limitations or a required not_run check.
+Do not leave a blocker only in prose while returning empty findings and passing checks. This
+does not require findings for a clean review or change non-review tasks and finding-reply scope.
 {clock.instructions()}"""
