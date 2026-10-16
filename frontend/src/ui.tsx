@@ -28,15 +28,16 @@ export function Brand() {
   );
 }
 
-const THEMES = ["system", "light", "dark"] as const;
+const THEMES = ["dark", "light", "system"] as const;
 type Theme = (typeof THEMES)[number];
 
+// Dark is the default when nothing is saved.
 function savedTheme(): Theme {
   try {
     const value = localStorage.getItem("litereview-theme");
-    return value === "light" || value === "dark" ? value : "system";
+    return value === "light" || value === "system" ? value : "dark";
   } catch {
-    return "system";
+    return "dark";
   }
 }
 
@@ -46,7 +47,7 @@ export function ThemeToggle() {
     if (theme === "system") delete document.documentElement.dataset.theme;
     else document.documentElement.dataset.theme = theme;
     try {
-      if (theme === "system") localStorage.removeItem("litereview-theme");
+      if (theme === "dark") localStorage.removeItem("litereview-theme");
       else localStorage.setItem("litereview-theme", theme);
     } catch {}
   }, [theme]);

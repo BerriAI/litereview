@@ -7,10 +7,13 @@
     <title>LiteReview</title>
     <link rel="icon" type="image/png" href="/brand/favicon.png" />
     <script>
+      // Dark is the default; "system" follows the OS appearance.
+      let theme = "dark";
       try {
-        const theme = localStorage.getItem("litereview-theme");
-        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+        const saved = localStorage.getItem("litereview-theme");
+        if (saved === "light" || saved === "system") theme = saved;
       } catch {}
+      if (theme !== "system") document.documentElement.dataset.theme = theme;
     </script>
   </head>
   <body>
