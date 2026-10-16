@@ -109,22 +109,30 @@ async def main():
         await dialog.get_by_role("button", name="Cancel", exact=True).click()
         await page.set_viewport_size({"width": 1440, "height": 1000})
         await page.get_by_role("link", name="PR agents", exact=True).click()
-        await page.emulate_media(color_scheme="dark")
+        # Dark is the default, even under a light system appearance.
+        await page.emulate_media(color_scheme="light")
+        assert await page.evaluate("document.documentElement.dataset.theme") == "dark"
         assert await page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "dark"
         assert (
             await page.evaluate("getComputedStyle(document.documentElement).backgroundColor")
             == "rgb(22, 23, 27)"
         )
-        await page.screenshot(path=".test-artifacts/system-dark-ui.png")
-        await page.get_by_role("button", name="System theme. Change theme", exact=True).click()
+        await page.screenshot(path=".test-artifacts/default-dark-ui.png")
+        await page.get_by_role("button", name="Dark theme. Change theme", exact=True).click()
         assert await page.evaluate("document.documentElement.dataset.theme") == "light"
         assert await page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "light"
         await page.reload()
         await page.get_by_role("heading", name="PR agents", exact=True).wait_for()
         assert await page.evaluate("document.documentElement.dataset.theme") == "light"
         await page.get_by_role("button", name="Light theme. Change theme", exact=True).click()
-        await page.get_by_role("button", name="Dark theme. Change theme", exact=True).click()
-        assert await page.evaluate("localStorage.getItem('litereview-theme')") is None
+        assert await page.evaluate("localStorage.getItem('litereview-theme')") == "system"
+        await page.reload()
+        await page.get_by_role("heading", name="PR agents", exact=True).wait_for()
+        assert await page.evaluate("document.documentElement.dataset.theme") is None
+        assert await page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "light"
+        await page.emulate_media(color_scheme="dark")
+        assert await page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "dark"
+        await page.screenshot(path=".test-artifacts/system-dark-ui.png")
         await page.emulate_media(color_scheme="light")
         # Inspect every data surface and editor without launching models or jobs.
         for title, action in [("Skills", "Create skill")]:
