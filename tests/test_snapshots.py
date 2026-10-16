@@ -129,6 +129,34 @@ def test_only_identical_source_files_and_subtrees_keep_build_timestamps(tmp_path
     assert (staged / "changed.py").stat().st_mtime_ns != 1_000_000_000
 
 
+def test_timestamp_reuse_rejects_symlink_files_and_escaped_parent_directories(tmp_path):
+    previous, staged, outside = (tmp_path / name for name in ("old", "new", "outside"))
+    previous.mkdir()
+    outside.mkdir()
+    (staged / "linked/nested").mkdir(parents=True)
+    (outside / "nested").mkdir()
+    for root in (outside, staged / "linked"):
+        (root / "nested/source.py").write_text("identical")
+    (staged / "file.py").write_text("identical")
+    (previous / "linked").symlink_to(outside, target_is_directory=True)
+    (previous / "file.py").symlink_to(outside / "nested/source.py")
+    os.utime(outside / "nested/source.py", ns=(1_000_000_000, 1_000_000_000))
+    warm.preserve_unchanged_times(previous, staged)
+    assert (staged / "linked/nested/source.py").stat().st_mtime_ns != 1_000_000_000
+    assert (staged / "file.py").stat().st_mtime_ns != 1_000_000_000
+
+
+def test_removed_files_invalidate_parent_directory_timestamp(tmp_path):
+    previous, staged = tmp_path / "old", tmp_path / "new"
+    for root in (previous, staged):
+        (root / "package").mkdir(parents=True)
+        (root / "package/keep.py").write_text("same")
+    (previous / "package/deleted.py").touch()
+    os.utime(previous / "package", ns=(1_000_000_000, 1_000_000_000))
+    warm.preserve_unchanged_times(previous, staged)
+    assert (staged / "package").stat().st_mtime_ns != 1_000_000_000
+
+
 def test_native_outputs_are_restored_without_overwriting_pr_files_or_deleted_packages(tmp_path, monkeypatch):
     previous, staged = tmp_path / "old", tmp_path / "new"
     previous.mkdir()

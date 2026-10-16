@@ -214,6 +214,7 @@ async def run(relay, data):
                     "checkout": "GitHub source archive of the supplied immutable head SHA; .git history is not included. Use the supplied SHA and source files to identify the checkout; do not fabricate a local commit.",
                     "readiness_url": data["repository"].get("readiness_url"),
                     "capabilities": cfg["capabilities"],
+                    "setup": tools.setup,
                 },
             },
             ensure_ascii=False,

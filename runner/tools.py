@@ -11,6 +11,7 @@ from .timing import ReviewClock
 
 REPO = Path("/workspace/repo")
 SKILLS = Path("/workspace/skills")
+SETUP_LOG = Path("/workspace/litereview-run/setup.log")
 
 
 def function(name, description, properties, required=()):
@@ -213,6 +214,7 @@ class Toolset:
         self.artifacts = 0
         self.visual_calls = 0
         self.clock = ReviewClock(data["config"].get("minimum_review_seconds", 0))
+        self.setup = {"status": "not_run" if data.get("repository", {}).get("setup_command") else "not_configured"}
 
     async def init(self):
         if {"computer", "browser"} & set(self.caps):
@@ -252,9 +254,23 @@ class Toolset:
                 started = time.monotonic()
                 await self.relay.event("Running repository setup; reconciling dependencies with this revision")
                 result = await self.shell(repo["setup_command"])
+                elapsed = time.monotonic() - started
+                SETUP_LOG.parent.mkdir(parents=True, exist_ok=True)
+                SETUP_LOG.write_text(result["output"], encoding="utf-8")
+                self.setup = {
+                    "status": "completed" if result["exit_code"] == 0 else "failed",
+                    "command": repo["setup_command"],
+                    "exit_code": result["exit_code"],
+                    "seconds": round(elapsed, 2),
+                    "output_path": str(SETUP_LOG),
+                    "scope": "Setup ran against this PR revision. This is prerequisite preparation, not test evidence; additional prerequisites may be needed for specific checks.",
+                }
+                python = REPO / ".venv/bin/python"
+                if python.is_file():
+                    self.setup["repository_python"] = str(python)
                 if result["exit_code"] != 0:
                     raise RuntimeError("Repository setup command failed: " + result["output"])
-                await self.relay.event(f"Repository setup completed in {time.monotonic() - started:.2f}s")
+                await self.relay.event(f"Repository setup completed in {elapsed:.2f}s")
             if repo.get("start_command"):
                 log = open("/tmp/litereview-app.log", "w")
                 p = subprocess.Popen(
