@@ -242,6 +242,9 @@ class Toolset:
             self.page = await self.context.new_page()
         repo = self.data["repository"]
         if self.caps:
+            from .warm import CACHE_ENV
+
+            os.environ.update(CACHE_ENV)
             os.environ.update(self.data.get("test_secrets", {}))
             if repo.get("setup_command"):
                 import time

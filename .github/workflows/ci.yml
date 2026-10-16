@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:16-alpine
+        image: mirror.gcr.io/library/postgres:16-alpine
         env:
           POSTGRES_DB: litereview
           POSTGRES_USER: litereview
@@ -47,8 +47,8 @@ jobs:
       - run: npm ci --prefix frontend
       - run: npm test --prefix frontend
       - run: npm run build --prefix frontend
-      # Official image mirror avoids Docker Hub's shared-runner pull quota.
+      # Google's official-image cache avoids shared-runner registry pull quotas.
       - run: >-
           docker build -t litereview
-          --build-arg NODE_IMAGE=public.ecr.aws/docker/library/node:22-bookworm-slim
-          --build-arg PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.12-slim-bookworm .
+          --build-arg NODE_IMAGE=mirror.gcr.io/library/node:22-bookworm-slim
+          --build-arg PYTHON_IMAGE=mirror.gcr.io/library/python:3.12-slim-bookworm .
