@@ -18,6 +18,11 @@ def enforce_history(job, result):
 def verdict(job, finding_states=None):
     if not job.config.get("show_score") or job.config.get("output_type") == "preview" or job.config.get("task") == "reply":
         return None
+    return review_outcome(job, finding_states)
+
+
+def review_outcome(job, finding_states=None):
+    """Evaluate the evidence independently of whether the agent displays a score."""
     result = job.result or {}
     state = "running" if job.status not in {"completed", "failed", "timed_out", "superseded"} else "incomplete"
     if result.get("skipped"):
@@ -43,6 +48,23 @@ def verdict(job, finding_states=None):
         return {"state": "ready" if score == 5 else "blocked", "score": score,
                 "findings": len(findings), "required_check_failed": failed}
     return {"state": state, "score": None}
+
+
+def comment_icon(job, finding_states=None):
+    outcome = review_outcome(job, finding_states)
+    if outcome["state"] == "running":
+        return "👀"
+    if outcome["state"] in {"skipped", "superseded"}:
+        return "⏭️"
+    # Even optional failed/skipped checks qualify a completed review. A green
+    # check must never mean merely that execution finished successfully.
+    if outcome["state"] != "ready" or any(
+        c.get("status") != "passed" for c in (job.result or {}).get("checks", [])
+    ):
+        return "⚠️"
+    if job.config.get("output_type") == "preview" or job.config.get("task") == "reply":
+        return "📝"
+    return "✅"
 
 
 def headline(value):
