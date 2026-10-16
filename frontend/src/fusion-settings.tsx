@@ -2,7 +2,7 @@ import { Field, Toggle } from "./ui";
 import { MCPToolSelector } from "./mcp-tool-selector";
 import { ReviewRules } from "./review-settings";
 
-export type Model = { connection_id: string; model: string; reasoning_effort?: string | null };
+export type Model = { connection_id: string; model: string; reasoning_effort?: string | null; inference_speed?: "standard" | "fast" };
 export type RoleSettings = {
   instructions?: string | null; skill_ids?: string[] | null; mcps?: { connection_id: string; tools: string[] }[] | null;
   capabilities?: string[] | null; rules?: any[] | null;

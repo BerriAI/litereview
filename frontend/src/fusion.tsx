@@ -26,7 +26,7 @@ export function AgentModels({ value, onChange, connections, skills, mcps, disabl
         .catch(() => setErrors(current => ({ ...current, [id]: "Could not load models. Enter the model ID." })));
     }
   }, [ids]);
-  const selection = (model: Model): Model => ({ connection_id: model.connection_id, model: model.model, reasoning_effort: model.reasoning_effort || null });
+  const selection = (model: Model): Model => ({ connection_id: model.connection_id, model: model.model, reasoning_effort: model.reasoning_effort || null, inference_speed: model.inference_speed || "standard" });
   const updateModels = (next: Branch[]) => onChange({ ...selection(value), fusion: { branches: next } });
   const updateBranch = (index: number, patch: Partial<Branch>) => value.fusion
     ? updateModels(selected.map((m, i) => i === index ? { ...m, ...patch } : m))
@@ -41,12 +41,18 @@ export function AgentModels({ value, onChange, connections, skills, mcps, disabl
         onChange={model => change({ model })} />
     </div>
     {errors[model.connection_id] && <small role="status">{errors[model.connection_id]}</small>}
-    {reasoning && <details className="model-settings"><summary>Reasoning effort</summary>
+    {reasoning && <details className="model-settings"><summary>Model settings{model.inference_speed === "fast" ? " · Fast inference" : ""}</summary>
       <Field label={`${label} reasoning effort`}>
         <select disabled={disabled} value={model.reasoning_effort || ""} onChange={e => change({ reasoning_effort: e.target.value || null })}>
           <option value="">Model default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option>
         </select>
       </Field>
+      <Field label={`${label} inference speed`}>
+        <select disabled={disabled} value={model.inference_speed || "standard"} onChange={e => change({ inference_speed: e.target.value as "standard" | "fast" })}>
+          <option value="standard">Standard</option><option value="fast">Fast · higher token cost</option>
+        </select>
+      </Field>
+      <small>Fast uses the same model, reasoning effort, and review context. Requires a gateway that supports fast serving for this model. Opus 5.5 fast tokens cost twice as much. Run Test agent after changing this setting.</small>
     </details>}
   </>;
   return <>

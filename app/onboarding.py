@@ -135,6 +135,7 @@ def workspace_readiness():
                 and fusion.selection(job.config) == fusion.selection(row.data)
                 and fusion.connections_current(row.data, resources, created)
                 and job.config.get("harness_version") == HARNESS_VERSIONS["codex"]
+                and job.config.get("inference_speed", "standard") == row.data.get("inference_speed", "standard")
                 and all(
                     job.config.get(k, "builtin" if k == "harness" else None)
                     == (

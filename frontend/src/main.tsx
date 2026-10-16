@@ -232,6 +232,7 @@ function App() {
   }, [
     editor?.data.model,
     editor?.data.reasoning_effort,
+    editor?.data.inference_speed,
     JSON.stringify(editor?.data.fusion),
     modelConnection,
     JSON.stringify(editor?.data.capabilities),
@@ -1995,6 +1996,7 @@ function App() {
                                 connection_id: editor.data.connection_id,
                                 model: editor.data.model,
                                 reasoning_effort: editor.data.reasoning_effort || null,
+                                inference_speed: editor.data.inference_speed || "standard",
                                 fusion: editor.data.fusion || null,
                                 capabilities: editor.data.capabilities,
                               }),

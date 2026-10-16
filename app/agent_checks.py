@@ -83,7 +83,7 @@ def enqueue(data, connection):
     if cfg.get("fusion"):
         cfg["fusion"] = {"branches": [
             {**{k: v for k, v in branch.items()
-                if k in {"name", "connection_id", "model", "reasoning_effort", "capabilities"}},
+                if k in {"name", "connection_id", "model", "reasoning_effort", "inference_speed", "capabilities"}},
              "instructions": check_instructions(branch.get("capabilities")
                  if branch.get("capabilities") is not None else data.capabilities),
              "rules": []}

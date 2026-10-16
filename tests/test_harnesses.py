@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from app import harnesses, reviews, runtime
-from app.db import Job, Run, Session
+from app.db import Job, ModelUsage, Run, Session
 from app.security import digest
 from runner.bridge import Bridge
 from runner.catalog import HARNESS_VERSIONS, NPM_PACKAGES
@@ -64,6 +64,35 @@ def test_saved_reasoning_effort_reaches_codex(tmp_path, monkeypatch, owner, effo
     settings = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "-c"]
     actual = [s for s in settings if s.startswith("model_reasoning_effort=")]
     assert actual == ([] if effort is None else [f'model_reasoning_effort="{effort}"'])
+
+
+def test_saved_speed_and_private_checks_keep_independent_model_settings(owner):
+    from app.agent_checks import enqueue
+    from app.schemas import AgentModel
+
+    connection = owner.post("/api/resources/connections", json={
+        "name": "Gateway", "type": "gateway", "base_url": "https://provider.test",
+    }).json()
+    payload = {"name": "fast-review", "connection_id": connection["id"], "model": "same-model",
+               "instructions": "Investigate all evidence", "reasoning_effort": "high",
+               "inference_speed": "fast", "fusion": {"branches": [
+                   {"connection_id": connection["id"], "model": "same-model"},
+                   {"connection_id": connection["id"], "model": "same-model", "inference_speed": "fast"},
+               ]}}
+    saved = owner.post("/api/resources/agents", json=payload)
+    assert saved.status_code == 200
+    data = saved.json()
+    assert data["inference_speed"] == "fast" and data["reasoning_effort"] == "high"
+    check = enqueue(AgentModel.model_validate(data), connection)
+    with Session() as db:
+        jobs = db.query(Job).filter(Job.run_id == check["id"]).all()
+        parent = next(j for j in jobs if j.config.get("fusion_stage") == "aggregator")
+        branches = sorted((j for j in jobs if j.config.get("fusion_stage") == "branch"),
+                          key=lambda j: j.config["fusion_index"])
+        assert parent.config["inference_speed"] == "fast"
+        assert [j.config["inference_speed"] for j in branches] == ["standard", "fast"]
+    invalid = owner.put("/api/resources/agents/" + data["id"], json={**data, "inference_speed": "turbo"})
+    assert invalid.status_code == 422
 
 
 @pytest.mark.parametrize("selected", HARNESS_VERSIONS)
@@ -159,6 +188,79 @@ def seed_job():
         )
         db.add_all([run, job])
         db.commit()
+
+
+@pytest.mark.parametrize("speed", [None, "standard", "fast"])
+@pytest.mark.parametrize("reported_cost", [None, 0.123])
+def test_inference_speed_preserves_work_and_accounts_premium_cost(client, monkeypatch, speed, reported_cost):
+    seed_job()
+    with Session.begin() as db:
+        job = db.get(Job, "test-job")
+        if speed is not None:
+            job.config = {**job.config, "inference_speed": speed}
+    monkeypatch.setattr(harnesses.providers, "snapshot_connection", lambda _: {
+        "type": "gateway", "base_url": "https://provider.test", "api_key": "secret",
+    })
+    from decimal import Decimal
+
+    rates = AsyncMock(return_value={"input_cost_per_token": Decimal("0.1"),
+                                  "output_cost_per_token": Decimal("0.1")})
+    monkeypatch.setattr(harnesses.spend, "lookup_rates", rates)
+    sent = []
+    actual = httpx.AsyncClient
+
+    async def upstream(request):
+        sent.append(json.loads(request.content))
+        usage = {"input_tokens": 10, "output_tokens": 5}
+        if reported_cost is not None:
+            usage["cost"] = reported_cost
+        event = {"type": "response.completed", "response": {"usage": usage}}
+        return httpx.Response(200, headers={"content-type": "text/event-stream",
+                                           "x-litellm-response-cost": "0"},
+                              content=("data: " + json.dumps(event) + "\n\n").encode())
+
+    monkeypatch.setattr(harnesses.httpx, "AsyncClient",
+                        lambda **kwargs: actual(transport=httpx.MockTransport(upstream)))
+    payload = {"model": "untrusted-model", "input": [{"role": "user", "content": "Complete evidence 🧪"}],
+               "tools": [{"type": "function", "name": "investigate"}],
+               "reasoning": {"effort": "high"}, "speed": "standard" if speed == "fast" else "fast"}
+    response = client.post("/api/internal/jobs/test-job/llm/responses",
+                           headers={"authorization": "Bearer job-token"}, json=payload)
+    assert response.status_code == 200
+    expected = {**payload, "model": "chosen-model", "store": False, "background": False}
+    expected.pop("speed")
+    if speed == "fast":
+        expected["speed"] = "fast"
+        rates.assert_not_awaited()
+    else:
+        rates.assert_awaited_once()
+    assert sent == [expected]
+    with Session() as db:
+        usage = db.query(ModelUsage).one()
+        assert usage.output_tokens == 5
+        if reported_cost is not None:
+            assert usage.source == "reported"
+            assert float(usage.cost_usd) == reported_cost
+        elif speed == "fast":
+            assert usage.source == "unavailable"
+            assert usage.cost_usd is None
+        else:
+            assert usage.source == "estimated"
+            assert float(usage.cost_usd) == 1.5
+
+
+def test_fast_inference_does_not_silently_run_on_direct_openai(client, monkeypatch):
+    seed_job()
+    with Session.begin() as db:
+        job = db.get(Job, "test-job")
+        job.config = {**job.config, "inference_speed": "fast"}
+    monkeypatch.setattr(harnesses.providers, "snapshot_connection", lambda _: {"type": "openai"})
+    response = client.post("/api/internal/jobs/test-job/llm/responses",
+                           headers={"authorization": "Bearer job-token"}, json={"input": "Review"})
+    assert response.status_code == 400
+    assert "supports speed=fast" in response.text
+    with Session() as db:
+        assert db.get(Job, "test-job").model_calls == 0
 
 
 @pytest.mark.parametrize("compressed", [False, True])

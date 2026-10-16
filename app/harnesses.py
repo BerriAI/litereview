@@ -18,6 +18,9 @@ async def relay_model(job, request, path):
     cfg = job.config
     connection = providers.snapshot_connection(cfg["connection"])
     kind = connection["type"]
+    fast = cfg.get("inference_speed", "standard") == "fast"
+    if fast and kind != "gateway":
+        raise HTTPException(400, "Fast inference requires a gateway that supports speed=fast for the selected model.")
     if kind == "anthropic" and not path.startswith("messages"):
         raise HTTPException(400, "This model connection uses the Anthropic Messages API.")
     if kind == "openai" and path.startswith("messages"):
@@ -34,10 +37,13 @@ async def relay_model(job, request, path):
         "litellm_params",
         "extra_headers",
         "organization",
+        "speed",
     ):
         body.pop(key, None)
     # Harness defaults (including small background models) cannot escape the job's selection.
     body["model"] = cfg["model"]
+    if fast and path != "messages/count_tokens":
+        body["speed"] = "fast"
     if path == "responses":
         body["store"] = False
         body["background"] = False
@@ -58,7 +64,9 @@ async def relay_model(job, request, path):
             headers["anthropic-beta"] = request.headers["anthropic-beta"]
     client = httpx.AsyncClient(timeout=None)
     trace = tracing.ModelTrace(job, body, enabled=path != "messages/count_tokens")
-    meter = (spend.UsageMeter(job, await spend.lookup_rates(connection, cfg["model"]))
+    # Standard model rates cannot estimate premium serving. Keep provider-reported
+    # costs, and show unavailable when the gateway supplies no final cost.
+    meter = (spend.UsageMeter(job, None if fast else await spend.lookup_rates(connection, cfg["model"]))
              if path != "messages/count_tokens" else None)
     try:
         response = await client.send(
