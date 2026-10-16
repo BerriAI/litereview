@@ -11,6 +11,9 @@ import {
   ChevronDown,
   Check,
   Menu,
+  Moon,
+  Sun,
+  SunMoon,
 } from "lucide-react";
 
 export function Brand() {
@@ -22,6 +25,43 @@ export function Brand() {
         <small>by LiteLLM</small>
       </span>
     </span>
+  );
+}
+
+const THEMES = ["system", "light", "dark"] as const;
+type Theme = (typeof THEMES)[number];
+
+function savedTheme(): Theme {
+  try {
+    const value = localStorage.getItem("litereview-theme");
+    return value === "light" || value === "dark" ? value : "system";
+  } catch {
+    return "system";
+  }
+}
+
+export function ThemeToggle() {
+  const [theme, setTheme] = useState<Theme>(savedTheme);
+  useEffect(() => {
+    if (theme === "system") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = theme;
+    try {
+      if (theme === "system") localStorage.removeItem("litereview-theme");
+      else localStorage.setItem("litereview-theme", theme);
+    } catch {}
+  }, [theme]);
+  const Icon = { system: SunMoon, light: Sun, dark: Moon }[theme];
+  const label = { system: "System theme", light: "Light theme", dark: "Dark theme" }[theme];
+  return (
+    <button
+      type="button"
+      className="theme-toggle"
+      title="Change theme"
+      aria-label={`${label}. Change theme`}
+      onClick={() => setTheme(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length])}
+    >
+      <Icon size={15} aria-hidden="true" /> {label}
+    </button>
   );
 }
 

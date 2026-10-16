@@ -6,7 +6,7 @@
 .mcp-server {
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--surface, #fff);
+  background: var(--bg);
   padding: 22px 24px;
 }
 .resource-card-head,
@@ -79,7 +79,7 @@
 }
 .connection-error {
   font-size: 13px;
-  color: #9b3d26;
+  color: var(--red);
   margin-top: 16px;
 }
 .oauth-advanced {
@@ -96,7 +96,7 @@
 .redirect-uri {
   display: block;
   padding: 10px;
-  background: var(--surface-secondary, #f6f7f9);
+  background: var(--inset);
   overflow-wrap: anywhere;
   font-size: 12px;
 }
@@ -131,7 +131,7 @@
   justify-content: space-between;
   gap: 12px;
   border: 1px solid var(--line);
-  background: #f8f9fb;
+  background: var(--subtle);
   padding: 12px 16px;
   border-radius: 8px;
   margin-bottom: 24px;

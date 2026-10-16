@@ -11,8 +11,8 @@
 .feedback-entry { padding: 20px; border: 1px solid var(--border); border-radius: 10px; overflow-wrap: anywhere; }
 .feedback-entry-heading { margin-bottom: 8px; }
 .feedback-rating { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
-.feedback-rating.down { color: #965e16; }
-.feedback-rating.up { color: #2f6b47; }
+.feedback-rating.down { color: var(--amber); }
+.feedback-rating.up { color: var(--green); }
 .feedback-note { white-space: pre-wrap; }
 .feedback-entry .meta { margin-bottom: 0; }
 .feedback-pagination { justify-content: flex-end; margin-top: 16px; }

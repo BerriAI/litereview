@@ -17,4 +17,5 @@
 .preview-history { border: 0; margin-top: 60px; padding: 0; color: var(--muted); font-size: 12px; }
 .preview-history li { margin: 10px 0; }
 @media (max-width: 600px) { .preview-page { padding: 22px 20px 60px; } .preview-top { flex-wrap: wrap; margin-bottom: 40px; } }
-.preview-canvas { display:block; width:100%; border:0; margin-top:32px; background:white; }
+/* Agent-written previews keep their own light colors; frame them on dark pages. */
+.preview-canvas { display:block; box-sizing:content-box; width:calc(100% - 2 * var(--canvas-pad) - 2 * var(--canvas-frame-width)); padding:var(--canvas-pad); border:var(--canvas-frame-width) solid var(--canvas-frame); border-radius:8px; margin-top:32px; background:white; }
