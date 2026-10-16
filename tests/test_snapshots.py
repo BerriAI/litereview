@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import tarfile
 import time
 from types import SimpleNamespace
@@ -85,6 +86,7 @@ def test_warming_excludes_service_and_test_secrets_and_discards_baseline_source(
     root = tmp_path / "repo"
     path = tmp_path / "source.tgz"
     path.write_bytes(archive({"source.py": b"trusted baseline"}).read())
+    monkeypatch.setattr(warm, "SOURCE_STAMPS", tmp_path / "source-stamps.json")
     for name in ("LR_JOB_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "TEST_PASSWORD"):
         monkeypatch.setenv(name, "must-not-enter-snapshot")
 
@@ -100,6 +102,23 @@ def test_warming_excludes_service_and_test_secrets_and_discards_baseline_source(
     warm.prepare(path, "install dependencies", root)
     assert not path.exists()
     assert {p.name for p in root.iterdir()} == {".venv"}
+
+
+def test_identical_build_inputs_keep_timestamps_but_changed_files_do_not(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "pyproject.toml").write_bytes(b"unchanged build metadata")
+    (root / "uv.lock").write_bytes(b"old dependencies")
+    stamps = warm.source_stamps(root)
+    stamps["pyproject.toml"][1] = 1_000_000_000
+    stamps["uv.lock"][1] = 1_000_000_000
+    manifest = tmp_path / "source-stamps.json"
+    manifest.write_text(json.dumps(stamps))
+    monkeypatch.setattr(warm, "SOURCE_STAMPS", manifest)
+    warm.replace_source(archive({"pyproject.toml": b"unchanged build metadata", "uv.lock": b"new deps"}), root)
+    assert (root / "pyproject.toml").stat().st_mtime_ns == 1_000_000_000
+    assert (root / "uv.lock").stat().st_mtime_ns != 1_000_000_000
+    assert not manifest.exists()
 
 
 @pytest.mark.parametrize("change", [

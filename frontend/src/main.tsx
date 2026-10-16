@@ -2586,7 +2586,7 @@ function App() {
                   </div>
                   <Field
                     label="Setup command"
-                    hint="Install dependencies or prepare test data. Maximum 3 minutes."
+                    hint="Runs before each review and warms dependencies from the default branch daily. Warming uses no test secrets and incurs Modal charges."
                   >
                     <textarea
                       className="mono"
