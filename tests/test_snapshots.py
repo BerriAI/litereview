@@ -10,6 +10,7 @@ from test_harnesses import seed_job
 
 from app import runtime, snapshots
 from app.db import Job, RepositorySnapshot, Resource, Run, Session
+from app.security import encrypt
 from runner import warm
 
 REPO = {"id": "repo", "name": "org/project", "installation_id": 12, "setup_command": "uv sync --frozen"}
@@ -192,11 +193,12 @@ async def test_restore_failure_launches_cold_without_failing_review(client, monk
 
 def test_snapshot_status_requires_login_and_has_no_image_or_secret(owner):
     with Session.begin() as db:
-        db.add(Resource(id="repo", kind="repos", data=REPO, secret="encrypted-secret"))
+        db.add(Resource(id="repo", kind="repos", data=REPO, secret=encrypt('{"TEST_KEY":"encrypted-secret"}')))
     save_snapshot()
     response = owner.get("/api/repositories/repo/snapshot")
     assert response.status_code == 200 and response.json()["state"] == "ready"
     assert "im-cached" not in response.text and "encrypted-secret" not in response.text
+    assert owner.get("/api/resources/repos/repo").json()["snapshot"] == response.json()
     owner.cookies.clear()
     assert owner.get("/api/repositories/repo/snapshot").status_code == 401
 

@@ -452,7 +452,12 @@ def get_resource(kind: str, resource_id: str):
                 return person
         if not row or row.kind != kind:
             raise HTTPException(404, "Resource not found. List resources to find its current ID.")
-        return public_resource(row)
+        result = public_resource(row)
+        if kind == "repos":
+            from . import snapshots
+
+            result["snapshot"] = snapshots.status(row.id, row.data)
+        return result
 
 
 @app.post("/api/resources/{kind}", dependencies=[Depends(require_user)])
