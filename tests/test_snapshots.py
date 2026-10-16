@@ -9,12 +9,20 @@ from unittest.mock import AsyncMock
 import pytest
 from test_harnesses import seed_job
 
-from app import runtime, snapshots
+from app import github, runtime, snapshots
 from app.db import Job, RepositorySnapshot, Resource, Run, Session
 from app.security import encrypt
 from runner import warm
 
 REPO = {"id": "repo", "name": "org/project", "installation_id": 12, "setup_command": "uv sync --frozen"}
+
+
+async def test_repository_metadata_uses_the_github_root_endpoint(monkeypatch):
+    request = AsyncMock()
+    monkeypatch.setattr(github, "request", request)
+    monkeypatch.setattr(github, "token", AsyncMock(return_value="server-only-token"))
+    await github.repo_request("org/project", 12, "GET", "")
+    request.assert_awaited_once_with("GET", "/repos/org/project", "server-only-token")
 
 
 def archive(files):
