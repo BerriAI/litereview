@@ -123,7 +123,7 @@ async def test_runner_uses_codex_and_preserves_full_review_context(monkeypatch):
     relay = AsyncMock()
     monkeypatch.setattr(agent, "prepare_repository", AsyncMock())
     monkeypatch.setattr(agent, "stage_skills", lambda *_: None)
-    tools = SimpleNamespace(init=AsyncMock(), close=AsyncMock(), clock=Mock())
+    tools = SimpleNamespace(init=AsyncMock(), close=AsyncMock(), clock=Mock(), setup={"status": "completed"})
     tools.clock.instructions.return_value = ""
     tools.clock.status.return_value = {}
     monkeypatch.setattr(agent, "Toolset", lambda *_: tools)
@@ -140,6 +140,7 @@ async def test_runner_uses_codex_and_preserves_full_review_context(monkeypatch):
     assert args[:3] == (tools, relay, data)
     assert "Review in French" in args[3]
     assert json.loads(args[4])["review"] == data["pr"]
+    assert json.loads(args[4])["environment"]["setup"] == tools.setup
     tools.close.assert_awaited_once()
 
 

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -18,23 +19,33 @@ NATIVE_SUFFIXES = {".so", ".pyd", ".node"}
 def preserve_unchanged_times(previous, staged):
     """Match normal checkout semantics without trusting archive mtimes."""
     unchanged = set()
+    previous_root = previous.resolve()
     for directory, dirs, files in os.walk(staged, topdown=False):
         path = Path(directory)
+        old_directory = previous / path.relative_to(staged)
+        # Validate the parent once, then lstat each leaf without following links.
+        # The staged tree contains only files/directories from extract_archive.
+        if (not old_directory.is_dir() or old_directory.is_symlink()
+                or not old_directory.resolve().is_relative_to(previous_root)):
+            continue
+        with os.scandir(old_directory) as entries:
+            previous_entries = {entry.name: entry for entry in entries}
         for name in files:
             target = path / name
-            old = previous / target.relative_to(staged)
-            if (old.is_file() and not old.is_symlink() and old.resolve().is_relative_to(previous.resolve())
-                    and old.stat().st_size == target.stat().st_size):
-                with old.open("rb") as a, target.open("rb") as b:
+            old = previous_entries.get(name)
+            if old is None:
+                continue
+            old_stat = old.stat(follow_symlinks=False)
+            target_stat = target.stat()
+            if stat.S_ISREG(old_stat.st_mode) and old_stat.st_size == target_stat.st_size:
+                with open(old.path, "rb") as a, target.open("rb") as b:
                     same = hashlib.file_digest(a, "sha256").digest() == hashlib.file_digest(b, "sha256").digest()
                 if same:
-                    os.utime(target, ns=(target.stat().st_atime_ns, old.stat().st_mtime_ns))
+                    os.utime(target, ns=(target_stat.st_atime_ns, old_stat.st_mtime_ns))
                     unchanged.add(target)
-        old = previous / path.relative_to(staged)
-        if (old.is_dir() and not old.is_symlink() and old.resolve().is_relative_to(previous.resolve())
-                and {p.name for p in old.iterdir()} == set(dirs + files)
+        if (previous_entries.keys() == set(dirs + files)
                 and all(path / name in unchanged for name in dirs + files)):
-            os.utime(path, ns=(path.stat().st_atime_ns, old.stat().st_mtime_ns))
+            os.utime(path, ns=(path.stat().st_atime_ns, old_directory.stat().st_mtime_ns))
             unchanged.add(path)
 
 
