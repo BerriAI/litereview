@@ -13,7 +13,7 @@ from sqlalchemy.orm import load_only
 
 from runner.catalog import HARNESS_VERSIONS, review_capabilities, validate_connection
 
-from . import fusion, github, review_defaults, review_sessions
+from . import fusion, github, review_defaults, review_sessions, verdict
 from .access import allows_anyone, caller_grant, caller_permits, permits
 from .db import Job, Resource, ReviewSession, Run, Session, uid
 from .limits import job_timeout, timing_limits
@@ -402,8 +402,7 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
             label += f" · {md(c['group'])}"
         if counts[(c.get("group"), c["name"])] > 1:
             label += f" · Run {c['instance']}"
-        incomplete = job.status in TERMINAL and (job.status != "completed" or job.result.get("limitations"))
-        icon = (("⚠️ " if incomplete else "✅ ") if job.status in TERMINAL else "👀 ") if agent_comment else ""
+        icon = verdict.comment_icon(job, finding_decisions) + " " if agent_comment else ""
         lines += [f"### {icon}{label}", ""]
         if job.status not in TERMINAL:
             lines += [md(fusion.progress(job, all_jobs or jobs)) if fusion.progress(job, all_jobs or jobs)
@@ -414,7 +413,7 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
                       else "Review in progress.", ""]
             continue
         result = job.result
-        from . import previews, verdict
+        from . import previews
         grade = verdict.verdict(job, finding_decisions)
         if grade:
             lines += ["## " + (f"{grade['score']}/5 · " if grade["score"] is not None else "") + verdict.headline(grade), ""]
@@ -422,17 +421,24 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
             lines += [f"[Open preview]({preview_link})", ""]
         if c.get("review_scope"):
             lines += [f"Scope: {c['review_scope']} · {c.get('scope_reason', '')}", ""]
-        incomplete = job.status != "completed" or result.get("limitations")
+        outcome = verdict.review_outcome(job, finding_decisions)
+        incomplete = outcome["state"] == "incomplete"
+        failed_checks = any(check["status"] == "failed" for check in result.get("checks", []))
         visible, notes = [], []
         if job.status == "superseded":
             visible += ["**Review superseded.**", ""]
         elif incomplete:
             visible += ["**Review incomplete.**", ""]
+        elif result.get("skipped"):
+            visible += ["**Review skipped.**", ""]
+        elif failed_checks:
+            visible += ["**Completed · Checks failed.**", ""]
         elif any(check["status"] == "not_run" for check in result.get("checks", [])):
             visible += ["**Completed · Some checks not run.**", ""]
         if result.get("summary"):
             visible += [md(result["summary"]), ""]
-        elif not incomplete and not result.get("findings"):
+        elif (outcome["state"] == "ready" and not result.get("findings")
+              and all(check["status"] == "passed" for check in result.get("checks", []))):
             visible += ["**No issues found.**", ""]
         for index, finding in enumerate(result.get("findings", [])):
             thread = (finding_links or {}).get(str(index))

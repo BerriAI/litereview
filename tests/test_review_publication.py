@@ -119,7 +119,7 @@ async def test_agents_finish_independently_and_eyes_are_removed(publication):
     finish(fake.run_id, one=True, findings=[FINDING])
     await reviews.publish(fake.run_id)
     assert len(fake.comments) == 1 and len(fake.threads) == 1 and len(fake.reactions) == 1
-    completed = next(c for c in fake.comments if "### ✅" in c["body"])
+    completed = next(c for c in fake.comments if "### ⚠️" in c["body"])
     assert f"#discussion_r{fake.threads[0]['id']}" in completed["body"]
     assert "stale entry" not in completed["body"]
     assert "stale entry" in fake.threads[0]["body"] and "Reproduced" in fake.threads[0]["body"]
@@ -260,7 +260,8 @@ async def test_new_head_and_legacy_progress_comment(publication):
         run.published, run.comment_id = 1, 99
     finish(fake.run_id, findings=[FINDING])
     await reviews.publish(fake.run_id)
-    assert "✅ Reviews finished" in fake.comments[0]["body"]
+    assert "### Reviews finished" in fake.comments[0]["body"]
+    assert "✅" not in fake.comments[0]["body"]
     assert all("New commits were pushed" in c["body"] for c in fake.comments[1:])
     assert all(c["commit_id"] == "a" * 40 for c in fake.threads)
     assert {key[1] for key in fake.reactions} == {"+1"}
@@ -372,7 +373,7 @@ async def test_retry_scans_all_pages_and_ignores_user_markers(publication):
     fake.comments.append({"id": 999, "body": marker, "user": {"type": "Bot"}})
     await reviews.publish(fake.run_id)
     assert all(c["body"] == marker for c in fake.comments[:100])
-    assert "### ✅" in fake.comments[100]["body"]
+    assert "### ⚠️" in fake.comments[100]["body"]
     assert len(fake.comments) == 101
     assert any(path.endswith("page=2") for _, path, _ in fake.calls)
 

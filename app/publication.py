@@ -524,7 +524,7 @@ async def _publish_run(run_id):
                         run,
                         "PATCH",
                         f"issues/comments/{run.comment_id}",
-                        json={"body": "### ✅ Reviews finished\n\n" + "\n".join(links)},
+                        json={"body": "### Reviews finished\n\n" + "\n".join(links)},
                     )
                 if trigger and status == "completed":
                     await add_thumbs_up(run, trigger, state, key)
