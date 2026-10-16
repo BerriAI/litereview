@@ -55,6 +55,7 @@ import { StarterReviewer } from "./starter-reviewer";
 import { MinimumReviewTime, OptionalReviewLimits } from "./review-time";
 import {
   Brand,
+  ThemeToggle,
   ProviderMark,
   Field,
   Badge,
@@ -906,6 +907,7 @@ function App() {
           <a href="/docs">
             <BookOpen size={15} /> Documentation
           </a>
+          <ThemeToggle />
         </div>
         <div className="sidebar-bottom">
           <span className="avatar">

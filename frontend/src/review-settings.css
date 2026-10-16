@@ -1,17 +1,17 @@
 .review-scope { position: relative; }
-.scope-trigger, .scope-options button { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; text-align: left; background: white; padding: 12px; }
-.scope-trigger { border: 1px solid #d8dbe2; border-radius: 6px; }
+.scope-trigger, .scope-options button { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; text-align: left; background: var(--bg); padding: 12px; }
+.scope-trigger { border: 1px solid var(--border); border-radius: 6px; }
 .scope-trigger span, .scope-options span { display: grid; gap: 4px; }
 .scope-trigger strong, .scope-options strong { font-size: 13px; font-weight: 500; }
-.scope-trigger small, .scope-options small { color: #626978; font-weight: 400; white-space: normal; line-height: 1.5; }
-.scope-options { background: white; border: 1px solid #d8dbe2; border-radius: 6px; padding: 4px; }
+.scope-trigger small, .scope-options small { color: var(--muted); font-weight: 400; white-space: normal; line-height: 1.5; }
+.scope-options { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
 .scope-options button { border: 0; border-radius: 3px; }
-.scope-options button.active { background: #f2effb; }
+.scope-options button.active { background: var(--tint); }
 .review-rules { display: grid; gap: 16px; }
-.review-rule { display: grid; gap: 12px; border-top: 1px solid #e4e6eb; padding-top: 16px; }
+.review-rule { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 16px; }
 .rule-toolbar { display: flex; align-items: center; justify-content: space-between; }
 .mcp-copy, .mcp-client { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0; }
 .mcp-copy code { overflow-wrap: anywhere; min-width: 0; }
 .mcp-copy button { flex-shrink: 0; }
-.mcp-client small { display: block; color: #626978; margin-top: 4px; }
+.mcp-client small { display: block; color: var(--muted); margin-top: 4px; }
 @media (max-width: 600px) { .mcp-copy { align-items: flex-start; flex-direction: column; } }

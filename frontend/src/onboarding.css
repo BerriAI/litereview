@@ -440,7 +440,7 @@
 .starter-form select,
 .start-select select,
 .repo-search input {
-  border-color: #858791;
+  border-color: var(--control-border);
 }
 .starter-connection {
   padding-block: 18px;
