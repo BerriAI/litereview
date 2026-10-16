@@ -5,6 +5,7 @@ For deployment, backups, and updates, start with [Operate and update](DEPLOYMENT
 - [Track review spend](#track-review-spend)
 - [Optional tracing with Lens](#optional-tracing-with-lens)
 - [Review execution and limits](#review-execution)
+- [Reuse repository dependencies](#reuse-repository-dependencies)
 
 ## Track review spend
 
@@ -76,3 +77,21 @@ Review sessions serialize work for each repository, PR, and agent. Repeated requ
 Pending jobs survive API restarts; completed jobs are never rerun automatically. Sandboxes are terminated on completion. The dispatcher reattaches to recorded active sandboxes after API restarts and reports an incomplete result if a sandbox exits without a result. Modal’s 24-hour lifetime still applies. Publication retries recover each agent’s marked comments and finding threads after a lost response. A shared lock allows only one publisher per run during deployment overlap. Existing aggregate progress comments link to the agent results when their runs finish; already published runs remain unchanged. Results always name the reviewed SHA; later pushes are called out.
 
 Reviews longer than GitHub's 65,536-character comment limit are published across multiple comments without truncating the review. Retries recover every already-published part. Each agent comment links to its inline finding threads where a usable diff line exists. Finding-thread replies can trigger a focused assessment and resolution; the stored review session survives sandbox shutdown. It has no automatic fixes, local stdio MCP servers, or plugin marketplace. For supported push triggers, see [automatic reviews](GITHUB.md#run-reviews-automatically); for combining models, see [Fusion](REVIEWERS.md#combine-independent-reviews-with-fusion). See [SPEC.md](../SPEC.md) for the product decisions and [VALIDATION.md](VALIDATION.md) for actual test evidence and external setup boundaries.
+
+## Reuse repository dependencies
+
+Save the dependency installation command in the repository's **Setup command**. LiteReview automatically prepares a reusable Modal filesystem snapshot from the repository's default branch, without model, GitHub, MCP, job, or repository test credentials. An empty setup command leaves warming disabled: dependency commands chosen later by the review agent cannot be preinstalled.
+
+For LiteLLM reviews that need its proxy development dependencies, use:
+
+```sh
+uv sync --frozen --group proxy-dev --extra proxy
+```
+
+Use an idempotent setup command that reconciles installed packages against the current revision's lockfile. Each review restores a compatible snapshot when available, downloads the exact accepted PR head SHA, replaces the baseline source, injects its test secrets, and runs setup again. The snapshot preserves top-level `.venv` and `node_modules` directories and package-manager caches outside the checkout. Other generated checkout files and nested dependency directories are removed. A PR that supplies its own `.venv` or `node_modules` directory takes precedence over the cached directory. Reviews never write back to the shared snapshot.
+
+An unchanged `uv sync --frozen` can reuse installed packages. Changed dependencies are reconciled by the package manager; this can include removals, upgrades, rebuilds, and downloads. `npm ci` removes and reinstalls `node_modules`, although its download cache can still help. Snapshot reuse does not promise that only newly added packages will download or that total review time will halve.
+
+Warming runs separately from reviews, one repository at a time per API process. It refreshes daily, retains snapshots for seven days, and retries failed builds after an hour. A build has a 45-minute maintenance deadline. Repository identity, GitHub installation, setup command, runner code, runtime dependencies, or harness changes invalidate compatibility. Test secrets are never used to build snapshots, so setups that require them may remain cold. A compatible previous snapshot remains usable while a refresh runs or fails. Missing, expired, incompatible, or unrestorable images fall back to a fresh sandbox without waiting for a build.
+
+**Verify reuse:** open a run's activity and look for **Restored repository dependency snapshot**, followed by **Repository setup completed in …s**. Cold launches and restore failures are also recorded. Signed-in workspace members can read `GET /api/repositories/{repository_id}/snapshot` for the current state, default-branch source SHA, expiry, and last refresh error. Compare setup and total review time separately; the first build and daily refresh incur additional Modal compute and storage charges.

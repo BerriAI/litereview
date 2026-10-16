@@ -153,7 +153,9 @@ async def prepare_repository(relay):
             await relay.event("Repository download interrupted; retrying after the service recovers")
         await relay.event("Extracting repository")
         archive.seek(0)
-        extract_archive(archive, REPO)
+        from .warm import replace_source
+
+        replace_source(archive, REPO)
 
 
 def stage_skills(skills):

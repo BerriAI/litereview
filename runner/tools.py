@@ -244,9 +244,14 @@ class Toolset:
         if self.caps:
             os.environ.update(self.data.get("test_secrets", {}))
             if repo.get("setup_command"):
+                import time
+
+                started = time.monotonic()
+                await self.relay.event("Running repository setup; reconciling dependencies with this revision")
                 result = await self.shell(repo["setup_command"])
                 if result["exit_code"] != 0:
                     raise RuntimeError("Repository setup command failed: " + result["output"])
+                await self.relay.event(f"Repository setup completed in {time.monotonic() - started:.2f}s")
             if repo.get("start_command"):
                 log = open("/tmp/litereview-app.log", "w")
                 p = subprocess.Popen(
