@@ -1,5 +1,7 @@
 import asyncio
 import io
+import json
+import os
 import tarfile
 import time
 from types import SimpleNamespace
@@ -89,10 +91,11 @@ def test_failed_extraction_never_overlays_cached_source(tmp_path):
     assert not (tmp_path / "escape").exists()
 
 
-def test_warming_excludes_service_and_test_secrets_and_discards_baseline_source(tmp_path, monkeypatch):
+def test_warming_excludes_secrets_and_discards_generated_configuration(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     path = tmp_path / "source.tgz"
     path.write_bytes(archive({"source.py": b"trusted baseline"}).read())
+    monkeypatch.setattr(warm, "NATIVE_ARTIFACTS", tmp_path / "native-artifacts.json")
     for name in ("LR_JOB_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "TEST_PASSWORD"):
         monkeypatch.setenv(name, "must-not-enter-snapshot")
 
@@ -108,7 +111,40 @@ def test_warming_excludes_service_and_test_secrets_and_discards_baseline_source(
     monkeypatch.setattr(warm.subprocess, "run", setup)
     warm.prepare(path, "install dependencies", root)
     assert not path.exists()
-    assert {p.name for p in root.iterdir()} == {".venv"}
+    assert {p.name for p in root.iterdir()} == {".venv", "source.py"}
+
+
+def test_only_identical_source_files_and_subtrees_keep_build_timestamps(tmp_path):
+    previous, staged = tmp_path / "old", tmp_path / "new"
+    for root in (previous, staged):
+        (root / "native/src").mkdir(parents=True)
+        (root / "native/src/lib.rs").write_text("unchanged")
+        (root / "pyproject.toml").write_text("same metadata")
+        (root / "changed.py").write_text(root.name)
+    for path in previous.rglob("*"):
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+    warm.preserve_unchanged_times(previous, staged)
+    for path in ("native", "native/src", "native/src/lib.rs", "pyproject.toml"):
+        assert (staged / path).stat().st_mtime_ns == 1_000_000_000
+    assert (staged / "changed.py").stat().st_mtime_ns != 1_000_000_000
+
+
+def test_native_outputs_are_restored_without_overwriting_pr_files_or_deleted_packages(tmp_path, monkeypatch):
+    previous, staged = tmp_path / "old", tmp_path / "new"
+    previous.mkdir()
+    (staged / "package").mkdir(parents=True)
+    (previous / "package").mkdir()
+    (previous / "deleted").mkdir()
+    for name in ("package/native.so", "package/head.so", "deleted/native.so"):
+        (previous / name).write_bytes(b"trusted generated extension")
+    (staged / "package/head.so").write_bytes(b"PR owns this file")
+    manifest = tmp_path / "native-artifacts.json"
+    manifest.write_text(json.dumps(["package/native.so", "package/head.so", "deleted/native.so"]))
+    monkeypatch.setattr(warm, "NATIVE_ARTIFACTS", manifest)
+    warm.restore_native_outputs(previous, staged)
+    assert (staged / "package/native.so").read_bytes() == b"trusted generated extension"
+    assert (staged / "package/head.so").read_bytes() == b"PR owns this file"
+    assert not (staged / "deleted").exists() and not manifest.exists()
 
 
 @pytest.mark.parametrize("change", [
