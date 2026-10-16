@@ -51,6 +51,7 @@ class ModelSelection(BaseModel):
     connection_id: str
     model: str = Field(min_length=1)
     reasoning_effort: Literal["low", "medium", "high", "xhigh"] | None = None
+    inference_speed: Literal["standard", "fast"] = Field(default="standard", description="Fast requests faster serving of the same model through a compatible gateway. It preserves reasoning and context but may cost more; Opus 5.5 fast tokens cost twice as much.")
 
 
 class ReviewRuleInstruction(BaseModel):

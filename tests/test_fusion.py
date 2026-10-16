@@ -13,7 +13,7 @@ def start_fusion(owner, monkeypatch):
     conn, _, agent, _, _ = setup(owner)
     second = create(owner, 'connections', name='Other', type='gateway', base_url='https://other.example/v1', api_key='second-secret')
     agent['fusion'] = {'branches': [
-        {'connection_id': conn['id'], 'model': 'branch-a', 'reasoning_effort': 'high'},
+        {'connection_id': conn['id'], 'model': 'branch-a', 'reasoning_effort': 'high', 'inference_speed': 'fast'},
         {'connection_id': second['id'], 'model': 'branch-b', 'focus': 'Trace real callers'},
     ], 'instructions': 'Preserve distinct verified bugs'}
     owner.put('/api/resources/agents/' + agent['id'], json=agent).raise_for_status()
@@ -33,6 +33,8 @@ def test_fusion_is_one_visible_review_with_immutable_independent_branches(owner,
         assert parent.status == 'waiting'
         children = fusion.branches(db, parent)
         assert [j.config['model'] for j in children] == ['branch-a', 'branch-b']
+        assert [j.config['inference_speed'] for j in children] == ['fast', 'standard']
+        assert parent.config['inference_speed'] == 'standard'
         assert all(j.status == 'queued' and 'Edited' not in j.config['instructions'] for j in children)
         assert children[1].config['connection']['base_url'] == 'https://other.example/v1'
         assert children[0].config['skills'][0]['instructions'] == 'Look for actionable issues.'

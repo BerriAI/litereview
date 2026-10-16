@@ -83,6 +83,7 @@ def selection(config):
     if not fusion:
         return None
     return {"branches": [{**{k: v for k, v in b.items() if k in {"connection_id", "model", "reasoning_effort"}},
+                          "inference_speed": b.get("inference_speed", "standard"),
                           "capabilities": review_capabilities(b.get("capabilities")
                               if b.get("capabilities") is not None else config.get("capabilities", []))}
                          for b in fusion["branches"]]}
@@ -109,6 +110,7 @@ def enqueue(db, run_id, config):
                 "connection_id", "connection", "model", "reasoning_effort", "skills", "mcp_definitions", "condition", "paths"
             } and (v is not None or k == "reasoning_effort") and k != "instructions"},
             fusion_parent_id=parent.id,
+            inference_speed=branch.get("inference_speed", "standard"),
             fusion_index=index,
             fusion_stage="branch",
             fusion_role=branch.get("name", ""),

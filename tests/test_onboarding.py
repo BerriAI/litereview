@@ -192,7 +192,7 @@ def test_start_does_not_offer_an_unavailable_default(owner, monkeypatch):
     assert "private-reviewer" not in json.dumps(result)
 
 
-@pytest.mark.parametrize("cause", ["permission", "installation", "stale-check", "failed-check", "effort"])
+@pytest.mark.parametrize("cause", ["permission", "installation", "stale-check", "failed-check", "effort", "speed"])
 def test_readiness_does_not_claim_unavailable_or_unchecked_reviewer(owner, monkeypatch, cause):
     agent, conn = ready_workspace(owner, monkeypatch)
     if cause == "permission":
@@ -206,6 +206,9 @@ def test_readiness_does_not_claim_unavailable_or_unchecked_reviewer(owner, monke
             elif cause == "effort":
                 row = db.get(Resource, agent["id"])
                 row.data = {**row.data, "reasoning_effort": "high"}
+            elif cause == "speed":
+                row = db.get(Resource, agent["id"])
+                row.data = {**row.data, "inference_speed": "fast"}
             else:
                 db.get(Job, "check-job").status = "failed"
             db.commit()
