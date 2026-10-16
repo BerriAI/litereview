@@ -81,6 +81,21 @@ class Run(Base):
     created_at: Mapped[float] = mapped_column(Float, default=time.time)
 
 
+class RepositorySnapshot(Base):
+    __tablename__ = "repository_snapshots"
+    repository_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    requested_fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    image_id: Mapped[str] = mapped_column(String(100), default="")
+    source_sha: Mapped[str] = mapped_column(String(40), default="")
+    built_at: Mapped[float] = mapped_column(Float, default=0)
+    expires_at: Mapped[float] = mapped_column(Float, default=0)
+    retry_after: Mapped[float] = mapped_column(Float, default=0)
+    lease_until: Mapped[float] = mapped_column(Float, default=0)
+    build_token: Mapped[str] = mapped_column(String(40), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+
+
 class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=uid)

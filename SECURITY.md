@@ -28,6 +28,8 @@ PR contents, build scripts, skills, and tool responses can contain malicious ins
 
 Source code is sent to the configured model provider and executed on Modal. Selected MCP services receive tool calls. Optional trace content exports can include source code, tool arguments, tool results, and secrets embedded in text; those values are not automatically redacted. Keep tracing off or content capture disabled unless the collector is suitable for that data.
 
+Repositories with a setup command also run that command against their trusted default branch in a separate warming sandbox. No service, job, GitHub, model, MCP, or configured repository test credentials are supplied to that sandbox. Its filesystem snapshot can retain default-branch source, dependencies, and compiled extensions for seven days on Modal. PR sandboxes are never promoted into reusable snapshots. Each review replaces the source with its exact head revision and reruns setup; dependency directories, caches, and generated native extensions can be reused. See [dependency reuse](docs/OPERATIONS.md#reuse-repository-dependencies) for required build-input declarations, compatibility, and fallback behavior.
+
 ## Resource use and operations
 
 Run time and model-call limits are optional per reviewer. `CONCURRENCY=0` leaves concurrency to upstream quotas. Configure these controls and provider/Modal budgets for your deployment. Uploads, review data, logs, and screenshots have no application size or retention cap; monitor database growth and service memory. Operate one API worker and one service instance. See [deployment and recovery](docs/DEPLOYMENT.md) for backups and updates.

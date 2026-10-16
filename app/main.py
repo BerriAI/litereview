@@ -95,6 +95,9 @@ async def lifespan(app):
         db.commit()
     tracing.start()
     dispatcher_task = asyncio.create_task(reviews.dispatcher()) if settings().dispatcher_enabled else None
+    from . import snapshots
+
+    snapshot_task = asyncio.create_task(snapshots.maintain()) if settings().dispatcher_enabled else None
     from .mcp_server import configure
     mcp_routes = []
     try:
@@ -110,6 +113,10 @@ async def lifespan(app):
             dispatcher_task.cancel()
             with suppress(asyncio.CancelledError):
                 await dispatcher_task
+        if snapshot_task:
+            snapshot_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await snapshot_task
         await asyncio.to_thread(tracing.shutdown)
 
 
@@ -421,6 +428,17 @@ def workspace():
     return {"resources": {kind: list_resources(kind) for kind in SCHEMAS}, "setup": setup_status()}
 
 
+@app.get("/api/repositories/{repository_id}/snapshot", dependencies=[Depends(require_user)])
+def repository_snapshot(repository_id: str):
+    from . import snapshots
+
+    with Session() as db:
+        repository = db.get(Resource, repository_id)
+        if not repository or repository.kind != "repos":
+            raise HTTPException(404, "Repository not found.")
+        return snapshots.status(repository_id, repository.data)
+
+
 @app.get("/api/resources/{kind}/{resource_id}", dependencies=[Depends(require_user)])
 def get_resource(kind: str, resource_id: str):
     if kind not in SCHEMAS:
@@ -434,7 +452,12 @@ def get_resource(kind: str, resource_id: str):
                 return person
         if not row or row.kind != kind:
             raise HTTPException(404, "Resource not found. List resources to find its current ID.")
-        return public_resource(row)
+        result = public_resource(row)
+        if kind == "repos":
+            from . import snapshots
+
+            result["snapshot"] = snapshots.status(row.id, row.data)
+        return result
 
 
 @app.post("/api/resources/{kind}", dependencies=[Depends(require_user)])

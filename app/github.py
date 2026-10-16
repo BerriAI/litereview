@@ -89,7 +89,8 @@ async def token(installation):
 
 
 async def repo_request(repo, installation, method, suffix, **kwargs):
-    return await request(method, f"/repos/{repo}/{suffix}", await token(installation), **kwargs)
+    path = f"/repos/{repo}" + (f"/{suffix}" if suffix else "")
+    return await request(method, path, await token(installation), **kwargs)
 
 
 async def resolve_review_thread(repo, installation, number, comment_id, *, expected_head, resolved=True):

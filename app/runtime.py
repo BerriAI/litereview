@@ -10,7 +10,7 @@ from sqlalchemy import update
 from runner.catalog import HARNESS_VERSIONS, NPM_PACKAGES, validate_connection
 from runner.diagnostics import parse
 
-from .db import Job, Session
+from .db import Job, Run, Session
 from .limits import SANDBOX_MAX_SECONDS, job_timeout
 from .settings import settings
 
@@ -53,17 +53,20 @@ def _app(name, token_id, token_secret):
     return modal.App.lookup(name, create_if_missing=True, client=c)
 
 
-def create_sandbox(job_id, token, harness="codex", timeout=None):
+def create_sandbox(job_id, token, harness="codex", timeout=None, image_id=None):
     s = settings()
     c = client()
     with _app_lock:
         app = _app(s.modal_app_name, s.modal_token_id, s.modal_token_secret)
+    image = (modal.Image.from_id(image_id, client=c).add_local_dir(
+        str(Path(__file__).resolve().parent.parent / "runner"), "/opt/litereview/runner"
+    ) if image_id else sandbox_image(harness))
     return modal.Sandbox.create(
         "python",
         "-m",
         "runner.agent",
         app=app,
-        image=sandbox_image(harness),
+        image=image,
         client=c,
         name="lr-" + job_id,
         timeout=min(timeout + 60, SANDBOX_MAX_SECONDS) if timeout else SANDBOX_MAX_SECONDS,
@@ -120,6 +123,8 @@ async def launch(job_id, token):
             if job.status not in ("starting", "running"):
                 return
             cfg = job.config
+            run = db.get(Run, job.run_id)
+            repository = run.snapshot.get("repository", {})
         from .branch_conditions import should_run
 
         if not await should_run(job_id):
@@ -136,7 +141,19 @@ async def launch(job_id, token):
             raise RuntimeError(
                 "Modal requires a publicly reachable HTTPS PUBLIC_URL. Deploy to Render or use a development tunnel."
             )
-        sandbox = await asyncio.to_thread(create_sandbox, job_id, token, harness, job_timeout(cfg))
+        from . import snapshots
+
+        image_id = snapshots.image_for(repository)
+        if image_id:
+            try:
+                sandbox = await asyncio.to_thread(create_sandbox, job_id, token, harness, job_timeout(cfg), image_id)
+                snapshots.event(job_id, "Restored repository dependency snapshot; source and setup will be refreshed")
+            except Exception:
+                snapshots.invalidate(repository["id"], image_id)
+                snapshots.event(job_id, "Repository snapshot unavailable; falling back to a cold sandbox")
+        if sandbox is None:
+            snapshots.event(job_id, "Starting cold sandbox; no usable repository dependency snapshot")
+            sandbox = await asyncio.to_thread(create_sandbox, job_id, token, harness, job_timeout(cfg))
         with Session() as db:
             job = db.get(Job, job_id)
             job.sandbox_id = sandbox.object_id
