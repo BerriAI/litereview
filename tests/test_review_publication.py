@@ -314,6 +314,69 @@ def test_agent_response_is_visible_without_generic_narrative_replacement():
     assert body.endswith(f"Reviewed [`{'a' * 12}`](https://github.com/owner/repo/commit/{'a' * 40})")
 
 
+def test_long_review_collapses_trace_but_keeps_findings_and_blockers_visible():
+    run = Run(id="verbose", repo="owner/repo", head="a" * 40, status="incomplete")
+    opening = "## Verdict\n\nThe configured endpoint reaches each batch control-plane path."
+    trace = "### Paths checked\n\n" + "- Traced `create`, `retrieve`, and `cancel`.\n" * 30
+    summary = opening + "\n\n" + trace
+    job = Job(
+        config={"name": "full", "target_kind": "agent", "review_scope": "full",
+                "scope_reason": "Full PR review."},
+        status="completed",
+        result={"summary": summary, "findings": [FINDING], "limitations": ["Live AWS unavailable."],
+                "checks": [{"name": "Unit tests", "status": "passed", "required": False,
+                            "details": "1497 passed, 1 skipped."}]},
+    )
+    body = reviews.render_comment(run, [job], finding_links={"0": "https://github.com/finding"})
+    visible, details = body.split("<details>", 1)
+    assert reviews.md(opening) in visible
+    assert "Paths checked" not in visible and "Scope:" not in visible
+    assert "Review incomplete." in visible and "Live AWS unavailable." in visible
+    assert "[Fix the cache](https://github.com/finding)" in visible
+    assert reviews.md(summary).strip() in details
+    assert "1497 passed, 1 skipped." in details and "Scope: full" in details
+    assert job.result["summary"] == summary
+
+
+@pytest.mark.parametrize("summary", [
+    "A single long paragraph with `identifiers` and [links](https://example.com). " * 100,
+    "```python\n" + "print('<tag> @user')\n" * 100 + "```",
+    "- First path\n  - Nested evidence\n" * 100,
+    "A [reference][source].\n\n## Trace\n\nMore evidence.\n\n[source]: https://example.com",
+], ids=["paragraph", "code", "nested-list", "reference-link"])
+def test_oversized_or_structured_openings_are_preserved_without_broken_markdown(summary):
+    run = Run(id="structured", repo="owner/repo", head="a" * 40, status="completed")
+    job = Job(config={"name": "full", "target_kind": "agent"}, status="completed",
+              result={"summary": summary, "findings": [], "limitations": []})
+    body = reviews.render_comment(run, [job])
+    visible, details = body.split("<details>", 1)
+    assert "No findings reported." in visible
+    assert len(visible) < 200
+    assert reviews.md(summary).strip() in details
+    assert "Reviewed [`aaaaaaaaaaaa`]" in body
+
+
+@pytest.mark.parametrize("scope", ["full", "incremental"])
+def test_scope_stays_available_and_incremental_scope_stays_visible(scope):
+    run = Run(id="scope", repo="owner/repo", head="a" * 40, status="completed")
+    job = Job(config={"name": "review", "target_kind": "agent", "review_scope": scope,
+                      "scope_reason": "Changed commits only." if scope == "incremental" else "Full PR review."},
+              status="completed", result={"summary": "No actionable defects found.", "findings": []})
+    body = reviews.render_comment(run, [job])
+    assert f"Scope: {scope}" in body
+    assert (f"Scope: {scope}" in body.split("<details>", 1)[0]) == (scope == "incremental")
+
+
+@pytest.mark.parametrize("config", [{"output_type": "preview"}, {"task": "reply"}])
+def test_non_review_responses_keep_their_full_summary(config):
+    summary = "Observed walkthrough.\n\n" + "Detailed evidence.\n\n" * 50
+    run = Run(id="other", repo="owner/repo", head="a" * 40, status="completed")
+    job = Job(config={"name": "agent", "target_kind": "agent", **config}, status="completed",
+              result={"summary": summary, "findings": [], "limitations": []})
+    body = reviews.render_comment(run, [job])
+    assert summary.strip() in body.split("<details>", 1)[0]
+
+
 def test_findings_and_incomplete_coverage_stay_visible():
     run = Run(id="partial", repo="owner/repo", head="a" * 40, status="incomplete")
     job = Job(

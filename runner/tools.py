@@ -50,7 +50,7 @@ def definitions(cfg):
                  {"offset": N, "length": N}),
         function(
             "finish_review",
-            "Submit the configured task in the agent's requested voice. Summary is the primary response; findings holds concrete issues when relevant. Record verification in checks, distinguishing required work from optional checks. Limitations is only for blockers to completing the configured task. Optional checks not run do not make it incomplete. Use [] for empty arrays.",
+            "Submit the configured task in the agent's requested voice. For code reviews, summary is a short opening paragraph with the conclusion and main reason; put detailed traces and verification evidence in checks, and concrete issues in findings. For other tasks, summary is the primary response. Distinguish required work from optional checks. Limitations is only for blockers to completing the configured task. Optional checks not run do not make it incomplete. Use [] for empty arrays.",
             {
                 "summary": S,
                 "findings": {
