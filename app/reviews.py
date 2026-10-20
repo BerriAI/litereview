@@ -382,6 +382,28 @@ def evidence_details(items):
                          *[md(item) for item in items], "</details>"])
 
 
+def summary_preview(summary):
+    """Show an opening paragraph without cutting Markdown or discarding the report."""
+    summary = summary.strip()
+    env = {}
+    blocks = [token for token in MarkdownIt().parse(summary, env)
+              if token.level == 0 and token.map]
+    end = 0
+    for index, token in enumerate(blocks):
+        if token.type == "heading_open" and index == 0:
+            end = token.map[1]
+        elif token.type == "paragraph_open":
+            end = token.map[1]
+            break
+        else:
+            break
+    opening = "\n".join(summary.splitlines()[:end]).strip()
+    # This is a comment-layout budget, never a model-output or stored-result limit.
+    if len(opening) > 600 or env.get("references"):
+        return "", summary
+    return (opening, summary) if opening != summary else (summary, "")
+
+
 def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None, finding_links=None,
                    finding_decisions=None):
     if run.status == "rejected":
@@ -419,12 +441,16 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
             lines += ["## " + (f"{grade['score']}/5 · " if grade["score"] is not None else "") + verdict.headline(grade), ""]
         if preview_link := previews.url(job):
             lines += [f"[Open preview]({preview_link})", ""]
-        if c.get("review_scope"):
-            lines += [f"Scope: {c['review_scope']} · {c.get('scope_reason', '')}", ""]
         outcome = verdict.review_outcome(job, finding_decisions)
         incomplete = outcome["state"] == "incomplete"
         failed_checks = any(check["status"] == "failed" for check in result.get("checks", []))
         visible, notes = [], []
+        if c.get("review_scope"):
+            scope = f"Scope: {md(c['review_scope'])} · {md(c.get('scope_reason', ''))}"
+            if c["review_scope"] == "incremental":
+                visible += [scope, ""]
+            else:
+                notes += [scope, ""]
         if job.status == "superseded":
             visible += ["**Review superseded.**", ""]
         elif incomplete:
@@ -436,7 +462,15 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
         elif any(check["status"] == "not_run" for check in result.get("checks", [])):
             visible += ["**Completed · Some checks not run.**", ""]
         if result.get("summary"):
-            visible += [md(result["summary"]), ""]
+            opening, report = (result["summary"], "") if (
+                c.get("output_type") == "preview" or c.get("task") == "reply"
+            ) else summary_preview(result["summary"])
+            if opening:
+                visible += [md(opening), ""]
+            elif outcome["state"] == "ready" and not result.get("findings") and not grade:
+                visible += ["**No findings reported.**", ""]
+            if report:
+                notes += [md(report), ""]
         elif (outcome["state"] == "ready" and not result.get("findings")
               and all(check["status"] == "passed" for check in result.get("checks", []))):
             visible += ["**No issues found.**", ""]
@@ -486,7 +520,7 @@ def render_comment(run, jobs, newer=False, *, agent_comment=False, all_jobs=None
         if note_text:
             lines += [
                 "<details>",
-                "<summary>Checks and execution details</summary>",
+                "<summary>Review details and checks</summary>",
                 "",
                 note_text,
                 "",

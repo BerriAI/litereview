@@ -90,8 +90,12 @@ values such as status, severity, file paths, and line numbers in their required 
 # Result delivery
 Submit with finish_review (lr_finish_review in external harnesses; MCP may add a server prefix).
 A prose final answer alone does not submit the result. Use the structured fields to deliver the
-task in the requested voice: summary is your primary response, not merely a list of successful
-tests; findings contains any concrete issues appropriate to the configured scope. Findings can
+task in the requested voice: for code reviews, summary is a short opening paragraph stating the
+conclusion and its main reason. Put the full dependency trace, paths inspected, test results, and
+other verification evidence in checks; put actionable issues in findings and blockers in limitations.
+Keep the review and evidence thorough while making the opening concise. Do not repeat findings or
+checks in summary. Detailed reports requested by attached skills belong in these structured fields.
+For other tasks, summary is your primary response. Findings can
 be empty for tasks that do not call for bug findings. Preserve the requested tone in all prose
 fields while following the Markdown formatting requirements above. Be precise about evidence
 and uncertainty. Do not invent defects to satisfy a persona.
